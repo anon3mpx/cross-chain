@@ -1,0 +1,36 @@
+# Dependencies
+node_modules/
+
+# Environment secrets
+.env
+.env.local
+.env.*.local
+
+# Claude-flow runtime
+.claude-flow/daemon.log
+.claude-flow/daemon.pid
+.claude-flow/data/
+
+# Build output
+dist/
+build/
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Codex local configuration
+.codex/
+
+# Claude Flow runtime data
+.claude-flow
+.claude-flow/data/
+.claude-flow/logs/
+
+# Agent configs
+.agents
+
+# Environment variables
+.env
+.env.local
+.env.*.local

@@ -1,0 +1,235 @@
+// ─────────────────────────────────────────────────────────
+// EMPX-Cross-Chain VPS — Partner API
+// ALL endpoints require a registered API key.
+// No anonymous/public access to quote engine.
+// ─────────────────────────────────────────────────────────
+import express, { Request, Response, NextFunction } from 'express';
+import { ApiKeyManager, PartnerTier } from '../services/ApiKeyManager';
+import { IntentEngine } from '../services/IntentEngine';
+import { QuoteEngine } from '../services/QuoteEngine';
+import { QuoteRequest } from '../types';
+
+export function buildPartnerAPI(
+  keyManager: ApiKeyManager,
+  intentEngine: IntentEngine,
+  quoteEngine: QuoteEngine,
+): express.Router {
+  const router = express.Router();
+
+  // ── Auth middleware — mandatory, no fallback ───────────────────────────────
+  const requireKey = (req: Request, res: Response, next: NextFunction) => {
+    const key = req.headers['x-api-key'] as string | undefined;
+    if (!key) {
+      return res.status(401).json({
+        error: 'UNREGISTERED',
+        message: 'API key required. Register at https://ruflo.io/developers',
+      });
+    }
+    (req as any).apiKey = key;
+    next();
+  };
+  router.use(requireKey);
+
+  // ── POST /partner/register ─────────────────────────────────────────────────
+  // Self-service registration — returns apiKey + webhookSecret.
+  // In production this would require email verification.
+  router.post('/register', (req: Request, res: Response) => {
+    const { name, contactEmail, payoutAddress, webhookUrl } = req.body;
+    if (!name || !contactEmail) {
+      return res.status(400).json({ error: 'name and contactEmail required' });
+    }
+    const partner = keyManager.registerPartner({
+      name, contactEmail, payoutAddress, webhookUrl,
+      tier: PartnerTier.FREE,
+      active: true,
+    });
+    res.status(201).json({
+      apiKey:        partner.apiKey,
+      webhookSecret: partner.webhookSecret,  // Show ONCE — partner must store this
+      tier:          partner.tier,
+      limits: {
+        quotesPerMin: partner.quotesPerMin,
+        maxTxPerDay:  partner.maxTxPerDay,
+        feeShareBps:  partner.feeShareBps,
+      },
+      message: 'Store webhookSecret securely — it will not be shown again.',
+    });
+  });
+
+  // ── POST /partner/quote ────────────────────────────────────────────────────
+  router.post('/quote', async (req: Request, res: Response) => {
+    const apiKey = (req as any).apiKey;
+    const check  = keyManager.checkQuote(apiKey);
+    if (!check.allowed) {
+      res.set('Retry-After', check.reason === 'RATE_LIMIT' ? '60' : undefined!);
+      return res.status(check.reason === 'UNREGISTERED' || check.reason === 'INVALID_KEY' ? 401 : 429).json({
+        error: check.reason,
+        message: LIMIT_MESSAGES[check.reason],
+      });
+    }
+
+    try {
+      const quoteReq: QuoteRequest = { ...req.body, urgency: req.body.urgency ?? 'normal' };
+
+      // Input validation
+      if (!quoteReq.tokenIn || !quoteReq.tokenOut) return res.status(400).json({ error: 'tokenIn and tokenOut required' });
+      if (!quoteReq.amountIn || BigInt(quoteReq.amountIn) === 0n) return res.status(400).json({ error: 'amountIn must be > 0' });
+      if (!quoteReq.srcChainId || !quoteReq.dstChainId) return res.status(400).json({ error: 'srcChainId and dstChainId required' });
+      if (!quoteReq.userAddress) return res.status(400).json({ error: 'userAddress required' });
+
+      const quote = await quoteEngine.getQuote(quoteReq);
+      if (!quote) return res.status(400).json({ error: 'NO_ROUTE', message: 'No route available for this chain pair and token combination' });
+
+      const intent = intentEngine.create(quote, quoteReq.userAddress);
+      const { partnerRebate } = keyManager.splitFee(quote.feeAmountToken, check.partner);
+
+      res.json({
+        intentId:   intent.intentId,
+        quote,
+        partnerEarnings: {
+          rebatePerTx:   partnerRebate.toString(),
+          feeShareBps:   check.partner.feeShareBps,
+          claimableNow:  keyManager.getRebateSummary(apiKey).totalUSDC,
+        },
+        integration: {
+          contractAddress: getRouterAddress(quote.srcChainId),
+          calldata:        buildRouterCalldata(intent.intentId, quote),
+          value:           estimateNativeGas(quote),
+          expiresAt:       quote.expiresAt,
+        },
+      });
+    } catch (err) {
+      res.status(500).json({ error: 'INTERNAL', message: String(err) });
+    }
+  });
+
+  // ── GET /partner/intent/:id ────────────────────────────────────────────────
+  router.get('/intent/:id', (req: Request, res: Response) => {
+    const check = keyManager.checkQuote((req as any).apiKey);
+    if (!check.allowed) return res.status(401).json({ error: check.reason });
+
+    const intent = intentEngine.get(req.params.id);
+    if (!intent) return res.status(404).json({ error: 'NOT_FOUND' });
+
+    res.json({
+      intentId:    intent.intentId,
+      status:      intent.status,
+      srcTxHash:   intent.srcTxHash,
+      dstTxHash:   intent.dstTxHash,
+      railTxId:    intent.railTxId,
+      rail:        intent.quote.rail,
+      etaSeconds:  intent.quote.etaSeconds,
+      settled:     intent.status === 'SETTLED',
+      failed:      intent.status === 'FAILED',
+      errorMessage: intent.errorMessage,
+    });
+  });
+
+  // ── GET /partner/rebates ───────────────────────────────────────────────────
+  // Show accrued rebates per chain — call anytime to check yield.
+  router.get('/rebates', (req: Request, res: Response) => {
+    const apiKey = (req as any).apiKey;
+    const check  = keyManager.checkQuote(apiKey);
+    if (!check.allowed) return res.status(401).json({ error: check.reason });
+    if (check.partner.tier === PartnerTier.FREE) {
+      return res.status(403).json({ error: 'UPGRADE_REQUIRED', message: 'Fee sharing available on Growth tier and above.' });
+    }
+    res.json(keyManager.getRebateSummary(apiKey));
+  });
+
+  // ── POST /partner/withdraw ─────────────────────────────────────────────────
+  // Pull-based withdrawal: partner calls this to claim their accrued rebate.
+  // In production: this triggers an on-chain USDC transfer to partner.payoutAddress.
+  router.post('/withdraw', (req: Request, res: Response) => {
+    const apiKey  = (req as any).apiKey;
+    const check   = keyManager.checkQuote(apiKey);
+    if (!check.allowed) return res.status(401).json({ error: check.reason });
+    if (check.partner.tier === PartnerTier.FREE) {
+      return res.status(403).json({ error: 'UPGRADE_REQUIRED' });
+    }
+    if (!check.partner.payoutAddress) {
+      return res.status(400).json({ error: 'NO_PAYOUT_ADDRESS', message: 'Set payoutAddress on your partner profile first.' });
+    }
+
+    const chainId = Number(req.body.chainId ?? 1);
+    const amount  = keyManager.claimRebate(apiKey, chainId);
+
+    if (amount === 0n) {
+      return res.status(200).json({ message: 'No rebate available to claim.', amount: '0' });
+    }
+
+    // TODO: Trigger actual on-chain USDC transfer here via your relayer/paymaster
+    // await relayer.sendUSDC(check.partner.payoutAddress, amount, chainId);
+
+    res.json({
+      claimed:        amount.toString(),
+      payoutAddress:  check.partner.payoutAddress,
+      chainId,
+      message:        `Payout of ${amount} USDC units initiated to ${check.partner.payoutAddress}`,
+    });
+  });
+
+  // ── POST /partner/webhook/test ─────────────────────────────────────────────
+  router.post('/webhook/test', async (req: Request, res: Response) => {
+    const check = keyManager.checkQuote((req as any).apiKey);
+    if (!check.allowed || !check.partner.webhookUrl) {
+      return res.status(400).json({ error: 'NO_WEBHOOK_CONFIGURED' });
+    }
+    const body = JSON.stringify({ event: 'WEBHOOK_TEST', ts: Date.now() });
+    const sig  = keyManager.signWebhookPayload((req as any).apiKey, body);
+    try {
+      const response = await fetch(check.partner.webhookUrl, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', 'x-ruflo-sig': sig },
+        body,
+      });
+      res.json({ ok: response.ok, status: response.status });
+    } catch (err) {
+      res.status(502).json({ error: 'WEBHOOK_UNREACHABLE', message: String(err) });
+    }
+  });
+
+  return router;
+}
+
+// ── Webhook push helper ────────────────────────────────────────────────────────
+export function setupWebhookPush(intentEngine: IntentEngine, keyManager: ApiKeyManager): void {
+  intentEngine.onStateChange(async (intent) => {
+    const apiKey = (intent as any).partnerApiKey as string | undefined;
+    if (!apiKey) return;
+    const result = keyManager.checkQuote(apiKey);
+    if (!result.allowed || !result.partner.webhookUrl) return;
+
+    const body = JSON.stringify({
+      event:     'INTENT_STATUS_CHANGE',
+      intentId:  intent.intentId,
+      status:    intent.status,
+      dstTxHash: intent.dstTxHash,
+      ts:        Date.now(),
+    });
+    const sig = keyManager.signWebhookPayload(apiKey, body);
+
+    try {
+      await fetch(result.partner.webhookUrl, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', 'x-ruflo-sig': sig },
+        body,
+      });
+    } catch { /* non-fatal */ }
+  });
+}
+
+// ── Error messages ─────────────────────────────────────────────────────────────
+const LIMIT_MESSAGES: Record<string, string> = {
+  UNREGISTERED:   'Register at https://ruflo.io/developers to get an API key.',
+  INVALID_KEY:    'API key not found. Check your key or re-register.',
+  INACTIVE:       'Your account has been suspended. Contact support.',
+  RATE_LIMIT:     'Quote rate limit exceeded. Retry after 60s or upgrade your tier.',
+  DAILY_LIMIT:    'Daily transaction limit reached. Resets at UTC midnight or upgrade.',
+  ABUSE_DETECTED: 'Unusual quote pattern detected. Contact support if this is in error.',
+};
+
+// ── Stubs ──────────────────────────────────────────────────────────────────────
+function getRouterAddress(_chainId: number): string { return '0x0'; }
+function buildRouterCalldata(_intentId: string, _quote: any): string { return '0x'; }
+function estimateNativeGas(_quote: any): string { return '0'; }

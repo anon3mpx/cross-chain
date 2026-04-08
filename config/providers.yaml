@@ -1,0 +1,156 @@
+# EMPX-Cross-Chain V3 - Multi-Provider LLM Routing Configuration
+# Strategy: Priority fallback with health monitoring
+# All providers use OpenAI-compatible endpoints
+
+version: "1.0"
+
+routing:
+  strategy: priority-fallback    # Try highest priority first, cascade on failure
+  healthCheck:
+    enabled: true
+    intervalMs: 60000            # Check provider health every 60s
+    timeoutMs: 5000
+  rateLimitRecoveryMs: 30000     # Wait 30s before retrying rate-limited provider
+  maxRetriesPerProvider: 3
+
+providers:
+  # Priority 1: Groq - Ultra-fast inference (free tier: ~30 RPM)
+  groq:
+    type: openai
+    enabled: true
+    priority: 1
+    apiKey: ${GROQ_API_KEY}
+    baseUrl: https://api.groq.com/openai/v1
+    models:
+      default: llama-3.3-70b-versatile
+      fast: llama-3.3-70b-specdec
+      small: llama-3.1-8b-instant
+    timeout: 30000
+    costPerToken: 0
+    maxRetries: 3
+    rateLimits:
+      requestsPerMinute: 30
+      tokensPerMinute: 15000
+
+  # Priority 2: NVIDIA NIM - Qwen 3.5 122B with thinking
+  nvidia:
+    type: openai
+    enabled: true
+    priority: 2
+    apiKey: ${NVIDIA_API_KEY}
+    baseUrl: https://integrate.api.nvidia.com/v1
+    models:
+      default: qwen/qwen3.5-122b-a10b
+      large: qwen/qwen3.5-122b-a10b
+      small: meta/llama-3.1-8b-instruct
+    chatTemplateKwargs:
+      enable_thinking: true
+    timeout: 45000
+    costPerToken: 0
+    maxRetries: 3
+    rateLimits:
+      requestsPerMinute: 20
+      tokensPerMinute: 10000
+
+  # Priority 3: Mistral - Good quality/speed balance
+  mistral:
+    type: openai
+    enabled: true
+    priority: 3
+    apiKey: ${MISTRAL_API_KEY}
+    baseUrl: https://api.mistral.ai/v1
+    models:
+      default: mistral-small-latest
+      large: mistral-large-latest
+      code: codestral-latest
+    timeout: 45000
+    costPerToken: 0
+    maxRetries: 3
+    rateLimits:
+      requestsPerMinute: 20
+      tokensPerMinute: 10000
+
+  # Priority 4: Moonshot (Kimi) - Long context specialist
+  moonshot:
+    type: openai
+    enabled: true
+    priority: 4
+    apiKey: ${MOONSHOT_API_KEY}
+    baseUrl: https://api.moonshot.cn/v1
+    models:
+      default: moonshot-v1-8k
+      large: moonshot-v1-32k
+      longcontext: moonshot-v1-128k
+    timeout: 60000
+    costPerToken: 0
+    maxRetries: 2
+    rateLimits:
+      requestsPerMinute: 15
+      tokensPerMinute: 8000
+
+  # Priority 5: Zhipu GLM - Overflow fallback
+  zhipu:
+    type: openai
+    enabled: true
+    priority: 5
+    apiKey: ${ZHIPU_API_KEY}
+    baseUrl: https://open.bigmodel.cn/api/paas/v4
+    models:
+      default: glm-4-flash
+      large: glm-4-plus
+      small: glm-4-flash
+    timeout: 60000
+    costPerToken: 0
+    maxRetries: 2
+    rateLimits:
+      requestsPerMinute: 10
+      tokensPerMinute: 5000
+
+  # Claude (Anthropic) - Premium reasoning, used via Claude Code subscription
+  # Reserved for Tier 3 complex tasks: architecture, security, multi-step reasoning
+  anthropic:
+    type: anthropic
+    enabled: true
+    priority: 0              # Highest quality, but use sparingly (subscription limits)
+    apiKey: ${ANTHROPIC_API_KEY}
+    models:
+      default: claude-sonnet-4-6
+      large: claude-opus-4-6
+      fast: claude-haiku-4-5-20251001
+    timeout: 120000
+    costPerToken: 0.003
+    maxRetries: 2
+    rateLimits:
+      requestsPerMinute: 50
+      tokensPerMinute: 100000
+    reserveForTier: 3        # Only use for complex/critical tasks
+
+  # Local ONNX fallback - always available, no API key needed
+  onnx:
+    type: local
+    enabled: true
+    priority: 99
+    models:
+      default: Xenova/all-MiniLM-L6-v2
+    timeout: 120000
+    costPerToken: 0
+    maxRetries: 1
+
+# Task-to-tier mapping (ADR-026)
+tierRouting:
+  # Tier 1: Skip LLM entirely - use WASM/Edit tool
+  tier1:
+    maxComplexity: 10
+    handler: agent-booster
+
+  # Tier 2: Simple tasks -> fastest free provider
+  tier2:
+    maxComplexity: 30
+    preferredProviders: [groq, nvidia]
+    modelSize: small
+
+  # Tier 3: Complex tasks -> best available model (Claude for critical work)
+  tier3:
+    minComplexity: 30
+    preferredProviders: [anthropic, nvidia, mistral, groq]
+    modelSize: large

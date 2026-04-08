@@ -1,0 +1,66 @@
+// ─────────────────────────────────────────────────────────
+// EMPX-Cross-Chain VPS — Status API
+// Lightweight Express REST API for frontend / SDK to poll intent status.
+// No auth needed — intentId is a UUID (unguessable).
+// ─────────────────────────────────────────────────────────
+
+import express, { Request, Response } from 'express';
+import { IntentEngine } from '../services/IntentEngine';
+import { QuoteEngine } from '../services/QuoteEngine';
+import { QuoteRequest, IntentStatus } from '../types';
+
+export function buildStatusAPI(
+  intentEngine: IntentEngine,
+  quoteEngine: QuoteEngine,
+): express.Application {
+  const app = express();
+  app.use(express.json());
+
+  // ── GET /quote ─────────────────────────────────────────────────────────────
+  // Returns a full quote with intentId. Frontend uses this to build the tx.
+  app.post('/quote', async (req: Request, res: Response) => {
+    try {
+      const quoteReq: QuoteRequest = req.body;
+      const quote = await quoteEngine.getQuote(quoteReq);
+      if (!quote) return res.status(400).json({ error: 'No route available for this pair' });
+
+      // Pre-create intent in QUOTED state
+      const intent = intentEngine.create(quote, quoteReq.userAddress);
+      res.json({ quote, intentId: intent.intentId });
+    } catch (err) {
+      res.status(500).json({ error: String(err) });
+    }
+  });
+
+  // ── GET /intent/:id ────────────────────────────────────────────────────────
+  // Poll this for intent status. Frontend shows progress to user.
+  app.get('/intent/:id', (req: Request, res: Response) => {
+    const intent = intentEngine.get(req.params.id);
+    if (!intent) return res.status(404).json({ error: 'Intent not found' });
+
+    res.json({
+      intentId:    intent.intentId,
+      status:      intent.status,
+      srcTxHash:   intent.srcTxHash,
+      dstTxHash:   intent.dstTxHash,
+      railTxId:    intent.railTxId,
+      rail:        intent.quote.rail,
+      etaSeconds:  intent.quote.etaSeconds,
+      createdAt:   intent.createdAt,
+      updatedAt:   intent.updatedAt,
+      errorMessage: intent.errorMessage,
+    });
+  });
+
+  // ── GET /health ────────────────────────────────────────────────────────────
+  app.get('/health', (_req, res) => {
+    const counts = Object.values(IntentStatus).reduce((acc, s) => {
+      acc[s] = intentEngine.getByStatus(s as IntentStatus).length;
+      return acc;
+    }, {} as Record<string, number>);
+
+    res.json({ ok: true, intents: counts, ts: Date.now() });
+  });
+
+  return app;
+}
