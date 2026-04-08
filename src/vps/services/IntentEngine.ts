@@ -12,6 +12,8 @@ const STUCK_THRESHOLDS_MS: Record<Rail, number> = {
   [Rail.VIA_LABS]:  8  * 60 * 1000,  // 8 min (normally 3 min)
   [Rail.AXELAR]:    10 * 60 * 1000,  // 10 min (normally 90s)
   [Rail.LAYERZERO]: 10 * 60 * 1000,  // 10 min (normally 2 min)
+  [Rail.WORMHOLE]:  10 * 60 * 1000,  // 10 min
+  [Rail.THORCHAIN]: 20 * 60 * 1000,  // 20 min incl. native-chain confirmation latency
 };
 
 export class IntentEngine {

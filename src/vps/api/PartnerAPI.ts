@@ -1,13 +1,15 @@
 // ─────────────────────────────────────────────────────────
 // EMPX-Cross-Chain VPS — Partner API
-// ALL endpoints require a registered API key.
-// No anonymous/public access to quote engine.
+// Registration is public; all operational endpoints require an API key.
 // ─────────────────────────────────────────────────────────
 import express, { Request, Response, NextFunction } from 'express';
 import { ApiKeyManager, PartnerTier } from '../services/ApiKeyManager';
 import { IntentEngine } from '../services/IntentEngine';
 import { QuoteEngine } from '../services/QuoteEngine';
-import { QuoteRequest } from '../types';
+import { getChainConfig } from '../config/chains';
+import { parseQuoteRequest, serializeQuote } from './quoteCodec';
+
+const ZERO_ADDR = '0x0000000000000000000000000000000000000000';
 
 export function buildPartnerAPI(
   keyManager: ApiKeyManager,
@@ -15,20 +17,6 @@ export function buildPartnerAPI(
   quoteEngine: QuoteEngine,
 ): express.Router {
   const router = express.Router();
-
-  // ── Auth middleware — mandatory, no fallback ───────────────────────────────
-  const requireKey = (req: Request, res: Response, next: NextFunction) => {
-    const key = req.headers['x-api-key'] as string | undefined;
-    if (!key) {
-      return res.status(401).json({
-        error: 'UNREGISTERED',
-        message: 'API key required. Register at https://ruflo.io/developers',
-      });
-    }
-    (req as any).apiKey = key;
-    next();
-  };
-  router.use(requireKey);
 
   // ── POST /partner/register ─────────────────────────────────────────────────
   // Self-service registration — returns apiKey + webhookSecret.
@@ -56,12 +44,26 @@ export function buildPartnerAPI(
     });
   });
 
+  // ── Auth middleware — mandatory, no fallback ───────────────────────────────
+  const requireKey = (req: Request, res: Response, next: NextFunction) => {
+    const key = req.headers['x-api-key'] as string | undefined;
+    if (!key) {
+      return res.status(401).json({
+        error: 'UNREGISTERED',
+        message: 'API key required. Register at https://ruflo.io/developers',
+      });
+    }
+    (req as any).apiKey = key;
+    next();
+  };
+  router.use(requireKey);
+
   // ── POST /partner/quote ────────────────────────────────────────────────────
   router.post('/quote', async (req: Request, res: Response) => {
     const apiKey = (req as any).apiKey;
     const check  = keyManager.checkQuote(apiKey);
     if (!check.allowed) {
-      res.set('Retry-After', check.reason === 'RATE_LIMIT' ? '60' : undefined!);
+      if (check.reason === 'RATE_LIMIT') res.set('Retry-After', '60');
       return res.status(check.reason === 'UNREGISTERED' || check.reason === 'INVALID_KEY' ? 401 : 429).json({
         error: check.reason,
         message: LIMIT_MESSAGES[check.reason],
@@ -69,12 +71,13 @@ export function buildPartnerAPI(
     }
 
     try {
-      const quoteReq: QuoteRequest = { ...req.body, urgency: req.body.urgency ?? 'normal' };
+      const quoteReq = parseQuoteRequest(req.body, 'normal');
 
       // Input validation
       if (!quoteReq.tokenIn || !quoteReq.tokenOut) return res.status(400).json({ error: 'tokenIn and tokenOut required' });
-      if (!quoteReq.amountIn || BigInt(quoteReq.amountIn) === 0n) return res.status(400).json({ error: 'amountIn must be > 0' });
-      if (!quoteReq.srcChainId || !quoteReq.dstChainId) return res.status(400).json({ error: 'srcChainId and dstChainId required' });
+      if (!Number.isFinite(quoteReq.srcChainId) || !Number.isFinite(quoteReq.dstChainId)) {
+        return res.status(400).json({ error: 'srcChainId and dstChainId required' });
+      }
       if (!quoteReq.userAddress) return res.status(400).json({ error: 'userAddress required' });
 
       const quote = await quoteEngine.getQuote(quoteReq);
@@ -82,30 +85,39 @@ export function buildPartnerAPI(
 
       const intent = intentEngine.create(quote, quoteReq.userAddress);
       const { partnerRebate } = keyManager.splitFee(quote.feeAmountToken, check.partner);
+      const routerAddress = getRouterAddress(quote.srcChainId);
+      if (routerAddress === ZERO_ADDR) {
+        return res.status(503).json({
+          error: 'CHAIN_NOT_CONFIGURED',
+          message: `RouterV1 address missing for source chain ${quote.srcChainId}`,
+        });
+      }
 
       res.json({
         intentId:   intent.intentId,
-        quote,
+        quote: serializeQuote(quote),
         partnerEarnings: {
           rebatePerTx:   partnerRebate.toString(),
           feeShareBps:   check.partner.feeShareBps,
           claimableNow:  keyManager.getRebateSummary(apiKey).totalUSDC,
         },
         integration: {
-          contractAddress: getRouterAddress(quote.srcChainId),
-          calldata:        buildRouterCalldata(intent.intentId, quote),
+          contractAddress: routerAddress,
+          calldata:        buildRouterCalldata(intent.intentId, serializeQuote(quote)),
           value:           estimateNativeGas(quote),
           expiresAt:       quote.expiresAt,
         },
       });
     } catch (err) {
-      res.status(500).json({ error: 'INTERNAL', message: String(err) });
+      const msg = String(err);
+      const code = msg.toLowerCase().includes('amountin') || msg.toLowerCase().includes('payload') ? 400 : 500;
+      res.status(code).json({ error: code === 400 ? 'INVALID_REQUEST' : 'INTERNAL', message: msg });
     }
   });
 
   // ── GET /partner/intent/:id ────────────────────────────────────────────────
   router.get('/intent/:id', (req: Request, res: Response) => {
-    const check = keyManager.checkQuote((req as any).apiKey);
+    const check = keyManager.validateKey((req as any).apiKey);
     if (!check.allowed) return res.status(401).json({ error: check.reason });
 
     const intent = intentEngine.get(req.params.id);
@@ -129,7 +141,7 @@ export function buildPartnerAPI(
   // Show accrued rebates per chain — call anytime to check yield.
   router.get('/rebates', (req: Request, res: Response) => {
     const apiKey = (req as any).apiKey;
-    const check  = keyManager.checkQuote(apiKey);
+    const check  = keyManager.validateKey(apiKey);
     if (!check.allowed) return res.status(401).json({ error: check.reason });
     if (check.partner.tier === PartnerTier.FREE) {
       return res.status(403).json({ error: 'UPGRADE_REQUIRED', message: 'Fee sharing available on Growth tier and above.' });
@@ -142,7 +154,7 @@ export function buildPartnerAPI(
   // In production: this triggers an on-chain USDC transfer to partner.payoutAddress.
   router.post('/withdraw', (req: Request, res: Response) => {
     const apiKey  = (req as any).apiKey;
-    const check   = keyManager.checkQuote(apiKey);
+    const check   = keyManager.validateKey(apiKey);
     if (!check.allowed) return res.status(401).json({ error: check.reason });
     if (check.partner.tier === PartnerTier.FREE) {
       return res.status(403).json({ error: 'UPGRADE_REQUIRED' });
@@ -171,7 +183,7 @@ export function buildPartnerAPI(
 
   // ── POST /partner/webhook/test ─────────────────────────────────────────────
   router.post('/webhook/test', async (req: Request, res: Response) => {
-    const check = keyManager.checkQuote((req as any).apiKey);
+    const check = keyManager.validateKey((req as any).apiKey);
     if (!check.allowed || !check.partner.webhookUrl) {
       return res.status(400).json({ error: 'NO_WEBHOOK_CONFIGURED' });
     }
@@ -197,7 +209,7 @@ export function setupWebhookPush(intentEngine: IntentEngine, keyManager: ApiKeyM
   intentEngine.onStateChange(async (intent) => {
     const apiKey = (intent as any).partnerApiKey as string | undefined;
     if (!apiKey) return;
-    const result = keyManager.checkQuote(apiKey);
+    const result = keyManager.validateKey(apiKey);
     if (!result.allowed || !result.partner.webhookUrl) return;
 
     const body = JSON.stringify({
@@ -230,6 +242,10 @@ const LIMIT_MESSAGES: Record<string, string> = {
 };
 
 // ── Stubs ──────────────────────────────────────────────────────────────────────
-function getRouterAddress(_chainId: number): string { return '0x0'; }
-function buildRouterCalldata(_intentId: string, _quote: any): string { return '0x'; }
+function getRouterAddress(chainId: number): string {
+  return getChainConfig(chainId)?.routerV1 ?? ZERO_ADDR;
+}
+function buildRouterCalldata(_intentId: string, _quote: any): string {
+  return '0x'; // TODO: encode RouterV1.initiateSwap(intent, swapPluginId, railPluginId)
+}
 function estimateNativeGas(_quote: any): string { return '0'; }

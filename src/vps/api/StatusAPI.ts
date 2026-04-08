@@ -1,13 +1,14 @@
 // ─────────────────────────────────────────────────────────
 // EMPX-Cross-Chain VPS — Status API
 // Lightweight Express REST API for frontend / SDK to poll intent status.
-// No auth needed — intentId is a UUID (unguessable).
+// No auth needed — intentId is a random bytes32 hex ID.
 // ─────────────────────────────────────────────────────────
 
 import express, { Request, Response } from 'express';
 import { IntentEngine } from '../services/IntentEngine';
 import { QuoteEngine } from '../services/QuoteEngine';
-import { QuoteRequest, IntentStatus } from '../types';
+import { IntentStatus } from '../types';
+import { parseQuoteRequest, serializeQuote } from './quoteCodec';
 
 export function buildStatusAPI(
   intentEngine: IntentEngine,
@@ -20,15 +21,21 @@ export function buildStatusAPI(
   // Returns a full quote with intentId. Frontend uses this to build the tx.
   app.post('/quote', async (req: Request, res: Response) => {
     try {
-      const quoteReq: QuoteRequest = req.body;
+      const quoteReq = parseQuoteRequest(req.body, 'normal');
+      if (!quoteReq.tokenIn || !quoteReq.tokenOut || !quoteReq.userAddress) {
+        return res.status(400).json({ error: 'tokenIn, tokenOut and userAddress are required' });
+      }
+      if (!Number.isFinite(quoteReq.srcChainId) || !Number.isFinite(quoteReq.dstChainId)) {
+        return res.status(400).json({ error: 'srcChainId and dstChainId are required' });
+      }
       const quote = await quoteEngine.getQuote(quoteReq);
       if (!quote) return res.status(400).json({ error: 'No route available for this pair' });
 
       // Pre-create intent in QUOTED state
       const intent = intentEngine.create(quote, quoteReq.userAddress);
-      res.json({ quote, intentId: intent.intentId });
+      res.json({ quote: serializeQuote(quote), intentId: intent.intentId });
     } catch (err) {
-      res.status(500).json({ error: String(err) });
+      res.status(400).json({ error: String(err) });
     }
   });
 

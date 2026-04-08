@@ -9,37 +9,12 @@
 
 import { ChainConfig, SettlementToken, CHAIN_ID } from '../types';
 
-// Chains where our RouterV1 aggregator is deployed (16 at launch).
-export const AGG_CHAIN_IDS = new Set<number>([
-  CHAIN_ID.ETH,
-  CHAIN_ID.ARB,
-  CHAIN_ID.BASE,
-  CHAIN_ID.OP,
-  CHAIN_ID.POLYGON,
-  CHAIN_ID.AVAX,
-  CHAIN_ID.BSC,
-  250,    // Fantom
-  100,    // Gnosis
-  1101,   // Polygon zkEVM
-  59144,  // Linea
-  5000,   // Mantle
-  34443,  // Mode
-  81457,  // Blast
-  534352, // Scroll
-  324,    // zkSync Era
-]);
-
-// Hub chains: well-connected chains used as intermediate hops when no direct rail
-// exists. Must have many rails AND ideally have our aggregator for token conversion.
-export const HUB_CHAIN_IDS: number[] = [
-  CHAIN_ID.ARB,     // Most rails, high liquidity, has agg
-  CHAIN_ID.ETH,     // Maximum rail coverage
-  CHAIN_ID.BASE,    // CCTP-native, has agg
-  CHAIN_ID.AVAX,    // THORChain confirmed, CCTP, has agg
-  CHAIN_ID.OP,      // CCTP-native, has agg
-  CHAIN_ID.BSC,     // THORChain confirmed, Axelar/LZ, has agg
-  CHAIN_ID.POLYGON, // CCTP, Axelar, LZ, has agg
-];
+function env(key: string): string | undefined {
+  const value = process.env[key];
+  if (!value) return undefined;
+  const trimmed = value.trim();
+  return trimmed.length > 0 ? trimmed : undefined;
+}
 
 const cfg = (
   chainId: number,
@@ -50,8 +25,10 @@ const cfg = (
   isEVM = true,
 ): ChainConfig => ({
   chainId, name,
-  rpcUrl: '',      // populated from env at runtime
-  rpcFallback: '',
+  rpcUrl: env(`CHAIN_${chainId}_RPC_URL`) ?? '',
+  rpcFallback: env(`CHAIN_${chainId}_RPC_FALLBACK`) ?? '',
+  routerV1: env(`CHAIN_${chainId}_ROUTER_V1`),
+  receiverV1: env(`CHAIN_${chainId}_RECEIVER_V1`),
   hasAggregator,
   nativeStable,
   blockTimeMs,
@@ -60,22 +37,31 @@ const cfg = (
 
 export const CHAIN_CONFIGS: Record<number, ChainConfig> = {
   // ── Aggregator-deployed chains ────────────────────────────────────────────
-  [CHAIN_ID.ETH]:     cfg(CHAIN_ID.ETH,     'ethereum',      true,  SettlementToken.USDC, 12000),
-  [CHAIN_ID.ARB]:     cfg(CHAIN_ID.ARB,     'arbitrum',      true,  SettlementToken.USDC, 250),
-  [CHAIN_ID.BASE]:    cfg(CHAIN_ID.BASE,    'base',          true,  SettlementToken.USDC, 2000),
-  [CHAIN_ID.OP]:      cfg(CHAIN_ID.OP,      'optimism',      true,  SettlementToken.USDC, 2000),
-  [CHAIN_ID.POLYGON]: cfg(CHAIN_ID.POLYGON, 'polygon',       true,  SettlementToken.USDC, 2000),
-  [CHAIN_ID.AVAX]:    cfg(CHAIN_ID.AVAX,    'avalanche',     true,  SettlementToken.USDC, 2000),
-  [CHAIN_ID.BSC]:     cfg(CHAIN_ID.BSC,     'bsc',           true,  SettlementToken.USDT, 3000), // USDT-dominant
-  250:    cfg(250,    'fantom',             true,  SettlementToken.USDC, 1000),
-  100:    cfg(100,    'gnosis',             true,  SettlementToken.USDC, 5000),
-  1101:   cfg(1101,   'polygon-zkevm',      true,  SettlementToken.USDC, 3000),
-  59144:  cfg(59144,  'linea',              true,  SettlementToken.USDC, 2000),
-  5000:   cfg(5000,   'mantle',             true,  SettlementToken.USDC, 2000),
-  34443:  cfg(34443,  'mode',               true,  SettlementToken.USDC, 2000),
-  81457:  cfg(81457,  'blast',              true,  SettlementToken.ETH,  2000),  // ETH-dominant
-  534352: cfg(534352, 'scroll',             true,  SettlementToken.USDC, 3000),
-  324:    cfg(324,    'zksync-era',         true,  SettlementToken.USDC, 1000),
+  [CHAIN_ID.PULSE]:    cfg(CHAIN_ID.PULSE,    'pulsechain', true, SettlementToken.USDC, 3000),
+  [CHAIN_ID.BSC]:      cfg(CHAIN_ID.BSC,      'bsc',        true, SettlementToken.USDT, 3000), // USDT-dominant
+  [CHAIN_ID.ARB]:      cfg(CHAIN_ID.ARB,      'arbitrum',   true, SettlementToken.USDC, 250),
+  [CHAIN_ID.BASE]:     cfg(CHAIN_ID.BASE,     'base',       true, SettlementToken.USDC, 2000),
+  [CHAIN_ID.POLYGON]:  cfg(CHAIN_ID.POLYGON,  'polygon',    true, SettlementToken.USDC, 2000),
+  [CHAIN_ID.AVAX]:     cfg(CHAIN_ID.AVAX,     'avalanche',  true, SettlementToken.USDC, 2000),
+  [CHAIN_ID.OP]:       cfg(CHAIN_ID.OP,       'optimism',   true, SettlementToken.USDC, 2000),
+  [CHAIN_ID.MONAD]:    cfg(CHAIN_ID.MONAD,    'monad',      true, SettlementToken.USDC, 1000),
+  [CHAIN_ID.SONIC]:    cfg(CHAIN_ID.SONIC,    'sonic',      true, SettlementToken.USDC, 1000),
+  [CHAIN_ID.SEI]:      cfg(CHAIN_ID.SEI,      'sei',        true, SettlementToken.USDC, 500),
+  [CHAIN_ID.BERACHAIN]:cfg(CHAIN_ID.BERACHAIN,'berachain',  true, SettlementToken.USDC, 2000),
+  [CHAIN_ID.ROOTSTOCK]:cfg(CHAIN_ID.ROOTSTOCK,'rootstock',  true, SettlementToken.USDC, 30000),
+  [CHAIN_ID.ETHPOW]:   cfg(CHAIN_ID.ETHPOW,   'ethpow',     true, SettlementToken.USDC, 13000),
+  [CHAIN_ID.HYPEREVM]: cfg(CHAIN_ID.HYPEREVM, 'hyperevm',   true, SettlementToken.USDC, 2000),
+
+  // Optional high-liquidity hubs / existing infra chain configs
+  [CHAIN_ID.ETH]:      cfg(CHAIN_ID.ETH,      'ethereum',   false, SettlementToken.USDC, 12000),
+  1101:                cfg(1101,              'polygon-zkevm', false, SettlementToken.USDC, 3000),
+  59144:               cfg(59144,             'linea',      false, SettlementToken.USDC, 2000),
+  5000:                cfg(5000,              'mantle',     false, SettlementToken.USDC, 2000),
+  34443:               cfg(34443,             'mode',       false, SettlementToken.USDC, 2000),
+  81457:               cfg(81457,             'blast',      false, SettlementToken.ETH,  2000),
+  534352:              cfg(534352,            'scroll',     false, SettlementToken.USDC, 3000),
+  324:                 cfg(324,               'zksync-era', false, SettlementToken.USDC, 1000),
+
   // ── Settlement-only chains (no aggregator) ────────────────────────────────
   // These chains can receive/send settlement tokens but not do arbitrary swaps.
   7777777: cfg(7777777, 'zora',             false, SettlementToken.ETH, 2000),
@@ -91,6 +77,24 @@ export const CHAIN_CONFIGS: Record<number, ChainConfig> = {
   [CHAIN_ID.COSMOS]: cfg(CHAIN_ID.COSMOS, 'cosmos',     false, SettlementToken.USDC, 6000, false),
 };
 
+// Chains where our RouterV1/aggregator is deployed.
+// Derived from CHAIN_CONFIGS to avoid drift.
+export const AGG_CHAIN_IDS = new Set<number>(
+  Object.values(CHAIN_CONFIGS).filter(c => c.hasAggregator).map(c => c.chainId),
+);
+
+// Hub chains: well-connected chains used as intermediate hops when no direct rail exists.
+// Keep hubs biased toward high-liquidity chains that are likely to have deep rail coverage.
+export const HUB_CHAIN_IDS: number[] = [
+  CHAIN_ID.ARB,
+  CHAIN_ID.BASE,
+  CHAIN_ID.AVAX,
+  CHAIN_ID.OP,
+  CHAIN_ID.BSC,
+  CHAIN_ID.POLYGON,
+  CHAIN_ID.ETH,
+];
+
 /** Returns the ChainConfig for a given chainId, or undefined if unknown. */
 export function getChainConfig(chainId: number): ChainConfig | undefined {
   return CHAIN_CONFIGS[chainId];
@@ -98,5 +102,5 @@ export function getChainConfig(chainId: number): ChainConfig | undefined {
 
 /** true if our aggregator is deployed on this chain. */
 export function hasAggregator(chainId: number): boolean {
-  return AGG_CHAIN_IDS.has(chainId);
+  return CHAIN_CONFIGS[chainId]?.hasAggregator ?? false;
 }

@@ -141,6 +141,18 @@ export class ApiKeyManager {
     return { allowed: true, partner };
   }
 
+  /**
+   * Validates API key presence/existence/activity without mutating counters.
+   * Use for read-only endpoints and webhook delivery paths.
+   */
+  validateKey(apiKey: string | undefined): RateLimitResult {
+    if (!apiKey) return { allowed: false, reason: 'UNREGISTERED' };
+    const partner = this.partners.get(apiKey);
+    if (!partner) return { allowed: false, reason: 'INVALID_KEY' };
+    if (!partner.active) return { allowed: false, reason: 'INACTIVE' };
+    return { allowed: true, partner };
+  }
+
   // ── Fee split + rebate accrual ─────────────────────────────────────────────
 
   splitFee(grossFee: bigint, partner: PartnerConfig): { platformFee: bigint; partnerRebate: bigint } {

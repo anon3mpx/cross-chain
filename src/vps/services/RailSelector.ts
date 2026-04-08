@@ -4,9 +4,16 @@
 // All logic is in-memory — <1ms per call, no I/O.
 // ─────────────────────────────────────────────────────────
 
-import { Rail, RailConfig, RailScore, SettlementToken, ChainConfig, LIQUIDITY_RAILS, CHAIN_ID } from '../types';
+import { Rail, RailConfig, RailScore, SettlementToken, ChainConfig, CHAIN_ID } from '../types';
 
-const pid = (s: string) => '0x' + Buffer.from(s).toString('hex').padEnd(64, '0');
+const PLUGIN_ID = {
+  CCTP_V2:      '0xb148ea5f936a28661e11743b1650193f1b14a2322b9541503bf6815a84a1a6e9',
+  AXELAR_V1:    '0xdee0b34b74b60e53553685c32477090103c2b806eb925a8cd000efa92bef3e8b',
+  LZ_V2:        '0xc472efb7b9a986e1446d8bf9dec51e88548a1d8eb4a0810e6424d97a878d34fc',
+  VIA_LABS_V1:  '0x3c09500df72dbac855e61899e0dd4420addc8367cb7a5f60906b5450d7a71687',
+  WORMHOLE_V2:  '0xfdd3e68657787c00343d96c11d1cd189fa4dfe5f52999861b06e9f8e99ea902f',
+  THORCHAIN_V1: '0x390774707b6ae71a0ce31d10394e70b6ac75b3b62ec4db96c9672cafd1b516c9',
+} as const;
 
 // ── Static rail configs ────────────────────────────────────────────────────────
 export const RAIL_CONFIGS: Record<Rail, RailConfig> = {
@@ -15,35 +22,35 @@ export const RAIL_CONFIGS: Record<Rail, RailConfig> = {
     rail: Rail.CCTP, railType: 'messaging', fee: 0, etaSeconds: 25,
     supportsUSDC: true,  supportsUSDT: false, supportsETH: false,
     supportsBTC: false,  supportsSOL: false,
-    nativeUSDC: true, reliabilityScore: 0.997, pluginId: pid('CCTP_V2'),
+    nativeUSDC: true, reliabilityScore: 0.997, pluginId: PLUGIN_ID.CCTP_V2,
     requiresNativeAddr: false,
   },
   [Rail.VIA_LABS]: {
     rail: Rail.VIA_LABS, railType: 'messaging', fee: 0.25, etaSeconds: 180,
     supportsUSDC: true,  supportsUSDT: true,  supportsETH: true,
     supportsBTC: false,  supportsSOL: false,
-    nativeUSDC: true, reliabilityScore: 0.985, pluginId: pid('VIA_LABS_V1'),
+    nativeUSDC: true, reliabilityScore: 0.985, pluginId: PLUGIN_ID.VIA_LABS_V1,
     requiresNativeAddr: false,
   },
   [Rail.AXELAR]: {
     rail: Rail.AXELAR, railType: 'messaging', fee: 0.50, etaSeconds: 90,
     supportsUSDC: true,  supportsUSDT: true,  supportsETH: true,
     supportsBTC: false,  supportsSOL: false,
-    nativeUSDC: false, reliabilityScore: 0.992, pluginId: pid('AXELAR_V1'),
+    nativeUSDC: false, reliabilityScore: 0.992, pluginId: PLUGIN_ID.AXELAR_V1,
     requiresNativeAddr: false,
   },
   [Rail.LAYERZERO]: {
     rail: Rail.LAYERZERO, railType: 'messaging', fee: 0.35, etaSeconds: 120,
     supportsUSDC: true,  supportsUSDT: true,  supportsETH: true,
     supportsBTC: false,  supportsSOL: false,
-    nativeUSDC: false, reliabilityScore: 0.990, pluginId: pid('LZ_V2'),
+    nativeUSDC: false, reliabilityScore: 0.990, pluginId: PLUGIN_ID.LZ_V2,
     requiresNativeAddr: false,
   },
   [Rail.WORMHOLE]: {
     rail: Rail.WORMHOLE, railType: 'messaging', fee: 0.40, etaSeconds: 60,
     supportsUSDC: true,  supportsUSDT: false, supportsETH: true,
     supportsBTC: false,  supportsSOL: true,
-    nativeUSDC: false, reliabilityScore: 0.988, pluginId: pid('WORMHOLE_V2'),
+    nativeUSDC: false, reliabilityScore: 0.988, pluginId: PLUGIN_ID.WORMHOLE_V2,
     requiresNativeAddr: false,
   },
   // ── Liquidity rails ────────────────────────────────────────────────────────
@@ -51,7 +58,7 @@ export const RAIL_CONFIGS: Record<Rail, RailConfig> = {
     rail: Rail.THORCHAIN, railType: 'liquidity', fee: 0, feeSlippagePct: 0.2, etaSeconds: 60,
     supportsUSDC: true,  supportsUSDT: false, supportsETH: true,
     supportsBTC: true,   supportsSOL: true,   // THORChain added SOL
-    nativeUSDC: false, reliabilityScore: 0.975, pluginId: pid('THORCHAIN_V1'),
+    nativeUSDC: false, reliabilityScore: 0.975, pluginId: PLUGIN_ID.THORCHAIN_V1,
     requiresNativeAddr: true,   // BTC/SOL/DOGE destinations need native address
   },
 };
@@ -70,8 +77,15 @@ export const CHAIN_RAILS: Record<number, Rail[]> = {
   137:   [Rail.CCTP, Rail.AXELAR, Rail.LAYERZERO, Rail.VIA_LABS],
   43114: [Rail.CCTP, Rail.AXELAR, Rail.LAYERZERO, Rail.VIA_LABS, Rail.THORCHAIN],  // AVAX confirmed live
   56:    [Rail.AXELAR, Rail.LAYERZERO, Rail.VIA_LABS, Rail.THORCHAIN],              // BSC confirmed live
-  250:   [Rail.AXELAR, Rail.LAYERZERO],
-  100:   [Rail.AXELAR, Rail.LAYERZERO, Rail.VIA_LABS],                             // Gnosis
+  // ── Aggregator-deployed expansion chains ─────────────────────────────────
+  369:   [Rail.AXELAR, Rail.LAYERZERO, Rail.VIA_LABS],                              // PulseChain
+  143:   [Rail.AXELAR, Rail.LAYERZERO, Rail.VIA_LABS],                              // Monad
+  146:   [Rail.AXELAR, Rail.LAYERZERO, Rail.VIA_LABS],                              // Sonic
+  1329:  [Rail.AXELAR, Rail.LAYERZERO, Rail.VIA_LABS],                              // Sei
+  80094: [Rail.AXELAR, Rail.LAYERZERO, Rail.VIA_LABS],                              // Berachain
+  30:    [Rail.AXELAR, Rail.LAYERZERO, Rail.VIA_LABS],                              // Rootstock
+  10001: [Rail.AXELAR, Rail.LAYERZERO, Rail.VIA_LABS],                              // EthPOW
+  999:   [Rail.AXELAR, Rail.LAYERZERO, Rail.VIA_LABS],                              // HyperEVM
   // ── Tier-2 EVM alt-L2: partial coverage (hub-hop candidates) ────────────
   // These chains can reach major rails via Via Labs, Axelar or LayerZero
   // but may lack CCTP or THORChain. RouteBuilder will route via a hub when needed.

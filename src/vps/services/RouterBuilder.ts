@@ -23,24 +23,10 @@
 // ─────────────────────────────────────────────────────────
 
 import {
-  Rail, SettlementToken, Route, RouteType, Hop, CHAIN_ID, LIQUIDITY_RAILS,
+  Rail, SettlementToken, Route, RouteType, Hop,
 } from '../types';
 import { RAIL_CONFIGS, CHAIN_RAILS, RailSelector } from './RailSelector';
 import { getChainConfig, hasAggregator, HUB_CHAIN_IDS } from '../config/chains';
-
-// ── Settlement token compatibility matrix ─────────────────────────────────────
-// When two consecutive hops use different settlement tokens on the hub,
-// the hub aggregator must bridge them. This map defines which conversions are
-// trivially possible (same stablecoin family) vs require a DEX swap.
-const SAME_FAMILY: Partial<Record<SettlementToken, SettlementToken[]>> = {
-  [SettlementToken.USDC]: [SettlementToken.USDT], // USDC ↔ USDT via Curve/Uniswap
-  [SettlementToken.USDT]: [SettlementToken.USDC],
-};
-
-function settlementsCompatible(a: SettlementToken, b: SettlementToken): boolean {
-  if (a === b) return true;
-  return SAME_FAMILY[a]?.includes(b) ?? false;
-}
 
 // ── Route scoring ──────────────────────────────────────────────────────────────
 // Composite score for the full route (all hops combined).
@@ -123,7 +109,6 @@ export class RouteBuilder {
 
     if (shared.length === 0) return [];
 
-    const srcChain = getChainConfig(srcChainId);
     const dstChain = getChainConfig(dstChainId);
     const srcHasAgg = hasAggregator(srcChainId);
     const dstHasAgg = hasAggregator(dstChainId);
@@ -205,17 +190,16 @@ export class RouteBuilder {
       const routeType  = this._classifyRouteType(srcHasAgg, dstHasAgg);
       const hubCfg     = getChainConfig(hubId) ?? { chainId: hubId, nativeStable: SettlementToken.USDC } as any;
       const dstCfg     = getChainConfig(dstChainId) ?? { chainId: dstChainId, nativeStable: SettlementToken.USDC } as any;
+      const leg1Scores = this.selector.selectRail(srcChainId, hubId, hubCfg, amountUSD, urgency);
+      const leg2Scores = this.selector.selectRail(hubId, dstChainId, dstCfg, amountUSD, urgency);
 
       // Evaluate best combination of leg1 × leg2 rails
       for (const r1 of leg1Rails) {
         for (const r2 of leg2Rails) {
-          // Prefer not using the same rail twice (redundant)
+          // Prefer not using the same rail twice when alternatives exist.
+          if (r1 === r2 && leg1Rails.length > 1 && leg2Rails.length > 1) continue;
           const c1 = RAIL_CONFIGS[r1];
           const c2 = RAIL_CONFIGS[r2];
-
-          // Pick settlement tokens for each leg independently
-          const leg1Scores = this.selector.selectRail(srcChainId, hubId, hubCfg, amountUSD, urgency);
-          const leg2Scores = this.selector.selectRail(hubId, dstChainId, dstCfg, amountUSD, urgency);
 
           const st1 = leg1Scores.find(s => s.rail === r1)?.settlementToken ?? SettlementToken.USDC;
           const st2 = leg2Scores.find(s => s.rail === r2)?.settlementToken ?? SettlementToken.USDC;
@@ -225,7 +209,7 @@ export class RouteBuilder {
           const hubSwapNeeded  = tokenMismatch;
 
           // A token mismatch without a hub aggregator makes the route non-viable
-          const viable = tokenMismatch ? (hubHasAgg && settlementsCompatible(st1, st2)) : true;
+          const viable = tokenMismatch ? hubHasAgg : true;
           const reason = !viable
             ? `Hub ${hubId} has no aggregator to convert ${st1}→${st2}`
             : undefined;
@@ -237,7 +221,7 @@ export class RouteBuilder {
           };
           const hop2: Hop = {
             rail: r2, srcChainId: hubId, dstChainId,
-            settlementTokenIn: st1, settlementTokenOut: st2,
+            settlementTokenIn: st2, settlementTokenOut: st2,
             hubSwapNeeded,
           };
 
