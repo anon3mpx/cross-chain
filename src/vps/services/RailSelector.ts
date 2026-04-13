@@ -99,6 +99,14 @@ export const CHAIN_RAILS: Record<number, Rail[]> = {
   7777777:[Rail.LAYERZERO, Rail.VIA_LABS],                 // Zora
   1284:   [Rail.AXELAR, Rail.LAYERZERO, Rail.VIA_LABS],   // Moonbeam
   42220:  [Rail.AXELAR, Rail.LAYERZERO, Rail.VIA_LABS],   // Celo
+  // ── Testnet coverage (for staging/integration) ─────────────────────────
+  11155111: [Rail.CCTP, Rail.AXELAR, Rail.LAYERZERO], // Ethereum Sepolia
+  421614:   [Rail.CCTP, Rail.AXELAR, Rail.LAYERZERO], // Arbitrum Sepolia
+  84532:    [Rail.CCTP, Rail.AXELAR, Rail.LAYERZERO], // Base Sepolia
+  11155420: [Rail.CCTP, Rail.AXELAR, Rail.LAYERZERO], // Optimism Sepolia
+  43113:    [Rail.CCTP, Rail.AXELAR, Rail.LAYERZERO], // Avalanche Fuji
+  80002:    [Rail.CCTP, Rail.AXELAR, Rail.LAYERZERO], // Polygon Amoy
+  97:       [Rail.AXELAR, Rail.LAYERZERO],             // BSC Testnet
   // ── Non-EVM destinations — liquidity rails only ──────────────────────────
   [CHAIN_ID.BTC]:    [Rail.THORCHAIN],
   [CHAIN_ID.SOL]:    [Rail.THORCHAIN, Rail.WORMHOLE, Rail.CCTP],  // CCTP v2 on Solana (domain 5)

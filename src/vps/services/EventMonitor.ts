@@ -27,10 +27,13 @@ export class EventMonitor {
   // ── Setup ──────────────────────────────────────────────────────────────────
 
   addChain(chain: ChainConfig): void {
+    if (!chain.rpcUrl) return;
     const primary  = new ethers.JsonRpcProvider(chain.rpcUrl);
-    const fallback = new ethers.JsonRpcProvider(chain.rpcFallback);
+    const fallback = chain.rpcFallback
+      ? new ethers.JsonRpcProvider(chain.rpcFallback)
+      : undefined;
     this.providers.set(chain.chainId, primary);
-    this.fallbackProviders.set(chain.chainId, fallback);
+    if (fallback) this.fallbackProviders.set(chain.chainId, fallback);
 
     if (chain.routerV1) this._watchRouter(chain);
     if (chain.receiverV1) this._watchReceiver(chain);
@@ -40,7 +43,7 @@ export class EventMonitor {
 
   private _watchRouter(chain: ChainConfig): void {
     const provider = this.providers.get(chain.chainId)!;
-    const contract = new ethers.Contract(chain.routerV1, ROUTER_ABI, provider);
+    const contract = new ethers.Contract(chain.routerV1!, ROUTER_ABI, provider);
     this.contracts.set(`${chain.chainId}:router`, contract);
 
     contract.on('IntentInitiated', (intentId, user, tokenIn, amountIn, dstChainId, railTxId, event) => {
@@ -60,7 +63,7 @@ export class EventMonitor {
 
   private _watchReceiver(chain: ChainConfig): void {
     const provider = this.providers.get(chain.chainId)!;
-    const contract = new ethers.Contract(chain.receiverV1, RECEIVER_ABI, provider);
+    const contract = new ethers.Contract(chain.receiverV1!, RECEIVER_ABI, provider);
     this.contracts.set(`${chain.chainId}:receiver`, contract);
 
     contract.on('IntentSettled', (intentId, user, tokenOut, amountOut, event) => {

@@ -10,10 +10,8 @@ import { RouteBuilder } from './RouterBuilder';
 import { getChainConfig } from '../config/chains';
 import { getSettlementTokenAddress, getSwapPluginIdForChain } from '../config/contracts';
 import { randomBytes } from 'crypto';
+import { InMemoryQuoteCache, QuoteCache } from '../cache/QuoteCache';
 
-// Simple in-memory cache (replace with Redis at Tier 3+)
-interface CacheEntry { result: QuoteResult; expiresAt: number; }
-const quoteCache = new Map<string, CacheEntry>();
 const CACHE_TTL_MS = 30_000;
 const ZERO_PLUGIN_ID = '0x' + '0'.repeat(64);
 const LOWER_HEX_ADDR_RE = /^0x[0-9a-f]{40}$/;
@@ -26,16 +24,21 @@ const DEX_QUOTE_FNS: Record<number, QuoteFn> = {
 
 export class QuoteEngine {
   private routeBuilder = new RouteBuilder();
+  private readonly cache: QuoteCache;
+
+  constructor(cache: QuoteCache = new InMemoryQuoteCache()) {
+    this.cache = cache;
+  }
 
   async getQuote(req: QuoteRequest): Promise<QuoteResult | null> {
     const cacheKey = this._cacheKey(req);
-    const cached = quoteCache.get(cacheKey);
-    if (cached && Date.now() < cached.expiresAt) return cached.result;
+    const cached = await this.cache.get(cacheKey);
+    if (cached) return cached;
 
     const result = await this._buildQuote(req);
     if (!result) return null;
 
-    quoteCache.set(cacheKey, { result, expiresAt: Date.now() + CACHE_TTL_MS });
+    await this.cache.set(cacheKey, result, CACHE_TTL_MS);
     return result;
   }
 

@@ -19,17 +19,23 @@ function env(key: string): string | undefined {
 const cfg = (
   chainId: number,
   name: string,
-  hasAggregator: boolean,
+  defaultHasAggregator: boolean,
   nativeStable: SettlementToken = SettlementToken.USDC,
   blockTimeMs = 2000,
   isEVM = true,
 ): ChainConfig => ({
+  ...(() => {
+    const override = env(`CHAIN_${chainId}_HAS_AGGREGATOR`);
+    const hasAggregator = override
+      ? ['1', 'true', 'yes', 'on'].includes(override.toLowerCase())
+      : defaultHasAggregator;
+    return { hasAggregator };
+  })(),
   chainId, name,
   rpcUrl: env(`CHAIN_${chainId}_RPC_URL`) ?? '',
-  rpcFallback: env(`CHAIN_${chainId}_RPC_FALLBACK`) ?? '',
+  rpcFallback: env(`CHAIN_${chainId}_RPC_FALLBACK`) ?? env(`CHAIN_${chainId}_RPC_URL`) ?? '',
   routerV1: env(`CHAIN_${chainId}_ROUTER_V1`),
   receiverV1: env(`CHAIN_${chainId}_RECEIVER_V1`),
-  hasAggregator,
   nativeStable,
   blockTimeMs,
   isEVM,
@@ -61,6 +67,15 @@ export const CHAIN_CONFIGS: Record<number, ChainConfig> = {
   81457:               cfg(81457,             'blast',      false, SettlementToken.ETH,  2000),
   534352:              cfg(534352,            'scroll',     false, SettlementToken.USDC, 3000),
   324:                 cfg(324,               'zksync-era', false, SettlementToken.USDC, 1000),
+
+  // ── Testnets for staging + integration testing ────────────────────────────
+  11155111:            cfg(11155111,          'ethereum-sepolia',  false, SettlementToken.USDC, 12_000),
+  421614:              cfg(421614,            'arbitrum-sepolia',  false, SettlementToken.USDC, 300),
+  84532:               cfg(84532,             'base-sepolia',      false, SettlementToken.USDC, 2000),
+  11155420:            cfg(11155420,          'optimism-sepolia',  false, SettlementToken.USDC, 2000),
+  43113:               cfg(43113,             'avalanche-fuji',    false, SettlementToken.USDC, 2000),
+  80002:               cfg(80002,             'polygon-amoy',      false, SettlementToken.USDC, 2000),
+  97:                  cfg(97,                'bsc-testnet',       false, SettlementToken.USDT, 3000),
 
   // ── Settlement-only chains (no aggregator) ────────────────────────────────
   // These chains can receive/send settlement tokens but not do arbitrary swaps.
