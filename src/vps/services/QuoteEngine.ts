@@ -4,7 +4,7 @@
 // Results are cached 30s to minimise RPC calls.
 // ─────────────────────────────────────────────────────────
 
-import { QuoteRequest, QuoteResult, RouteType } from '../types';
+import { QuoteRequest, QuoteResult, Route, RouteType } from '../types';
 import { RAIL_CONFIGS } from './RailSelector';
 import { RouteBuilder } from './RouterBuilder';
 import { getChainConfig } from '../config/chains';
@@ -15,6 +15,7 @@ import { InMemoryQuoteCache, QuoteCache } from '../cache/QuoteCache';
 const CACHE_TTL_MS = 30_000;
 const ZERO_PLUGIN_ID = '0x' + '0'.repeat(64);
 const LOWER_HEX_ADDR_RE = /^0x[0-9a-f]{40}$/;
+const ROUTER_MAX_FEE_BPS = 100; // RouterV1.MAX_FEE_BPS
 
 // DEX quote sources per chain (extend as you add aggregators)
 type QuoteFn = (tokenIn: string, tokenOut: string, amountIn: bigint) => Promise<bigint>;
@@ -47,22 +48,49 @@ export class QuoteEngine {
     const dstChain = getChainConfig(req.dstChainId);
     if (!dstChain) return null;
 
-    // Build ranked routes and pick the best currently executable route.
-    // Note: multi-hop routes need staged intent execution and are not yet
-    // encoded by buildRouterCalldata(); skip them here.
+    // Build candidate routes. Multi-hop routes are excluded because calldata
+    // currently supports only single-hop execution.
     const amountUSD = await this._estimateUSD(req.tokenIn, req.srcChainId, req.amountIn);
-    const bestRoute = this.routeBuilder
+    const candidateRoutes = this.routeBuilder
       .buildRoutes(req.srcChainId, req.dstChainId, amountUSD, req.urgency ?? 'normal')
-      .find(r => r.viable && r.hops.length === 1);
-    if (!bestRoute) return null;
+      .filter(r => r.viable && r.hops.length === 1);
+    if (candidateRoutes.length === 0) return null;
 
-    const bestHop = bestRoute.hops[0];
-    const bestConfig = RAIL_CONFIGS[bestHop.rail];
-    const settlementToken = bestHop.settlementTokenOut;
-    const srcSwapEnabled = bestRoute.routeType === RouteType.FULL_SWAP || bestRoute.routeType === RouteType.SRC_SWAP;
-    const dstSwapEnabled = bestRoute.routeType === RouteType.FULL_SWAP || bestRoute.routeType === RouteType.DST_SWAP;
-    const settlementAddrSrc = getSettlementTokenAddress(req.srcChainId, settlementToken);
+    const candidates = (await Promise.all(
+      candidateRoutes.map(route => this._quoteForDirectRoute(req, route, amountUSD)),
+    )).filter((quote): quote is QuoteResult => quote !== null);
+    if (candidates.length === 0) return null;
+
+    return candidates.sort((a, b) => {
+      if (a.minAmountOut !== b.minAmountOut) return a.minAmountOut > b.minAmountOut ? -1 : 1;
+      if (a.estimatedOut !== b.estimatedOut) return a.estimatedOut > b.estimatedOut ? -1 : 1;
+      if (a.feeAmountUSD !== b.feeAmountUSD) return a.feeAmountUSD - b.feeAmountUSD;
+      if (a.etaSeconds !== b.etaSeconds) return a.etaSeconds - b.etaSeconds;
+      return 0;
+    })[0];
+  }
+
+  private async _quoteForDirectRoute(
+    req: QuoteRequest,
+    route: Route,
+    amountUSD: number,
+  ): Promise<QuoteResult | null> {
+    const hop = route.hops[0];
+    const config = RAIL_CONFIGS[hop.rail];
+    const settlementToken = hop.settlementTokenOut;
+    const srcSwapEnabled = route.routeType === RouteType.FULL_SWAP || route.routeType === RouteType.SRC_SWAP;
+    const dstSwapEnabled = route.routeType === RouteType.FULL_SWAP || route.routeType === RouteType.DST_SWAP;
+    const settlementAddrSrc = getSettlementTokenAddress(req.srcChainId, settlementToken, hop.rail);
     if (!settlementAddrSrc) return null;
+
+    const railFeeUSD = route.totalFeeUSD;
+    const protocolFeeUSD = Math.max(0.50, amountUSD * 0.0005);
+    const totalFeeUSD = railFeeUSD + protocolFeeUSD;
+    const feeBpsUncapped = Math.max(0, Math.round((totalFeeUSD / Math.max(amountUSD, 1)) * 10_000));
+    const feeRatioBps = BigInt(Math.min(feeBpsUncapped, ROUTER_MAX_FEE_BPS));
+    const feeAmountToken = (req.amountIn * feeRatioBps) / 10_000n;
+    if (feeAmountToken >= req.amountIn) return null;
+    const amountAfterFee = req.amountIn - feeAmountToken;
 
     // Get src swap quote: tokenIn → settlementToken
     let srcSwapAmount: bigint;
@@ -71,19 +99,19 @@ export class QuoteEngine {
     if (!srcSwapEnabled) {
       // Source chain has no aggregator; user must provide settlement token directly.
       if (req.tokenIn.toLowerCase() !== settlementAddrSrc.toLowerCase()) return null;
-      srcSwapAmount = req.amountIn;
+      srcSwapAmount = amountAfterFee;
     } else if (!this._isAddress(req.tokenIn)) {
       return null;
     } else if (!srcSwapNeeded) {
-      srcSwapAmount = req.amountIn;
+      srcSwapAmount = amountAfterFee;
     } else {
-      const quoted = await this._getSwapQuote(req.srcChainId, req.tokenIn, settlementAddrSrc, req.amountIn);
+      const quoted = await this._getSwapQuote(req.srcChainId, req.tokenIn, settlementAddrSrc, amountAfterFee);
       if (quoted === null) return null;
       srcSwapAmount = quoted;
     }
 
     // Get dst swap quote: settlementToken → tokenOut
-    const settlementAddrDst = getSettlementTokenAddress(req.dstChainId, settlementToken);
+    const settlementAddrDst = getSettlementTokenAddress(req.dstChainId, settlementToken, hop.rail);
     let dstSwapAmount: bigint;
     const dstSwapNeeded = dstSwapEnabled && !!settlementAddrDst && this._isAddress(req.tokenOut) &&
       req.tokenOut.toLowerCase() !== settlementAddrDst.toLowerCase();
@@ -100,13 +128,6 @@ export class QuoteEngine {
       if (quoted === null) return null;
       dstSwapAmount = quoted;
     }
-
-    // Fee calculation
-    const railFeeUSD = bestRoute.totalFeeUSD;
-    const protocolFeeUSD = Math.max(0.50, amountUSD * 0.0005);
-    const totalFeeUSD = railFeeUSD + protocolFeeUSD;
-    const feeRatioBps = BigInt(Math.max(0, Math.round((totalFeeUSD / Math.max(amountUSD, 1)) * 10_000)));
-    const feeAmountToken = (req.amountIn * feeRatioBps) / 10_000n;
 
     const srcSwapPluginId = srcSwapNeeded
       ? (getSwapPluginIdForChain(req.srcChainId) ?? ZERO_PLUGIN_ID)
@@ -131,16 +152,16 @@ export class QuoteEngine {
       minAmountOut,
       feeAmountUSD:    totalFeeUSD,
       feeAmountToken,
-      rail:            bestHop.rail,
-      railType:        bestConfig.railType,
+      rail:            hop.rail,
+      railType:        config.railType,
       settlementToken,
-      etaSeconds:      bestRoute.totalEtaSeconds,
-      expiresAt:       Math.floor(Date.now() / 1000) + 30,
-      railPluginId:    bestConfig.pluginId,
+      etaSeconds:      route.totalEtaSeconds,
+      expiresAt:       Math.floor(Date.now() / 1000) + 120,
+      railPluginId:    config.pluginId,
       swapPluginIdSrc: srcSwapPluginId,
       swapPluginIdDst: dstSwapPluginId,
-      swapDataSrc:     srcSwapEnabled ? '0x' : '0x',
-      swapDataDst:     dstSwapEnabled ? '0x' : '0x',
+      swapDataSrc:     '0x',
+      swapDataDst:     '0x',
       nativeDstAddress: req.nativeDstAddress,
     };
   }

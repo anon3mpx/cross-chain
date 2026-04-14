@@ -98,31 +98,43 @@ contract DeployAll is ScriptBase {
     function _deployRailPlugins(address owner, address weth) internal {
         address usdc = vm.envOr("USDC", address(0));
         address usdt = vm.envOr("USDT", address(0));
-
-        address tokenMessenger = vm.envOr("TOKEN_MESSENGER", address(0));
-        if (tokenMessenger != address(0) && usdc != address(0)) {
-            CCTPRailPlugin cctp = new CCTPRailPlugin(tokenMessenger, usdc, owner);
-            emit ScriptLogAddress("CCTPRailPlugin", address(cctp));
+        {
+            address cctpUsdc = vm.envOr("CCTP_USDC", usdc);
+            address tokenMessenger = vm.envOr("TOKEN_MESSENGER", address(0));
+            if (tokenMessenger != address(0) && cctpUsdc != address(0)) {
+                CCTPRailPlugin cctp = new CCTPRailPlugin(tokenMessenger, cctpUsdc, owner);
+                emit ScriptLogAddress("CCTPRailPlugin", address(cctp));
+            }
         }
 
-        address axelarGasService = vm.envOr("AXELAR_GAS_SERVICE", address(0));
-        address axelarIts = vm.envOr("AXELAR_ITS", address(0));
-        if (usdc != address(0) && axelarGasService != address(0) && axelarIts != address(0)) {
-            AxelarRailPlugin axelar = new AxelarRailPlugin(usdc, axelarGasService, axelarIts, owner);
-            emit ScriptLogAddress("AxelarRailPlugin", address(axelar));
+        {
+            address axelarUsdc = vm.envOr("AXELAR_USDC", usdc);
+            address axelarGasService = vm.envOr("AXELAR_GAS_SERVICE", address(0));
+            address axelarIts = vm.envOr("AXELAR_ITS", address(0));
+            if (axelarUsdc != address(0) && axelarGasService != address(0) && axelarIts != address(0)) {
+                AxelarRailPlugin axelar = new AxelarRailPlugin(axelarUsdc, axelarGasService, axelarIts, owner);
+                emit ScriptLogAddress("AxelarRailPlugin", address(axelar));
+            }
         }
 
-        address lzEndpoint = vm.envOr("LZ_ENDPOINT", address(0));
-        address lzOft = vm.envOr("LZ_OFT", address(0));
-        if (usdc != address(0) && lzEndpoint != address(0) && lzOft != address(0)) {
-            LayerZeroRailPlugin layerZero = new LayerZeroRailPlugin(usdc, lzEndpoint, lzOft, owner);
-            emit ScriptLogAddress("LayerZeroRailPlugin", address(layerZero));
+        {
+            address layerZeroUsdc = vm.envOr("LAYERZERO_USDC", vm.envOr("LZ_USDC", usdc));
+            address lzEndpoint = vm.envOr("LZ_ENDPOINT", address(0));
+            address lzOft = vm.envOr("LZ_OFT", address(0));
+            if (layerZeroUsdc != address(0) && lzEndpoint != address(0) && lzOft != address(0)) {
+                LayerZeroRailPlugin layerZero = new LayerZeroRailPlugin(layerZeroUsdc, lzEndpoint, lzOft, owner);
+                emit ScriptLogAddress("LayerZeroRailPlugin", address(layerZero));
+            }
         }
 
-        address thorRouter = vm.envOr("THOR_ROUTER", address(0));
-        if (thorRouter != address(0) && usdc != address(0) && usdt != address(0)) {
-            THORChainRailPlugin thor = new THORChainRailPlugin(thorRouter, usdc, weth, usdt, owner);
-            emit ScriptLogAddress("THORChainRailPlugin", address(thor));
+        {
+            address thorUsdc = vm.envOr("THOR_USDC", usdc);
+            address thorUsdt = vm.envOr("THOR_USDT", usdt);
+            address thorRouter = vm.envOr("THOR_ROUTER", address(0));
+            if (thorRouter != address(0) && thorUsdc != address(0) && thorUsdt != address(0)) {
+                THORChainRailPlugin thor = new THORChainRailPlugin(thorRouter, thorUsdc, weth, thorUsdt, owner);
+                emit ScriptLogAddress("THORChainRailPlugin", address(thor));
+            }
         }
     }
 

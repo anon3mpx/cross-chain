@@ -1,4 +1,4 @@
-import { SettlementToken } from '../types';
+import { Rail, SettlementToken } from '../types';
 import { hasAggregator } from './chains';
 
 const ZERO_ADDR = '0x0000000000000000000000000000000000000000';
@@ -36,14 +36,32 @@ function tokenEnvKey(chainId: number, token: SettlementToken): string {
   return `CHAIN_${chainId}_TOKEN_${token}`;
 }
 
+function railEnvNames(rail: Rail): string[] {
+  switch (rail) {
+    case Rail.LAYERZERO:
+      return [Rail.LAYERZERO, 'LZ'];
+    default:
+      return [rail];
+  }
+}
+
 /**
  * Returns settlement token address on a given chain.
- * Expected env format: CHAIN_<chainId>_TOKEN_USDC / _USDT / _ETH.
+ * Resolution order:
+ * 1) CHAIN_<chainId>_TOKEN_<RAIL>_<TOKEN> (e.g. CHAIN_84532_TOKEN_AXELAR_USDC)
+ * 2) CHAIN_<chainId>_TOKEN_<TOKEN> (legacy fallback)
  */
 export function getSettlementTokenAddress(
   chainId: number,
   token: SettlementToken,
+  rail?: Rail,
 ): string | undefined {
+  if (rail) {
+    for (const railName of railEnvNames(rail)) {
+      const railScoped = asAddress(readEnv(`CHAIN_${chainId}_TOKEN_${railName}_${token}`));
+      if (railScoped) return railScoped;
+    }
+  }
   return asAddress(readEnv(tokenEnvKey(chainId, token)));
 }
 

@@ -33,7 +33,10 @@ Set these for each testnet chain:
    - `CHAIN_<id>_SWAP_PLUGIN_KIND=UNIV2` (or explicit `CHAIN_<id>_SWAP_PLUGIN_ID`)
    - `CHAIN_<id>_UNIV2_ROUTER=<router>`
 3. Settlement token addresses:
-   - `CHAIN_<id>_TOKEN_USDC=...`
+   - `CHAIN_<id>_TOKEN_CCTP_USDC=...` (Circle-native USDC)
+   - `CHAIN_<id>_TOKEN_AXELAR_USDC=...` (aUSDC/axlUSDC for Axelar)
+   - `CHAIN_<id>_TOKEN_LAYERZERO_USDC=...` (LayerZero OFT settlement token)
+   - `CHAIN_<id>_TOKEN_USDC=...` (legacy fallback used only when rail-specific key is missing)
    - `CHAIN_<id>_TOKEN_USDT=...` (if needed)
    - `CHAIN_<id>_TOKEN_ETH=...` (if needed)
 

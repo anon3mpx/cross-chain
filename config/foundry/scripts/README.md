@@ -28,7 +28,11 @@ These scripts are fully env-driven. You add addresses/private key in your shell 
 
 ## Optional Env (Deploy)
 
-- `USDC`, `USDT`
+- `USDC`, `USDT` (legacy fallbacks)
+- `CCTP_USDC` (Circle-native USDC for CCTP rail)
+- `AXELAR_USDC` (aUSDC/axlUSDC for Axelar rail)
+- `LAYERZERO_USDC` or `LZ_USDC` (LayerZero OFT settlement token)
+- `THOR_USDC`, `THOR_USDT` (THOR settlement assets)
 - `TOKEN_MESSENGER`
 - `AXELAR_GAS_SERVICE`, `AXELAR_ITS`, `AXELAR_GATEWAY`
 - `LZ_ENDPOINT`, `LZ_OFT`
