@@ -110,10 +110,12 @@ contract ConfigureAll is ScriptBase {
         uint32 dstChainId = uint32(vm.envUint("CCTP_ROUTE_CHAIN_ID"));
         uint32 domain = uint32(vm.envUint("CCTP_ROUTE_DOMAIN"));
         address dstReceiver = vm.envAddress("CCTP_ROUTE_RECEIVER");
+        address dstCaller = vm.envOr("CCTP_ROUTE_CALLER", address(0));
 
         CCTPRailPlugin cctp = CCTPRailPlugin(cctpAddr);
         cctp.setChainDomain(dstChainId, domain);
         cctp.setDestinationReceiver(dstChainId, bytes32(uint256(uint160(dstReceiver))));
+        cctp.setDestinationCaller(dstChainId, bytes32(uint256(uint160(dstCaller))));
     }
 
     function _configureAxelarRoutes() internal {

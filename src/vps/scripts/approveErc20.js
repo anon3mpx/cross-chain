@@ -11,7 +11,7 @@ const { Contract, JsonRpcProvider, Wallet } = require('ethers');
 const RPC_URL = 'https://sepolia.base.org';
 const PRIVATE_KEY = '';
 const TOKEN_ADDRESS = '0x036CbD53842c5426634e7929541eC2318f3dCF7e'; // USDC on Base Sepolia
-const SPENDER_ADDRESS = '0xd11bd7b46f10477fe61134fddd6538a383f8978e'; // Router on Base Sepolia (for approving router to pull tokens for CCTP test route)
+const SPENDER_ADDRESS = '0x44733101c97a41e7f14c995bd212c8d455606751'; // Router on Base Sepolia (for approving router to pull tokens for CCTP test route)
 const AMOUNT_RAW = '10000000'; // raw units (USDC 1.0 = 1000000)
 
 const ERC20_ABI = [

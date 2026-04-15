@@ -24,6 +24,8 @@ contract CCTPRailPlugin is IRailPlugin, ERC165, Ownable2Step {
     mapping(uint32 => uint32) public chainToDomain;
     // chainId => our ReceiverV1 address on that chain (bytes32 padded)
     mapping(uint32 => bytes32) public destinationReceivers;
+    // chainId => optional CCTP message caller restriction (bytes32 address). bytes32(0) = open relay.
+    mapping(uint32 => bytes32) public destinationCallers;
 
     // CCTP domains (Circle's fixed assignment)
     uint32 public constant DOMAIN_ETH      = 0;
@@ -86,17 +88,33 @@ contract CCTPRailPlugin is IRailPlugin, ERC165, Ownable2Step {
         IERC20(usdc).safeTransferFrom(msg.sender, address(this), params.amount);
         IERC20(usdc).forceApprove(tokenMessenger, params.amount);
 
+        bytes32 destinationCaller = destinationCallers[params.dstChainId];
+
         // Burn USDC via CCTP V2 TokenMessenger.
         // For finalized transfers, maxFee is zero and finality threshold is FINALIZED.
-        ITokenMessengerV2(tokenMessenger).depositForBurn(
-            params.amount,
-            dstDomain,
-            receiver,
-            usdc,
-            receiver, // destinationCaller: only our contract can complete the mint
-            0,        // maxFee
-            FINALITY_THRESHOLD_FINALIZED
-        );
+        // Hook data carries destination execution payload for relay workers.
+        if (params.dstCalldata.length > 0) {
+            ITokenMessengerV2(tokenMessenger).depositForBurnWithHook(
+                params.amount,
+                dstDomain,
+                receiver,
+                usdc,
+                destinationCaller,
+                0, // maxFee
+                FINALITY_THRESHOLD_FINALIZED,
+                params.dstCalldata
+            );
+        } else {
+            ITokenMessengerV2(tokenMessenger).depositForBurn(
+                params.amount,
+                dstDomain,
+                receiver,
+                usdc,
+                destinationCaller,
+                0, // maxFee
+                FINALITY_THRESHOLD_FINALIZED
+            );
+        }
 
         // TokenMessengerV2.depositForBurn has no nonce return value.
         // Use a deterministic local tracking id for observability.
@@ -120,6 +138,9 @@ contract CCTPRailPlugin is IRailPlugin, ERC165, Ownable2Step {
     function setDestinationReceiver(uint32 chainId, bytes32 receiver) external onlyOwner {
         destinationReceivers[chainId] = receiver;
     }
+    function setDestinationCaller(uint32 chainId, bytes32 caller) external onlyOwner {
+        destinationCallers[chainId] = caller;
+    }
 
     function supportsInterface(bytes4 interfaceId)
         public view override(ERC165, IRailPlugin) returns (bool)
@@ -138,5 +159,16 @@ interface ITokenMessengerV2 {
         bytes32 destinationCaller,
         uint256 maxFee,
         uint32 minFinalityThreshold
+    ) external;
+
+    function depositForBurnWithHook(
+        uint256 amount,
+        uint32 destinationDomain,
+        bytes32 mintRecipient,
+        address burnToken,
+        bytes32 destinationCaller,
+        uint256 maxFee,
+        uint32 minFinalityThreshold,
+        bytes calldata hookData
     ) external;
 }

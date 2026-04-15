@@ -51,6 +51,7 @@ services:
       ENABLE_PARTNER_API: "false"
       ENABLE_EVENT_MONITOR: "false"
       ENABLE_RECOVERY_ENGINE: "false"
+      ENABLE_CCTP_RELAY: "false"
     command: npm run vps:api
     ports:
       - "8787:8787"
@@ -79,6 +80,11 @@ services:
       ENABLE_EVENT_MONITOR: "true"
       ENABLE_RECOVERY_ENGINE: "true"
       RECOVERY_INTERVAL_MS: "30000"
+      ENABLE_CCTP_RELAY: "true"
+      CCTP_ATTESTATION_BASE_URL: "https://iris-api-sandbox.circle.com"
+      CCTP_ATTESTATION_POLL_MS: "4000"
+      CCTP_ATTESTATION_TIMEOUT_MS: "600000"
+      CCTP_RELAY_LOOKBACK_BLOCKS: "4000"
     command: npm run vps:worker
 
 volumes:

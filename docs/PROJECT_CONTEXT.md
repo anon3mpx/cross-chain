@@ -40,6 +40,7 @@ Update this whenever architecture, commands, workflows, or critical paths change
 - [IntentEngine](/Users/ganadhish/code/work/ruflo/src/vps/services/IntentEngine.ts): intent lifecycle state machine.
 - [StatusAPI](/Users/ganadhish/code/work/ruflo/src/vps/api/StatusAPI.ts): `/quote`, `/intent/:id`, `/health`.
 - [runtime](/Users/ganadhish/code/work/ruflo/src/vps/app/runtime.ts): dependency wiring + feature toggles.
+- [CctpAttestationWorker](/Users/ganadhish/code/work/ruflo/src/vps/services/CctpAttestationWorker.ts): CCTP source-event relay worker (`MessageSent` -> attestation -> `receiveMessage` -> `ReceiverV1.execute`).
 
 ## 3) Current Operational Notes
 
@@ -50,6 +51,10 @@ Update this whenever architecture, commands, workflows, or critical paths change
 - For swap-required routes, plugin-specific `swapData` must be valid; placeholder `0x` is not enough for production swap execution paths.
 - For direct settlement-only flows, `swapPluginIdSrc`/`swapPluginIdDst` are expected to be zero-bytes32.
 - Multi-hop routes are built/ranked in RouterBuilder, but current quote-to-calldata path executes only single-hop routes.
+- CCTP route config now includes `CCTP_ROUTE_CALLER`:
+- `0x0` = open relay caller for `receiveMessage`.
+- non-zero = restricted relayer EOA/contract caller.
+- Worker-side CCTP attestation relay is now part of `vps:worker` when `ENABLE_CCTP_RELAY=true`.
 
 ## 4) Key Commands
 
@@ -103,6 +108,11 @@ npm run vps:worker
 - Runtime resolution order: rail-specific first, then legacy fallback
 - Swap plugin behavior defaults via:
 - `CHAIN_<id>_SWAP_PLUGIN_KIND` (`EMPSEAL`, `UNIV2`, `UNIV3`) or explicit `CHAIN_<id>_SWAP_PLUGIN_ID`
+- CCTP relay worker env:
+- `ENABLE_CCTP_RELAY`
+- `CCTP_RELAYER_PRIVATE_KEY` (or `DEPLOYER_PRIVATE_KEY`)
+- `CCTP_ATTESTATION_BASE_URL`, `CCTP_ATTESTATION_POLL_MS`, `CCTP_ATTESTATION_TIMEOUT_MS`, `CCTP_RELAY_LOOKBACK_BLOCKS`
+- Optional override: `CCTP_MESSAGE_TRANSMITTER` / `CHAIN_<id>_CCTP_MESSAGE_TRANSMITTER`
 
 ## 6) Important File Map
 
@@ -128,6 +138,7 @@ npm run vps:worker
 - Deployment references/output:
 - `config/broadcast/*`
 - [testnet deployment checklist](/Users/ganadhish/code/work/ruflo/docs/testnet-deployment-checklist.md)
+- [cctp relay worker guide](/Users/ganadhish/code/work/ruflo/docs/cctp-relay-worker.md)
 
 ## 7) Codebase Conventions
 

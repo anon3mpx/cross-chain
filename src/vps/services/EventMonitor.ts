@@ -28,10 +28,19 @@ export class EventMonitor {
 
   addChain(chain: ChainConfig): void {
     if (!chain.rpcUrl) return;
-    const primary  = new ethers.JsonRpcProvider(chain.rpcUrl);
+    const pollingIntervalMs = this._readIntEnv('RPC_POLLING_INTERVAL_MS', 4000);
+    const primary  = new ethers.JsonRpcProvider(chain.rpcUrl, undefined, {
+      polling: true,
+      batchMaxCount: 1,
+    });
+    primary.pollingInterval = pollingIntervalMs;
     const fallback = chain.rpcFallback
-      ? new ethers.JsonRpcProvider(chain.rpcFallback)
+      ? new ethers.JsonRpcProvider(chain.rpcFallback, undefined, {
+          polling: true,
+          batchMaxCount: 1,
+        })
       : undefined;
+    if (fallback) fallback.pollingInterval = pollingIntervalMs;
     this.providers.set(chain.chainId, primary);
     if (fallback) this.fallbackProviders.set(chain.chainId, fallback);
 
@@ -92,5 +101,13 @@ export class EventMonitor {
   stop(): void {
     this.contracts.forEach(contract => contract.removeAllListeners());
     this.providers.forEach(provider => provider.destroy());
+    this.fallbackProviders.forEach(provider => provider.destroy());
+  }
+
+  private _readIntEnv(name: string, fallback: number): number {
+    const raw = process.env[name];
+    if (!raw) return fallback;
+    const parsed = Number(raw);
+    return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
   }
 }

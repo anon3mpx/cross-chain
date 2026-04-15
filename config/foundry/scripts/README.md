@@ -93,6 +93,7 @@ forge script config/foundry/scripts/ConfigureAll.s.sol:ConfigureAll \
 - `CCTP_ROUTE_CHAIN_ID`
 - `CCTP_ROUTE_DOMAIN`
 - `CCTP_ROUTE_RECEIVER`
+- `CCTP_ROUTE_CALLER` (optional; `0x0` means any relayer can call `receiveMessage`)
 
 ### Axelar route
 - `AXELAR_SET_ROUTE=true`

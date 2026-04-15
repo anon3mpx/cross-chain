@@ -3,6 +3,7 @@ import { attachPostgresIntentPersistence, PostgresIntentPersistence } from '../d
 import { buildPartnerAPI, setupWebhookPush } from '../api/PartnerAPI';
 import { ApiKeyManager } from '../services/ApiKeyManager';
 import { EventMonitor } from '../services/EventMonitor';
+import { CctpAttestationWorker } from '../services/CctpAttestationWorker';
 import { IntentEngine } from '../services/IntentEngine';
 import { QuoteEngine } from '../services/QuoteEngine';
 import { RailSelector } from '../services/RailSelector';
@@ -13,6 +14,7 @@ import { registerDexQuoteAdapters } from '../bootstrap/dexAdapters';
 export interface RuntimeOptions {
   enableEventMonitor?: boolean;
   enableRecovery?: boolean;
+  enableCctpRelay?: boolean;
   enablePostgres?: boolean;
   enablePartnerApi?: boolean;
 }
@@ -22,6 +24,7 @@ export interface RuntimeContext {
   quoteEngine: QuoteEngine;
   eventMonitor?: EventMonitor;
   recoveryEngine?: RecoveryEngine;
+  cctpRelayWorker?: CctpAttestationWorker;
   apiKeyManager?: ApiKeyManager;
   partnerApiRouter?: ReturnType<typeof buildPartnerAPI>;
   postgres?: PostgresIntentPersistence;
@@ -45,6 +48,7 @@ function shouldEnablePostgres(): boolean {
 export async function buildRuntime(options: RuntimeOptions = {}): Promise<RuntimeContext> {
   const enableEventMonitor = options.enableEventMonitor ?? envBool('ENABLE_EVENT_MONITOR', false);
   const enableRecovery = options.enableRecovery ?? envBool('ENABLE_RECOVERY_ENGINE', false);
+  const enableCctpRelay = options.enableCctpRelay ?? envBool('ENABLE_CCTP_RELAY', false);
   const enablePartnerApi = options.enablePartnerApi ?? envBool('ENABLE_PARTNER_API', false);
   const enablePostgres = options.enablePostgres ?? shouldEnablePostgres();
 
@@ -79,6 +83,11 @@ export async function buildRuntime(options: RuntimeOptions = {}): Promise<Runtim
     }
   }
 
+  const cctpRelayWorker = enableCctpRelay ? new CctpAttestationWorker(intentEngine) : undefined;
+  if (cctpRelayWorker) {
+    await cctpRelayWorker.start();
+  }
+
   const postgres = enablePostgres
     ? attachPostgresIntentPersistence(intentEngine, {
         onError: (err, context) => {
@@ -100,6 +109,7 @@ export async function buildRuntime(options: RuntimeOptions = {}): Promise<Runtim
     quoteEngine,
     eventMonitor,
     recoveryEngine,
+    cctpRelayWorker,
     postgres,
     apiKeyManager,
     partnerApiRouter,
@@ -113,6 +123,11 @@ export async function buildRuntime(options: RuntimeOptions = {}): Promise<Runtim
         eventMonitor?.stop();
       } catch (err) {
         console.warn('[Runtime] monitor stop failed', err);
+      }
+      try {
+        cctpRelayWorker?.stop();
+      } catch (err) {
+        console.warn('[Runtime] cctp relay stop failed', err);
       }
       try {
         await postgres?.pool.end();

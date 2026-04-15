@@ -11,6 +11,7 @@ async function main(): Promise<void> {
   const runtime = await buildRuntime({
     enableEventMonitor: true,
     enableRecovery: true,
+    enableCctpRelay: true,
   });
 
   const intervalMs = readInt('RECOVERY_INTERVAL_MS', 30_000);
