@@ -20,7 +20,18 @@ This worker completes the destination leg for CCTP:
 - `CCTP_ATTESTATION_POLL_MS=4000`
 - `CCTP_ATTESTATION_TIMEOUT_MS=600000`
 - `CCTP_RELAY_LOOKBACK_BLOCKS=4000`
+- `CCTP_RELAY_RETRY_INTERVAL_MS=15000`
+- `CCTP_RELAY_RETRY_BASE_MS=15000`
+- `CCTP_RELAY_RETRY_MAX_MS=300000`
+- `CCTP_RELAY_MAX_RETRY_ATTEMPTS=0` (0 = unlimited)
+- `CCTP_RELAY_RECONCILE_INTERVAL_MS=60000`
 - `CHAIN_<srcChainId>_CCTP_DOMAIN=<domainId>` (optional override; auto-mapped for common chains)
+
+## Reliability behavior
+
+- Attestation, RPC, and nonce failures are retried with backoff instead of requiring a worker restart.
+- Recent source-chain `IntentInitiated` events are reconciled while the worker is running, not only during startup.
+- Destination transactions are serialized per destination chain to avoid relayer account nonce races.
 
 ## Destination execution prerequisites
 

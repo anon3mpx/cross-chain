@@ -84,12 +84,26 @@ interface AttestationResult {
   attestation: string;
 }
 
+interface RetryEntry {
+  srcChainId: number;
+  intentId: string;
+  srcTxHash: string;
+  attempts: number;
+  nextAttemptAt: number;
+  lastError: string;
+}
+
 export class CctpAttestationWorker {
   private providers = new Map<number, JsonRpcProvider>();
   private routerContracts = new Map<number, Contract>();
   private messageTransmitterByChain = new Map<number, string>();
   private seenIntentIds = new Set<string>();
   private inFlightIntentIds = new Set<string>();
+  private retryQueue = new Map<string, RetryEntry>();
+  private destinationQueues = new Map<number, Promise<void>>();
+  private retryTimer?: ReturnType<typeof setInterval>;
+  private reconcileTimer?: ReturnType<typeof setInterval>;
+  private reconciling = false;
   private running = false;
 
   constructor(private intentEngine: IntentEngine) {}
@@ -140,34 +154,46 @@ export class CctpAttestationWorker {
       await this._backfillRecentIntentEvents(chain.chainId, router);
     }
 
+    this._startRetryLoop();
+    this._startReconcileLoop();
     console.log('[CCTP Relay] started');
   }
 
   stop(): void {
     if (!this.running) return;
     this.running = false;
+    if (this.retryTimer) clearInterval(this.retryTimer);
+    if (this.reconcileTimer) clearInterval(this.reconcileTimer);
     this.routerContracts.forEach((router) => router.removeAllListeners());
     this.providers.forEach((provider) => provider.destroy());
+    this.retryTimer = undefined;
+    this.reconcileTimer = undefined;
     this.routerContracts.clear();
     this.providers.clear();
     this.messageTransmitterByChain.clear();
     this.seenIntentIds.clear();
     this.inFlightIntentIds.clear();
+    this.retryQueue.clear();
+    this.destinationQueues.clear();
   }
 
   private async _backfillRecentIntentEvents(chainId: number, router: Contract): Promise<void> {
     const provider = this.providers.get(chainId);
     if (!provider) return;
-    const lookbackBlocks = this._readIntEnv('CCTP_RELAY_LOOKBACK_BLOCKS', 4000);
-    const latest = await provider.getBlockNumber();
-    const fromBlock = Math.max(0, latest - lookbackBlocks);
+    try {
+      const lookbackBlocks = this._readIntEnv('CCTP_RELAY_LOOKBACK_BLOCKS', 4000);
+      const latest = await provider.getBlockNumber();
+      const fromBlock = Math.max(0, latest - lookbackBlocks);
 
-    const logs = await router.queryFilter(router.filters.IntentInitiated(), fromBlock, latest);
-    for (const log of logs) {
-      const event = log as EventLog;
-      const intentId = String(event.args?.intentId ?? '');
-      if (!intentId) continue;
-      await this._enqueueIntent(chainId, intentId, event.transactionHash);
+      const logs = await router.queryFilter(router.filters.IntentInitiated(), fromBlock, latest);
+      for (const log of logs) {
+        const event = log as EventLog;
+        const intentId = String(event.args?.intentId ?? '');
+        if (!intentId) continue;
+        void this._enqueueIntent(chainId, intentId, event.transactionHash);
+      }
+    } catch (err) {
+      console.warn(`[CCTP Relay] backfill failed chain=${chainId}`, err);
     }
   }
 
@@ -175,17 +201,106 @@ export class CctpAttestationWorker {
     if (!this.running) return;
     const intentId = intentIdRaw.toLowerCase();
     if (this.seenIntentIds.has(intentId) || this.inFlightIntentIds.has(intentId)) return;
+    const pendingRetry = this.retryQueue.get(intentId);
+    if (pendingRetry && pendingRetry.nextAttemptAt > Date.now()) return;
     this.inFlightIntentIds.add(intentId);
 
     try {
       const job = await this._buildRelayJob(srcChainId, intentId, srcTxHash);
-      if (!job) return; // non-CCTP or malformed tx
+      if (!job) {
+        this.retryQueue.delete(intentId);
+        return; // non-CCTP or malformed tx
+      }
       await this._relayJob(job);
       this.seenIntentIds.add(intentId);
+      this.retryQueue.delete(intentId);
     } catch (err) {
       console.error(`[CCTP Relay] intent ${intentId} failed`, err);
+      if (this._isRetryableRelayError(err)) {
+        this._scheduleRetry(srcChainId, intentId, srcTxHash, err);
+      } else {
+        this.retryQueue.delete(intentId);
+      }
     } finally {
       this.inFlightIntentIds.delete(intentId);
+    }
+  }
+
+  private _scheduleRetry(
+    srcChainId: number,
+    intentId: string,
+    srcTxHash: string,
+    err: unknown,
+  ): void {
+    if (!this.running) return;
+
+    const maxAttempts = this._readNonNegativeIntEnv('CCTP_RELAY_MAX_RETRY_ATTEMPTS', 0);
+    const existing = this.retryQueue.get(intentId);
+    const attempts = (existing?.attempts ?? 0) + 1;
+
+    if (maxAttempts > 0 && attempts > maxAttempts) {
+      this.retryQueue.delete(intentId);
+      console.error(`[CCTP Relay] intent ${intentId} exhausted retries after ${attempts - 1} attempts`);
+      return;
+    }
+
+    const baseMs = this._readIntEnv('CCTP_RELAY_RETRY_BASE_MS', 15_000);
+    const maxMs = this._readIntEnv('CCTP_RELAY_RETRY_MAX_MS', 5 * 60_000);
+    const backoffMs = Math.min(maxMs, baseMs * (2 ** Math.min(attempts - 1, 8)));
+    const jitterMs = Math.floor(Math.random() * Math.min(baseMs, 10_000));
+
+    this.retryQueue.set(intentId, {
+      srcChainId,
+      intentId,
+      srcTxHash,
+      attempts,
+      nextAttemptAt: Date.now() + backoffMs + jitterMs,
+      lastError: this._errorSummary(err),
+    });
+  }
+
+  private _startRetryLoop(): void {
+    if (this.retryTimer) return;
+    const intervalMs = this._readIntEnv('CCTP_RELAY_RETRY_INTERVAL_MS', 15_000);
+    this.retryTimer = setInterval(() => {
+      void this._drainRetryQueue();
+    }, intervalMs);
+    this.retryTimer.unref?.();
+  }
+
+  private async _drainRetryQueue(): Promise<void> {
+    if (!this.running || this.retryQueue.size === 0) return;
+
+    const now = Date.now();
+    for (const entry of this.retryQueue.values()) {
+      if (entry.nextAttemptAt > now) continue;
+      if (this.inFlightIntentIds.has(entry.intentId)) continue;
+      console.log(
+        `[CCTP Relay] retrying intent=${entry.intentId} attempt=${entry.attempts} lastError=${entry.lastError}`,
+      );
+      void this._enqueueIntent(entry.srcChainId, entry.intentId, entry.srcTxHash);
+    }
+  }
+
+  private _startReconcileLoop(): void {
+    if (this.reconcileTimer) return;
+    const intervalMs = this._readIntEnv('CCTP_RELAY_RECONCILE_INTERVAL_MS', 60_000);
+    this.reconcileTimer = setInterval(() => {
+      void this._reconcileRecentIntentEvents();
+    }, intervalMs);
+    this.reconcileTimer.unref?.();
+  }
+
+  private async _reconcileRecentIntentEvents(): Promise<void> {
+    if (!this.running || this.reconciling) return;
+    this.reconciling = true;
+
+    try {
+      for (const [chainId, router] of this.routerContracts.entries()) {
+        await this._backfillRecentIntentEvents(chainId, router);
+      }
+    } finally {
+      this.reconciling = false;
     }
   }
 
@@ -297,55 +412,79 @@ export class CctpAttestationWorker {
     const dstProvider = this.providers.get(job.dstChainId);
     if (!dstProvider) throw new Error(`missing provider for destination chain ${job.dstChainId}`);
 
-    const relayerPk = this._readEnv('CCTP_RELAYER_PRIVATE_KEY') || this._readEnv('DEPLOYER_PRIVATE_KEY');
-    if (!relayerPk) throw new Error('missing relayer private key');
-    const signer = new Wallet(relayerPk, dstProvider);
-
     const { message: relayMessage, attestation } = await this._pollAttestation(job);
 
-    const messageTransmitter = await this._resolveMessageTransmitter(job.dstChainId, dstProvider);
-    const mtContract = new Contract(messageTransmitter, MESSAGE_TRANSMITTER_ABI, signer);
+    await this._withDestinationQueue(job.dstChainId, async () => {
+      const relayerPk = this._readEnv('CCTP_RELAYER_PRIVATE_KEY') || this._readEnv('DEPLOYER_PRIVATE_KEY');
+      if (!relayerPk) throw new Error('missing relayer private key');
+      const signer = new Wallet(relayerPk, dstProvider);
 
-    let receiveTxHash: string | undefined;
-    let mintedAmount = 0n;
+      const messageTransmitter = await this._resolveMessageTransmitter(job.dstChainId, dstProvider);
+      const mtContract = new Contract(messageTransmitter, MESSAGE_TRANSMITTER_ABI, signer);
 
-    try {
-      const tx = await mtContract.receiveMessage(relayMessage, attestation);
-      const rcpt = await tx.wait();
-      receiveTxHash = rcpt?.hash;
-      mintedAmount = this._extractMintedAmount(rcpt, job.settlementToken, job.receiver);
+      let receiveTxHash: string | undefined;
+      let mintedAmount = 0n;
 
-      if (receiveTxHash) this._safeMarkDestinationReceived(job.intentId, receiveTxHash);
-      console.log(
-        `[CCTP Relay] receiveMessage ok intent=${job.intentId} tx=${receiveTxHash ?? 'unknown'}`,
-      );
-    } catch (err) {
-      if (!this._isAlreadyRelayedError(err)) throw err;
-      console.log(`[CCTP Relay] message already relayed intent=${job.intentId}`);
-    }
+      try {
+        const tx = await mtContract.receiveMessage(relayMessage, attestation);
+        const rcpt = await tx.wait();
+        receiveTxHash = rcpt?.hash;
+        mintedAmount = this._extractMintedAmount(rcpt, job.settlementToken, job.receiver);
 
-    const executeAmount = mintedAmount > 0n ? mintedAmount : job.amount;
-    const receiver = new Contract(job.receiver, RECEIVER_ABI, signer);
-
-    const approved = await receiver.approvedCallers(signer.address);
-    if (!approved) {
-      throw new Error(
-        `receiver ${job.receiver} does not approve relayer ${signer.address}; set RECEIVER_APPROVED_CALLER_*`,
-      );
-    }
-
-    try {
-      const tx = await receiver.execute(job.settlementToken, executeAmount, job.payload);
-      const rcpt = await tx.wait();
-      const dstTxHash = rcpt?.hash ?? tx.hash;
-      this._safeMarkSettled(job.intentId, dstTxHash);
-      console.log(`[CCTP Relay] execute ok intent=${job.intentId} tx=${dstTxHash}`);
-    } catch (err) {
-      if (this._isIntentAlreadySettledError(err)) {
-        console.log(`[CCTP Relay] receiver already settled intent=${job.intentId}`);
-        return;
+        if (receiveTxHash) this._safeMarkDestinationReceived(job.intentId, receiveTxHash);
+        console.log(
+          `[CCTP Relay] receiveMessage ok intent=${job.intentId} tx=${receiveTxHash ?? 'unknown'}`,
+        );
+      } catch (err) {
+        if (this._isAccountNonceError(err) || !this._isAlreadyRelayedError(err)) throw err;
+        console.log(`[CCTP Relay] message already relayed intent=${job.intentId}`);
       }
-      throw err;
+
+      const executeAmount = mintedAmount > 0n ? mintedAmount : job.amount;
+      const receiver = new Contract(job.receiver, RECEIVER_ABI, signer);
+
+      const approved = await receiver.approvedCallers(signer.address);
+      if (!approved) {
+        throw new Error(
+          `receiver ${job.receiver} does not approve relayer ${signer.address}; set RECEIVER_APPROVED_CALLER_*`,
+        );
+      }
+
+      try {
+        const tx = await receiver.execute(job.settlementToken, executeAmount, job.payload);
+        const rcpt = await tx.wait();
+        const dstTxHash = rcpt?.hash ?? tx.hash;
+        this._safeMarkSettled(job.intentId, dstTxHash);
+        console.log(`[CCTP Relay] execute ok intent=${job.intentId} tx=${dstTxHash}`);
+      } catch (err) {
+        if (this._isIntentAlreadySettledError(err)) {
+          console.log(`[CCTP Relay] receiver already settled intent=${job.intentId}`);
+          return;
+        }
+        throw err;
+      }
+    });
+  }
+
+  private async _withDestinationQueue<T>(
+    dstChainId: number,
+    task: () => Promise<T>,
+  ): Promise<T> {
+    const previous = this.destinationQueues.get(dstChainId) ?? Promise.resolve();
+    const run = previous.catch(() => undefined).then(task);
+    const tail = run.then(
+      () => undefined,
+      () => undefined,
+    );
+
+    this.destinationQueues.set(dstChainId, tail);
+
+    try {
+      return await run;
+    } finally {
+      if (this.destinationQueues.get(dstChainId) === tail) {
+        this.destinationQueues.delete(dstChainId);
+      }
     }
   }
 
@@ -502,11 +641,53 @@ export class CctpAttestationWorker {
 
   private _isAlreadyRelayedError(err: unknown): boolean {
     const s = String(err).toLowerCase();
-    return s.includes('nonce already used') || s.includes('message already');
+    return s.includes('noncealreadyused')
+      || s.includes('nonce already used')
+      || s.includes('message already');
   }
 
   private _isIntentAlreadySettledError(err: unknown): boolean {
     return String(err).toLowerCase().includes('intentalreadysettled');
+  }
+
+  private _isAccountNonceError(err: unknown): boolean {
+    const code = typeof err === 'object' && err !== null && 'code' in err
+      ? String((err as { code?: unknown }).code)
+      : '';
+    const s = String(err).toLowerCase();
+    return code === 'NONCE_EXPIRED'
+      || s.includes('nonce too low')
+      || s.includes('nonce has already been used')
+      || s.includes('replacement fee too low');
+  }
+
+  private _isRetryableRelayError(err: unknown): boolean {
+    if (this._isAccountNonceError(err)) return true;
+
+    const code = typeof err === 'object' && err !== null && 'code' in err
+      ? String((err as { code?: unknown }).code)
+      : '';
+    const s = String(err).toLowerCase();
+
+    return code === 'SERVER_ERROR'
+      || code === 'TIMEOUT'
+      || code === 'NETWORK_ERROR'
+      || code === 'UNKNOWN_ERROR'
+      || s.includes('attestation timeout')
+      || s.includes('timeout')
+      || s.includes('too many requests')
+      || s.includes('429')
+      || s.includes('500 internal server error')
+      || s.includes('failed to marshal batch response')
+      || s.includes('could not coalesce error')
+      || s.includes('filter not found')
+      || s.includes('network')
+      || s.includes('missing provider for destination chain');
+  }
+
+  private _errorSummary(err: unknown): string {
+    const raw = err instanceof Error ? err.message : String(err);
+    return raw.replace(/\s+/g, ' ').slice(0, 180);
   }
 
   private _readEnv(name: string): string | undefined {
@@ -521,6 +702,13 @@ export class CctpAttestationWorker {
     if (!raw) return fallback;
     const parsed = Number(raw);
     return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
+  }
+
+  private _readNonNegativeIntEnv(name: string, fallback: number): number {
+    const raw = this._readEnv(name);
+    if (!raw) return fallback;
+    const parsed = Number(raw);
+    return Number.isInteger(parsed) && parsed >= 0 ? parsed : fallback;
   }
 
   private _resolveSourceDomainId(srcChainId: number): number {
