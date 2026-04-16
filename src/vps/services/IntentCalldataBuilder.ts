@@ -3,7 +3,7 @@ import { getChainConfig } from '../config/chains';
 import { QuoteResult, Rail, SettlementToken } from '../types';
 
 const ROUTER_V1_IFACE = new Interface([
-  'function initiateSwap((address user,address tokenIn,address tokenOut,uint256 amountIn,uint256 minAmountOut,uint256 minSrcSwapOut,uint32 dstChainId,uint8 rail,uint8 settlementToken,uint256 feeAmount,bytes swapDataSrc,bytes swapDataDst,bytes32 dstSwapPluginId,address dstReceiver,bytes nativeDstAddress,string thorAssetIdentifier,uint256 minThorOutput,bytes32 intentId,uint256 deadline) intent,bytes32 swapPluginId,bytes32 railPluginId)',
+  'function initiateSwap((address user,address tokenIn,address tokenOut,uint256 amountIn,uint256 minAmountOut,uint256 minSrcSwapOut,uint32 dstChainId,uint8 rail,uint8 settlementToken,uint256 feeAmount,bytes swapDataSrc,bytes swapDataDst,bytes32 swapPluginIdSrc,bytes32 dstSwapPluginId,bytes32 railPluginId,bytes railData,address dstReceiver,bytes nativeDstAddress,string thorAssetIdentifier,uint256 minThorOutput,bytes32 intentId,uint256 deadline) intent)',
 ]);
 
 const RAIL_ENUM_VALUE: Record<string, number> = {
@@ -77,15 +77,17 @@ export function buildRouterCalldata(
     tokenOut: normalizeAddress(quote.tokenOut, 'tokenOut'),
     amountIn: toBigIntStrict(quote.amountIn, 'amountIn'),
     minAmountOut: toBigIntStrict(quote.minAmountOut, 'minAmountOut'),
-    // TODO: quote engine should return explicit minSrcSwapOut.
-    minSrcSwapOut: 0n,
+    minSrcSwapOut: toBigIntDefault(quote.minSrcSwapOut, 0n),
     dstChainId: quote.dstChainId,
     rail: railValue,
     settlementToken: settlementValue,
     feeAmount: toBigIntStrict(quote.feeAmountToken, 'feeAmountToken'),
     swapDataSrc: normalizeBytes(quote.swapDataSrc ?? '0x', 'swapDataSrc'),
     swapDataDst: normalizeBytes(quote.swapDataDst ?? '0x', 'swapDataDst'),
+    swapPluginIdSrc: normalizeBytes32(quote.swapPluginIdSrc, 'swapPluginIdSrc'),
     dstSwapPluginId: normalizeBytes32(quote.swapPluginIdDst, 'swapPluginIdDst'),
+    railPluginId: normalizeBytes32(quote.railPluginId, 'railPluginId'),
+    railData: normalizeBytes(quote.railData ?? '0x', 'railData'),
     dstReceiver,
     nativeDstAddress: quote.nativeDstAddress ? toUtf8Bytes(String(quote.nativeDstAddress)) : '0x',
     thorAssetIdentifier: String(quote.thorAsset ?? ''),
@@ -94,11 +96,7 @@ export function buildRouterCalldata(
     deadline: toBigIntStrict(quote.expiresAt, 'expiresAt'),
   };
 
-  return ROUTER_V1_IFACE.encodeFunctionData('initiateSwap', [
-    payload,
-    normalizeBytes32(quote.swapPluginIdSrc, 'swapPluginIdSrc'),
-    normalizeBytes32(quote.railPluginId, 'railPluginId'),
-  ]);
+  return ROUTER_V1_IFACE.encodeFunctionData('initiateSwap', [payload]);
 }
 
 function estimateNativeGas(_quote: QuoteResult): string {

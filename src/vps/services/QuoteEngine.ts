@@ -4,8 +4,9 @@
 // Results are cached 30s to minimise RPC calls.
 // ─────────────────────────────────────────────────────────
 
-import { QuoteRequest, QuoteResult, Route, RouteType } from '../types';
-import { RAIL_CONFIGS } from './RailSelector';
+import { AbiCoder } from 'ethers';
+import { QuoteRequest, QuoteResult, Rail, Route, RouteType } from '../types';
+import { PLUGIN_ID, RAIL_CONFIGS } from './RailSelector';
 import { RouteBuilder } from './RouterBuilder';
 import { getChainConfig } from '../config/chains';
 import { getSettlementTokenAddress, getSwapPluginIdForChain } from '../config/contracts';
@@ -16,6 +17,36 @@ const CACHE_TTL_MS = 30_000;
 const ZERO_PLUGIN_ID = '0x' + '0'.repeat(64);
 const LOWER_HEX_ADDR_RE = /^0x[0-9a-f]{40}$/;
 const ROUTER_MAX_FEE_BPS = 100; // RouterV1.MAX_FEE_BPS
+const CCTP_FAST_FINALITY_THRESHOLD = 1000;
+const CCTP_FEE_BUFFER_BPS_DEFAULT = 2;
+const USDC_MICRO_UNITS = 1_000_000n;
+const abiCoder = AbiCoder.defaultAbiCoder();
+
+const CCTP_DOMAIN_BY_CHAIN_ID: Record<number, number> = {
+  1: 0,
+  11155111: 0,
+  43114: 1,
+  43113: 1,
+  10: 2,
+  11155420: 2,
+  42161: 3,
+  421614: 3,
+  8453: 6,
+  84532: 6,
+  137: 7,
+  80002: 7,
+};
+
+interface CctpFeeRow {
+  finalityThreshold: number;
+  minimumFee: number; // bps
+}
+
+interface CctpPlan {
+  railPluginId: string;
+  railData: string;
+  circleFeeToken: bigint;
+}
 
 // DEX quote sources per chain (extend as you add aggregators)
 type QuoteFn = (tokenIn: string, tokenOut: string, amountIn: bigint) => Promise<bigint>;
@@ -109,6 +140,18 @@ export class QuoteEngine {
       if (quoted === null) return null;
       srcSwapAmount = quoted;
     }
+    const minSrcSwapOut = srcSwapNeeded ? (srcSwapAmount * 995n) / 1000n : 0n;
+
+    let railPluginId = config.pluginId;
+    let railData = '0x';
+    let bridgeAmount = srcSwapAmount;
+    if (hop.rail === Rail.CCTP) {
+      const cctpPlan = await this._selectCctpPlan(req, srcSwapAmount, config.pluginId);
+      railPluginId = cctpPlan.railPluginId;
+      railData = cctpPlan.railData;
+      if (cctpPlan.circleFeeToken >= srcSwapAmount) return null;
+      bridgeAmount = srcSwapAmount - cctpPlan.circleFeeToken;
+    }
 
     // Get dst swap quote: settlementToken → tokenOut
     const settlementAddrDst = getSettlementTokenAddress(req.dstChainId, settlementToken, hop.rail);
@@ -118,13 +161,13 @@ export class QuoteEngine {
     if (!dstSwapEnabled) {
       // Destination chain has no aggregator; output is settlement token only.
       if (settlementAddrDst && req.tokenOut.toLowerCase() !== settlementAddrDst.toLowerCase()) return null;
-      dstSwapAmount = srcSwapAmount;
+      dstSwapAmount = bridgeAmount;
     } else if (!settlementAddrDst || !this._isAddress(req.tokenOut)) {
       return null;
     } else if (!dstSwapNeeded) {
-      dstSwapAmount = srcSwapAmount;
+      dstSwapAmount = bridgeAmount;
     } else {
-      const quoted = await this._getSwapQuote(req.dstChainId, settlementAddrDst, req.tokenOut, srcSwapAmount);
+      const quoted = await this._getSwapQuote(req.dstChainId, settlementAddrDst, req.tokenOut, bridgeAmount);
       if (quoted === null) return null;
       dstSwapAmount = quoted;
     }
@@ -139,7 +182,8 @@ export class QuoteEngine {
     if (dstSwapNeeded && dstSwapPluginId === ZERO_PLUGIN_ID) return null;
 
     // Apply slippage tolerance (0.5%)
-    const minAmountOut = (dstSwapAmount * 995n) / 1000n;
+    // const minAmountOut = (dstSwapAmount * 995n) / 1000n;
+    const minAmountOut = dstSwapAmount;
 
     return {
       intentId:        this._makeIntentId(),
@@ -150,14 +194,16 @@ export class QuoteEngine {
       amountIn:        req.amountIn,
       estimatedOut:    dstSwapAmount,
       minAmountOut,
+      minSrcSwapOut,
       feeAmountUSD:    totalFeeUSD,
       feeAmountToken,
       rail:            hop.rail,
       railType:        config.railType,
       settlementToken,
-      etaSeconds:      route.totalEtaSeconds,
+      etaSeconds:      railPluginId === PLUGIN_ID.CCTP_V2_FAST ? Math.min(route.totalEtaSeconds, 8) : route.totalEtaSeconds,
       expiresAt:       Math.floor(Date.now() / 1000) + 120,
-      railPluginId:    config.pluginId,
+      railPluginId,
+      railData,
       swapPluginIdSrc: srcSwapPluginId,
       swapPluginIdDst: dstSwapPluginId,
       swapDataSrc:     '0x',
@@ -176,6 +222,114 @@ export class QuoteEngine {
     } catch {
       return null;
     }
+  }
+
+  private async _selectCctpPlan(
+    req: QuoteRequest,
+    settlementAmount: bigint,
+    fallbackPluginId: string,
+  ): Promise<CctpPlan> {
+    const fallback: CctpPlan = {
+      railPluginId: fallbackPluginId,
+      railData: '0x',
+      circleFeeToken: 0n,
+    };
+    if (!this._readBoolEnv('ENABLE_CCTP_FAST', false)) return fallback;
+    if ((req.urgency ?? 'normal') !== 'fast') return fallback;
+
+    const srcDomain = CCTP_DOMAIN_BY_CHAIN_ID[req.srcChainId];
+    const dstDomain = CCTP_DOMAIN_BY_CHAIN_ID[req.dstChainId];
+    if (srcDomain === undefined || dstDomain === undefined) return fallback;
+
+    const [fees, allowanceMicros] = await Promise.all([
+      this._fetchCctpFees(srcDomain, dstDomain),
+      this._fetchCctpAllowanceMicros(),
+    ]);
+    if (!fees || allowanceMicros === null) return fallback;
+
+    // Safety fallback: if allowance is depleted, use standard finalized transfer.
+    if (allowanceMicros < settlementAmount) return fallback;
+
+    const fastFee = fees.find((f) => f.finalityThreshold <= CCTP_FAST_FINALITY_THRESHOLD);
+    if (!fastFee) return fallback;
+
+    const feeBps = BigInt(Math.max(0, Math.ceil(fastFee.minimumFee)));
+    const feeAmount = this._ceilDiv(settlementAmount * feeBps, 10_000n);
+
+    const bufferBps = BigInt(this._readIntEnv('CCTP_FAST_MAX_FEE_BUFFER_BPS', CCTP_FEE_BUFFER_BPS_DEFAULT));
+    const maxFeeBps = feeBps + bufferBps;
+    let maxFee = this._ceilDiv(settlementAmount * maxFeeBps, 10_000n);
+    if (maxFee === 0n) maxFee = 1n;
+
+    const fastPluginId = this._resolvePluginId('CCTP_FAST_PLUGIN_ID', PLUGIN_ID.CCTP_V2_FAST);
+    const railData = abiCoder.encode(['uint32', 'uint256'], [CCTP_FAST_FINALITY_THRESHOLD, maxFee]);
+
+    return {
+      railPluginId: fastPluginId,
+      railData,
+      circleFeeToken: feeAmount,
+    };
+  }
+
+  private async _fetchCctpFees(srcDomain: number, dstDomain: number): Promise<CctpFeeRow[] | null> {
+    const base = this._resolveCctpBaseUrl();
+    const url = `${base}/v2/burn/USDC/fees/${srcDomain}/${dstDomain}`;
+    try {
+      const res = await fetch(url, { headers: { Accept: 'application/json' } });
+      if (!res.ok) return null;
+      const data = await res.json();
+      if (!Array.isArray(data)) return null;
+
+      const rows = data
+        .map((row) => ({
+          finalityThreshold: Number(row?.finalityThreshold),
+          minimumFee: Number(row?.minimumFee),
+        }))
+        .filter((row) => Number.isFinite(row.finalityThreshold) && Number.isFinite(row.minimumFee));
+      return rows.length > 0 ? rows : null;
+    } catch {
+      return null;
+    }
+  }
+
+  private async _fetchCctpAllowanceMicros(): Promise<bigint | null> {
+    const base = this._resolveCctpBaseUrl();
+    const url = `${base}/v2/fastBurn/USDC/allowance`;
+    try {
+      const res = await fetch(url, { headers: { Accept: 'application/json' } });
+      if (!res.ok) return null;
+      const data = await res.json() as { allowance?: string | number | null };
+      return this._parseUsdcToMicros(data.allowance);
+    } catch {
+      return null;
+    }
+  }
+
+  private _resolveCctpBaseUrl(): string {
+    const configured = this._readEnv('CCTP_ATTESTATION_BASE_URL') ?? 'https://iris-api-sandbox.circle.com';
+    const trimmed = configured.replace(/\/$/, '');
+    const idx = trimmed.indexOf('/v2/');
+    return idx >= 0 ? trimmed.slice(0, idx) : trimmed;
+  }
+
+  private _parseUsdcToMicros(value: unknown): bigint | null {
+    if (value === null || value === undefined) return null;
+    const raw = String(value).trim();
+    if (!/^\d+(\.\d+)?$/.test(raw)) return null;
+
+    const [whole, fracRaw = ''] = raw.split('.');
+    const frac = `${fracRaw}000000`.slice(0, 6);
+    return BigInt(whole) * USDC_MICRO_UNITS + BigInt(frac);
+  }
+
+  private _resolvePluginId(envKey: string, fallback: string): string {
+    const value = this._readEnv(envKey);
+    if (!value) return fallback;
+    return /^0x[0-9a-fA-F]{64}$/.test(value) ? value.toLowerCase() : fallback;
+  }
+
+  private _ceilDiv(value: bigint, denominator: bigint): bigint {
+    return (value + denominator - 1n) / denominator;
   }
 
   private async _estimateUSD(token: string, _chainId: number, amount: bigint): Promise<number> {
@@ -223,5 +377,26 @@ export class QuoteEngine {
       ? Number.MAX_SAFE_INTEGER
       : Number(whole);
     return clampedWhole + Number(frac) / 10 ** decimals;
+  }
+
+  private _readEnv(name: string): string | undefined {
+    const raw = process.env[name];
+    if (!raw) return undefined;
+    const trimmed = raw.trim();
+    return trimmed.length > 0 ? trimmed : undefined;
+  }
+
+  private _readIntEnv(name: string, fallback: number): number {
+    const raw = this._readEnv(name);
+    if (!raw) return fallback;
+    const parsed = Number(raw);
+    return Number.isFinite(parsed) && parsed >= 0 ? Math.floor(parsed) : fallback;
+  }
+
+  private _readBoolEnv(name: string, fallback: boolean): boolean {
+    const raw = this._readEnv(name);
+    if (!raw) return fallback;
+    const v = raw.toLowerCase();
+    return v === '1' || v === 'true' || v === 'yes' || v === 'on';
   }
 }

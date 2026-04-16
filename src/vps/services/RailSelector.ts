@@ -6,8 +6,9 @@
 
 import { Rail, RailConfig, RailScore, SettlementToken, ChainConfig, CHAIN_ID } from '../types';
 
-const PLUGIN_ID = {
+export const PLUGIN_ID = {
   CCTP_V2:      '0xb148ea5f936a28661e11743b1650193f1b14a2322b9541503bf6815a84a1a6e9',
+  CCTP_V2_FAST: '0x9181644edfd36b07ccd623494a3681a4a6b9cd5d52611accda20264cd09259ac',
   AXELAR_V1:    '0xdee0b34b74b60e53553685c32477090103c2b806eb925a8cd000efa92bef3e8b',
   LZ_V2:        '0xc472efb7b9a986e1446d8bf9dec51e88548a1d8eb4a0810e6424d97a878d34fc',
   VIA_LABS_V1:  '0x3c09500df72dbac855e61899e0dd4420addc8367cb7a5f60906b5450d7a71687',

@@ -5,6 +5,7 @@ const BIGINT_FIELDS = new Set([
   'amountIn',
   'estimatedOut',
   'minAmountOut',
+  'minSrcSwapOut',
   'feeAmountToken',
   'minThorOutput',
 ]);
@@ -87,10 +88,18 @@ function encodeQuote(value: QuoteResult): string {
 }
 
 function decodeQuote(raw: string): QuoteResult {
-  return JSON.parse(raw, (k, v) => {
+  const parsed = JSON.parse(raw, (k, v) => {
     if (!BIGINT_FIELDS.has(k)) return v;
     if (typeof v === 'string' && /^-?\d+$/.test(v)) return BigInt(v);
     if (typeof v === 'number' && Number.isFinite(v)) return BigInt(Math.trunc(v));
     return 0n;
-  }) as QuoteResult;
+  }) as QuoteResult & { railData?: string; minSrcSwapOut?: bigint };
+
+  if (typeof parsed.railData !== 'string') {
+    parsed.railData = '0x';
+  }
+  if (typeof parsed.minSrcSwapOut !== 'bigint') {
+    parsed.minSrcSwapOut = 0n;
+  }
+  return parsed as QuoteResult;
 }

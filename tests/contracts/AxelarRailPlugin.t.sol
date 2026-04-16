@@ -27,9 +27,10 @@ contract MockAxelarGasService is IAxelarGasService {
         string memory destinationChain,
         string memory destinationAddress,
         bytes memory payload,
-        uint256 executionGasLimit
+        uint256 executionGasLimit,
+        bytes memory params
     ) external view returns (uint256) {
-        destinationChain; destinationAddress; payload; executionGasLimit;
+        destinationChain; destinationAddress; payload; executionGasLimit; params;
         return fixedFee;
     }
 
@@ -56,26 +57,25 @@ contract MockAxelarITS is IAxelarITS {
     bytes public lastDestinationAddress;
     uint256 public lastAmount;
     bytes public lastData;
-    uint256 public lastGasValue;
+    uint256 public lastPaidNativeFee;
 
     constructor(address _usdc) {
         usdc = MockUSDCAxelar(_usdc);
     }
 
-    function interchainTransfer(
+    function callContractWithInterchainToken(
         bytes32 tokenId,
         string calldata destinationChain,
         bytes calldata destinationAddress,
         uint256 amount,
-        bytes calldata data,
-        uint256 gasValue
+        bytes calldata data
     ) external payable {
         lastTokenId = tokenId;
         lastDestinationChain = destinationChain;
         lastDestinationAddress = destinationAddress;
         lastAmount = amount;
         lastData = data;
-        lastGasValue = gasValue;
+        lastPaidNativeFee = msg.value;
         usdc.transferFrom(msg.sender, address(this), amount);
     }
 }
@@ -109,6 +109,7 @@ contract AxelarRailPluginTest {
             settlementTokenAddr: address(usdc),
             amount: amount,
             dstChainId: DST_CHAIN,
+            railData: bytes(""),
             dstReceiver: address(0xBEEF),
             dstCalldata: hex"1234",
             gasForDst: 200_000,
@@ -125,7 +126,8 @@ contract AxelarRailPluginTest {
         _assertEq(its.lastTokenId(), DST_TOKEN_ID, "token id mismatch");
         _assertEq(keccak256(bytes(its.lastDestinationChain())), keccak256(bytes("arbitrum")), "dst chain mismatch");
         _assertEq(usdc.balanceOf(address(its)), amount, "ITS did not receive funds");
-        _assertEq(gasService.lastPaid(), GAS_FEE, "gas fee mismatch");
+        _assertEq(its.lastPaidNativeFee(), GAS_FEE, "gas fee mismatch");
+        _assertEq(keccak256(its.lastData()), keccak256(hex"1234"), "payload mismatch");
     }
 
     function testEstimateFeeRevertsOnUnsupportedRoute() public {

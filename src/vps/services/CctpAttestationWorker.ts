@@ -15,6 +15,9 @@ import { Rail, SettlementToken } from '../types';
 
 const ROUTER_ABI = [
   'event IntentInitiated(bytes32 indexed intentId, address indexed user, address tokenIn, uint256 amountIn, uint32 dstChainId, bytes32 railTxId)',
+  'function initiateSwap((address user,address tokenIn,address tokenOut,uint256 amountIn,uint256 minAmountOut,uint256 minSrcSwapOut,uint32 dstChainId,uint8 rail,uint8 settlementToken,uint256 feeAmount,bytes swapDataSrc,bytes swapDataDst,bytes32 swapPluginIdSrc,bytes32 dstSwapPluginId,bytes32 railPluginId,bytes railData,address dstReceiver,bytes nativeDstAddress,string thorAssetIdentifier,uint256 minThorOutput,bytes32 intentId,uint256 deadline) intent)',
+];
+const ROUTER_LEGACY_ABI = [
   'function initiateSwap((address user,address tokenIn,address tokenOut,uint256 amountIn,uint256 minAmountOut,uint256 minSrcSwapOut,uint32 dstChainId,uint8 rail,uint8 settlementToken,uint256 feeAmount,bytes swapDataSrc,bytes swapDataDst,bytes32 dstSwapPluginId,address dstReceiver,bytes nativeDstAddress,string thorAssetIdentifier,uint256 minThorOutput,bytes32 intentId,uint256 deadline) intent,bytes32 swapPluginId,bytes32 railPluginId)',
 ];
 
@@ -31,6 +34,7 @@ const TOKEN_MESSENGER_ABI = [
 const RECEIVER_ABI = [
   'function execute(address settlementToken, uint256 amount, bytes payload) external',
   'function approvedCallers(address caller) external view returns (bool)',
+  'function settledIntents(bytes32 intentId) external view returns (bool)',
 ];
 
 const ERC20_TRANSFER_IFACE = new Interface([
@@ -38,6 +42,7 @@ const ERC20_TRANSFER_IFACE = new Interface([
 ]);
 
 const ROUTER_IFACE = new Interface(ROUTER_ABI);
+const ROUTER_LEGACY_IFACE = new Interface(ROUTER_LEGACY_ABI);
 const MESSAGE_TRANSMITTER_IFACE = new Interface(MESSAGE_TRANSMITTER_ABI);
 const TOKEN_MESSENGER_IFACE = new Interface(TOKEN_MESSENGER_ABI);
 
@@ -71,6 +76,7 @@ interface RelayJob {
   receiver: string;
   settlementToken: string;
   payload: string;
+  isFastTransfer: boolean;
 }
 
 interface IrisMessage {
@@ -322,7 +328,11 @@ export class CctpAttestationWorker {
     try {
       decoded = ROUTER_IFACE.decodeFunctionData('initiateSwap', tx.data);
     } catch {
-      return null;
+      try {
+        decoded = ROUTER_LEGACY_IFACE.decodeFunctionData('initiateSwap', tx.data);
+      } catch {
+        return null;
+      }
     }
 
     const intent = decoded[0];
@@ -374,6 +384,7 @@ export class CctpAttestationWorker {
       receiver,
       settlementToken: settlementToken.toLowerCase(),
       payload,
+      isFastTransfer: deposit.minFinalityThreshold < 2000 || deposit.maxFee > 0n,
     };
   }
 
@@ -394,12 +405,16 @@ export class CctpAttestationWorker {
 
   private _extractDepositFromReceipt(
     receipt: ethers.TransactionReceipt,
-  ): { amount: bigint } | null {
+  ): { amount: bigint; maxFee: bigint; minFinalityThreshold: number } | null {
     for (const log of receipt.logs) {
       try {
         const parsed = TOKEN_MESSENGER_IFACE.parseLog(log);
         if (parsed?.name === 'DepositForBurn') {
-          return { amount: BigInt(parsed.args.amount) };
+          return {
+            amount: BigInt(parsed.args.amount),
+            maxFee: BigInt(parsed.args.maxFee),
+            minFinalityThreshold: Number(parsed.args.minFinalityThreshold),
+          };
         }
       } catch {
         // not a DepositForBurn log
@@ -440,8 +455,22 @@ export class CctpAttestationWorker {
         console.log(`[CCTP Relay] message already relayed intent=${job.intentId}`);
       }
 
-      const executeAmount = mintedAmount > 0n ? mintedAmount : job.amount;
       const receiver = new Contract(job.receiver, RECEIVER_ABI, signer);
+      const alreadySettled = await receiver.settledIntents(job.intentId);
+      if (alreadySettled) {
+        console.log(`[CCTP Relay] receiver already settled intent=${job.intentId}`);
+        return;
+      }
+
+      let executeAmount = mintedAmount;
+      if (executeAmount === 0n) {
+        if (job.isFastTransfer) {
+          throw new Error(
+            `cannot determine minted amount for already-relayed fast transfer intent=${job.intentId}`,
+          );
+        }
+        executeAmount = job.amount;
+      }
 
       const approved = await receiver.approvedCallers(signer.address);
       if (!approved) {
@@ -674,6 +703,7 @@ export class CctpAttestationWorker {
       || code === 'NETWORK_ERROR'
       || code === 'UNKNOWN_ERROR'
       || s.includes('attestation timeout')
+      || s.includes('cannot determine minted amount for already-relayed fast transfer')
       || s.includes('timeout')
       || s.includes('too many requests')
       || s.includes('429')

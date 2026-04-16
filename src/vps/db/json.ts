@@ -31,9 +31,11 @@ export function reviveQuote(raw: any): QuoteResult {
   const q = raw as QuoteResult & Record<string, unknown>;
   return {
     ...q,
+    railData: typeof q.railData === 'string' ? q.railData : '0x',
     amountIn: toBigIntOrZero(q.amountIn),
     estimatedOut: toBigIntOrZero(q.estimatedOut),
     minAmountOut: toBigIntOrZero(q.minAmountOut),
+    minSrcSwapOut: toBigIntOrZero(q.minSrcSwapOut),
     feeAmountToken: toBigIntOrZero(q.feeAmountToken),
     minThorOutput: toOptionalBigInt(q.minThorOutput),
   };

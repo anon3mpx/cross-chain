@@ -9,6 +9,7 @@ import {ReceiverV1} from "src/contracts/ReceiverV1.sol";
 import {RufloPaymaster} from "src/contracts/Paymaster.sol";
 
 import {CCTPRailPlugin} from "src/contracts/rails/CCTPRailPlugin.sol";
+import {CCTPFastRailPlugin} from "src/contracts/rails/CCTPFastRailPlugin.sol";
 import {AxelarRailPlugin} from "src/contracts/rails/AxelarRailPlugin.sol";
 import {LayerZeroRailPlugin} from "src/contracts/rails/LayerZeroRailPlugin.sol";
 import {THORChainRailPlugin} from "src/contracts/rails/THORChainRailPlugin.sol";
@@ -29,7 +30,7 @@ import {UniswapV3SwapPlugin} from "src/contracts/plugins/UniswapV3SwapPlugin.sol
 /// Optional env vars (deploys related components when present):
 ///      - USDC, USDT
 ///      - TOKEN_MESSENGER
-///      - AXELAR_GAS_SERVICE, AXELAR_ITS, AXELAR_GATEWAY
+///      - AXELAR_GAS_SERVICE, AXELAR_ITS
 ///      - LZ_ENDPOINT, LZ_OFT
 ///      - THOR_ROUTER
 ///      - EMPSEAL_ROUTER
@@ -104,6 +105,9 @@ contract DeployAll is ScriptBase {
             if (tokenMessenger != address(0) && cctpUsdc != address(0)) {
                 CCTPRailPlugin cctp = new CCTPRailPlugin(tokenMessenger, cctpUsdc, owner);
                 emit ScriptLogAddress("CCTPRailPlugin", address(cctp));
+
+                CCTPFastRailPlugin cctpFast = new CCTPFastRailPlugin(tokenMessenger, cctpUsdc, owner);
+                emit ScriptLogAddress("CCTPFastRailPlugin", address(cctpFast));
             }
         }
 
@@ -139,15 +143,21 @@ contract DeployAll is ScriptBase {
     }
 
     function _deployAdapters(address owner, address receiver) internal {
-        address axelarGateway = vm.envOr("AXELAR_GATEWAY", address(0));
-        if (axelarGateway != address(0)) {
-            AxelarReceiverAdapter axAdapter = new AxelarReceiverAdapter(axelarGateway, receiver, owner);
+        address axelarIts = vm.envOr("AXELAR_ITS", address(0));
+        if (axelarIts != address(0)) {
+            AxelarReceiverAdapter axAdapter = new AxelarReceiverAdapter(axelarIts, receiver, owner);
             emit ScriptLogAddress("AxelarReceiverAdapter", address(axAdapter));
         }
 
         address lzEndpoint = vm.envOr("LZ_ENDPOINT", address(0));
-        if (lzEndpoint != address(0)) {
-            LayerZeroReceiverAdapter lzAdapter = new LayerZeroReceiverAdapter(lzEndpoint, receiver, owner);
+        address lzOft = vm.envOr("LZ_OFT", address(0));
+        address layerZeroUsdc = vm.envOr(
+            "LAYERZERO_USDC",
+            vm.envOr("LZ_USDC", vm.envOr("USDC", address(0)))
+        );
+        if (lzEndpoint != address(0) && lzOft != address(0) && layerZeroUsdc != address(0)) {
+            LayerZeroReceiverAdapter lzAdapter =
+                new LayerZeroReceiverAdapter(lzEndpoint, lzOft, layerZeroUsdc, receiver, owner);
             emit ScriptLogAddress("LayerZeroReceiverAdapter", address(lzAdapter));
         }
     }

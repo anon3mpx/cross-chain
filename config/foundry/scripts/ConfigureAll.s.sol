@@ -12,6 +12,7 @@ import {IRailPlugin} from "src/contracts/interfaces/IRailPlugin.sol";
 import {ISwapPlugin} from "src/contracts/interfaces/ISwapPlugin.sol";
 
 import {CCTPRailPlugin} from "src/contracts/rails/CCTPRailPlugin.sol";
+import {CCTPFastRailPlugin} from "src/contracts/rails/CCTPFastRailPlugin.sol";
 import {AxelarRailPlugin} from "src/contracts/rails/AxelarRailPlugin.sol";
 import {LayerZeroRailPlugin} from "src/contracts/rails/LayerZeroRailPlugin.sol";
 import {THORChainRailPlugin} from "src/contracts/rails/THORChainRailPlugin.sol";
@@ -32,6 +33,7 @@ contract ConfigureAll is ScriptBase {
         _configurePaymaster();
 
         _configureCctpRoutes();
+        _configureCctpFastRoutes();
         _configureAxelarRoutes();
         _configureLayerZeroRoutes();
         _configureThor();
@@ -49,6 +51,7 @@ contract ConfigureAll is ScriptBase {
         PluginRegistry registry = PluginRegistry(registryAddr);
 
         _registerRailIfProvided(registry, vm.envOr("RAIL_PLUGIN_CCTP", address(0)));
+        _registerRailIfProvided(registry, vm.envOr("RAIL_PLUGIN_CCTP_FAST", address(0)));
         _registerRailIfProvided(registry, vm.envOr("RAIL_PLUGIN_AXELAR", address(0)));
         _registerRailIfProvided(registry, vm.envOr("RAIL_PLUGIN_LAYERZERO", address(0)));
         _registerRailIfProvided(registry, vm.envOr("RAIL_PLUGIN_THORCHAIN", address(0)));
@@ -118,6 +121,25 @@ contract ConfigureAll is ScriptBase {
         cctp.setDestinationCaller(dstChainId, bytes32(uint256(uint160(dstCaller))));
     }
 
+    function _configureCctpFastRoutes() internal {
+        if (!vm.envOr("CCTP_FAST_SET_ROUTE", false)) return;
+
+        address cctpAddr = vm.envAddress("CCTP_FAST_PLUGIN");
+        uint32 dstChainId = uint32(vm.envUint("CCTP_FAST_ROUTE_CHAIN_ID"));
+        uint32 domain = uint32(vm.envUint("CCTP_FAST_ROUTE_DOMAIN"));
+        address dstReceiver = vm.envAddress("CCTP_FAST_ROUTE_RECEIVER");
+        address dstCaller = vm.envOr("CCTP_FAST_ROUTE_CALLER", address(0));
+        uint256 maxFeeBpsCap = vm.envOr("CCTP_FAST_MAX_FEE_BPS_CAP", uint256(0));
+
+        CCTPFastRailPlugin cctpFast = CCTPFastRailPlugin(cctpAddr);
+        cctpFast.setChainDomain(dstChainId, domain);
+        cctpFast.setDestinationReceiver(dstChainId, bytes32(uint256(uint160(dstReceiver))));
+        cctpFast.setDestinationCaller(dstChainId, bytes32(uint256(uint160(dstCaller))));
+        if (maxFeeBpsCap > 0) {
+            cctpFast.setMaxFeeBpsCap(maxFeeBpsCap);
+        }
+    }
+
     function _configureAxelarRoutes() internal {
         if (!vm.envOr("AXELAR_SET_ROUTE", false)) return;
 
@@ -165,10 +187,21 @@ contract ConfigureAll is ScriptBase {
 
         address adapterAddr = vm.envAddress("AXELAR_ADAPTER");
         string memory sourceChain = vm.envString("AXELAR_SOURCE_CHAIN");
-        string memory sourceAddress = vm.envString("AXELAR_SOURCE_ADDRESS");
         bool trusted = vm.envOr("AXELAR_SOURCE_TRUSTED", true);
 
-        AxelarReceiverAdapter(adapterAddr).setTrustedSource(sourceChain, sourceAddress, trusted);
+        bytes memory sourceAddressBytes = vm.envOr("AXELAR_SOURCE_ADDRESS_BYTES", bytes(""));
+        if (sourceAddressBytes.length != 0) {
+            AxelarReceiverAdapter(adapterAddr).setTrustedSource(sourceChain, sourceAddressBytes, trusted);
+        } else {
+            address sourceAddress = vm.envAddress("AXELAR_SOURCE_ADDRESS");
+            AxelarReceiverAdapter(adapterAddr).setTrustedSourceAddress(sourceChain, sourceAddress, trusted);
+        }
+
+        bytes32 tokenId = vm.envOr("AXELAR_TRUSTED_TOKEN_ID", bytes32(0));
+        address token = vm.envOr("AXELAR_TRUSTED_TOKEN", address(0));
+        if (tokenId != bytes32(0) || token != address(0)) {
+            AxelarReceiverAdapter(adapterAddr).setTrustedToken(tokenId, token, trusted);
+        }
     }
 
     function _configureLayerZeroAdapter() internal {
@@ -176,9 +209,14 @@ contract ConfigureAll is ScriptBase {
 
         address adapterAddr = vm.envAddress("LZ_ADAPTER");
         uint32 srcEid = uint32(vm.envUint("LZ_SOURCE_EID"));
-        bytes32 srcPeer = vm.envBytes32("LZ_SOURCE_PEER");
 
-        LayerZeroReceiverAdapter(adapterAddr).setTrustedPeer(srcEid, srcPeer);
+        address srcPeerAddress = vm.envOr("LZ_SOURCE_PEER_ADDRESS", address(0));
+        if (srcPeerAddress != address(0)) {
+            LayerZeroReceiverAdapter(adapterAddr).setTrustedPeerAddress(srcEid, srcPeerAddress);
+        } else {
+            bytes32 srcPeer = vm.envBytes32("LZ_SOURCE_PEER");
+            LayerZeroReceiverAdapter(adapterAddr).setTrustedPeer(srcEid, srcPeer);
+        }
     }
 
     function _registerRailIfProvided(PluginRegistry registry, address railPlugin) internal {
