@@ -24,7 +24,10 @@ library IntentTypes {
         uint256 feeAmount;          // Pre-quoted fee in tokenIn terms (capped at 1% on-chain)
         bytes   swapDataSrc;        // Encoded swap params for source aggregator
         bytes   swapDataDst;        // Encoded swap params for destination aggregator
+        bytes32 swapPluginIdSrc;    // [SECURITY] Src plugin locked in intent, not external calldata
         bytes32 dstSwapPluginId;    // [SECURITY] Dst plugin locked in intent, not in calldata
+        bytes32 railPluginId;       // [SECURITY] Rail plugin locked in intent, not external calldata
+        bytes   railData;           // Rail-specific params (e.g. CCTP maxFee/minFinalityThreshold)
         address dstReceiver;        // ReceiverV1 address on destination chain
         bytes   nativeDstAddress;   // For non-EVM delivery rails (BTC/SOL/etc.)
         string  thorAssetIdentifier;// THORChain asset identifier
@@ -39,6 +42,7 @@ library IntentTypes {
         address settlementTokenAddr; // Resolved ERC-20 address on source chain (address(0) = native ETH)
         uint256 amount;              // Amount of settlement token to bridge
         uint32  dstChainId;
+        bytes   railData;            // Rail-specific params forwarded from signed intent
         // ── Messaging rails (CCTP, Axelar, LZ, Via Labs) ──────────────────────
         address dstReceiver;         // ReceiverV1 contract on destination EVM chain
         bytes   dstCalldata;         // Calldata for ReceiverV1.execute()

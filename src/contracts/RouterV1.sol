@@ -63,12 +63,9 @@ contract RouterV1 is ReentrancyGuard, Pausable, Ownable2Step {
 
     /// @notice Primary entry point — user calls this to initiate a cross-chain swap
     /// @param intent        Full intent struct, pre-built by VPS / SDK
-    /// @param swapPluginId  Which swap plugin to use for tokenIn → settlementToken
-    /// @param railPluginId  Which rail plugin to use for bridging
+    /// @dev Source swap plugin and rail plugin are part of the signed intent.
     function initiateSwap(
-        IntentTypes.SwapIntent calldata intent,
-        bytes32 swapPluginId,
-        bytes32 railPluginId
+        IntentTypes.SwapIntent calldata intent
     ) external payable nonReentrant whenNotPaused {
         // ── Structural validation ──────────────────────────────────────────────
         if (intent.amountIn == 0) revert ZeroAmount();
@@ -95,7 +92,7 @@ contract RouterV1 is ReentrancyGuard, Pausable, Ownable2Step {
         );
 
         // ── Resolve plugins from registry (reverts if inactive or not found) ───
-        IRailPlugin railPlugin = registry.getRailPlugin(railPluginId);
+        IRailPlugin railPlugin = registry.getRailPlugin(intent.railPluginId);
         address settlementAddr  = railPlugin.settlementTokenAddress(intent.settlementToken);
         uint256 settlementAmount;
 
@@ -105,7 +102,7 @@ contract RouterV1 is ReentrancyGuard, Pausable, Ownable2Step {
             // ── Swap tokenIn → settlement token ─────────────────────────────────
             // minSrcSwapOut is encoded in swapDataSrc by the VPS — prevents sandwich attacks.
             // The swap plugin MUST enforce this internally; we verify the result here too.
-            ISwapPlugin swapPlugin = registry.getSwapPlugin(swapPluginId);
+            ISwapPlugin swapPlugin = registry.getSwapPlugin(intent.swapPluginIdSrc);
             IERC20(intent.tokenIn).forceApprove(address(swapPlugin), amountAfterFee);
 
             uint256 before = IERC20(settlementAddr).balanceOf(address(this));
@@ -142,6 +139,7 @@ contract RouterV1 is ReentrancyGuard, Pausable, Ownable2Step {
             settlementTokenAddr: settlementAddr,
             amount:              settlementAmount,
             dstChainId:          intent.dstChainId,
+            railData:            intent.railData,
             dstReceiver:         intent.dstReceiver,   // [FIX] was address(0) — now required in intent
             finalRecipient:      intent.user,
             dstCalldata:         dstCalldata,

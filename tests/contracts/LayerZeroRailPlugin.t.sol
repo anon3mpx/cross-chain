@@ -6,7 +6,9 @@ import {
     LayerZeroRailPlugin,
     ILayerZeroOFT,
     SendParam,
-    MessagingFee
+    MessagingFee,
+    MessagingReceipt,
+    OFTReceipt
 } from "../../src/contracts/rails/LayerZeroRailPlugin.sol";
 import {IntentTypes} from "../../src/contracts/interfaces/IIntentTypes.sol";
 
@@ -44,7 +46,7 @@ contract MockLayerZeroOFT is ILayerZeroOFT {
         SendParam calldata _sendParam,
         MessagingFee calldata _fee,
         address payable
-    ) external payable returns (bytes32 guid) {
+    ) external payable returns (MessagingReceipt memory receipt, OFTReceipt memory oftReceipt) {
         require(msg.value == _fee.nativeFee, "native fee mismatch");
 
         lastDstEid = _sendParam.dstEid;
@@ -56,7 +58,15 @@ contract MockLayerZeroOFT is ILayerZeroOFT {
         sendCalled = true;
 
         usdc.transferFrom(msg.sender, address(this), _sendParam.amountLD);
-        guid = keccak256(abi.encodePacked(_sendParam.dstEid, _sendParam.to, _sendParam.amountLD));
+        receipt = MessagingReceipt({
+            guid: keccak256(abi.encodePacked(_sendParam.dstEid, _sendParam.to, _sendParam.amountLD)),
+            nonce: 1,
+            fee: _fee
+        });
+        oftReceipt = OFTReceipt({
+            amountSentLD: _sendParam.amountLD,
+            amountReceivedLD: _sendParam.amountLD
+        });
     }
 }
 
@@ -87,6 +97,7 @@ contract LayerZeroRailPluginTest {
             settlementTokenAddr: address(usdc),
             amount: amount,
             dstChainId: DST_CHAIN,
+            railData: bytes(""),
             dstReceiver: address(0xBEEF),
             dstCalldata: hex"abcd",
             gasForDst: 200_000,
@@ -103,6 +114,7 @@ contract LayerZeroRailPluginTest {
         _assertEq(oft.lastDstEid(), DST_EID, "dst eid mismatch");
         _assertEq(oft.lastTo(), bytes32(uint256(uint160(address(0xBEEF)))), "receiver bytes32 mismatch");
         _assertEq(oft.lastAmount(), amount, "amount mismatch");
+        _assertEq(oft.lastComposeHash(), keccak256(hex"abcd"), "compose payload mismatch");
         _assertEq(oft.lastPaidNativeFee(), LZ_NATIVE_FEE, "native fee mismatch");
         _assertEq(keccak256(hex"01020304"), oft.lastOptionsHash(), "options mismatch");
         _assertEq(usdc.balanceOf(address(oft)), amount, "OFT did not receive funds");
@@ -114,6 +126,7 @@ contract LayerZeroRailPluginTest {
             settlementTokenAddr: address(usdc),
             amount: 1e6,
             dstChainId: 55555,
+            railData: bytes(""),
             dstReceiver: address(0xBEEF),
             dstCalldata: hex"",
             gasForDst: 200_000,

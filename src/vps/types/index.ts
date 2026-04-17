@@ -117,6 +117,7 @@ export interface QuoteResult {
   amountIn:          bigint;
   estimatedOut:      bigint;
   minAmountOut:      bigint;
+  minSrcSwapOut:     bigint;
   feeAmountUSD:      number;
   feeAmountToken:    bigint;
   rail:              Rail;
@@ -125,6 +126,7 @@ export interface QuoteResult {
   etaSeconds:        number;
   expiresAt:         number;
   railPluginId:      string;
+  railData:          string;    // ABI-encoded rail params (e.g. CCTP fast maxFee/finality)
   swapPluginIdSrc:   string;
   swapPluginIdDst:   string;
   swapDataSrc:       string;

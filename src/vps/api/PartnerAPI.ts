@@ -6,10 +6,8 @@ import express, { Request, Response, NextFunction } from 'express';
 import { ApiKeyManager, PartnerTier } from '../services/ApiKeyManager';
 import { IntentEngine } from '../services/IntentEngine';
 import { QuoteEngine } from '../services/QuoteEngine';
-import { getChainConfig } from '../config/chains';
+import { buildRouterIntegration } from '../services/IntentCalldataBuilder';
 import { parseQuoteRequest, serializeQuote } from './quoteCodec';
-
-const ZERO_ADDR = '0x0000000000000000000000000000000000000000';
 
 export function buildPartnerAPI(
   keyManager: ApiKeyManager,
@@ -29,6 +27,9 @@ export function buildPartnerAPI(
     const partner = keyManager.registerPartner({
       name, contactEmail, payoutAddress, webhookUrl,
       tier: PartnerTier.FREE,
+      feeShareBps: 0,
+      quotesPerMin: 60,
+      maxTxPerDay: 500,
       active: true,
     });
     res.status(201).json({
@@ -85,13 +86,7 @@ export function buildPartnerAPI(
 
       const intent = intentEngine.create(quote, quoteReq.userAddress);
       const { partnerRebate } = keyManager.splitFee(quote.feeAmountToken, check.partner);
-      const routerAddress = getRouterAddress(quote.srcChainId);
-      if (routerAddress === ZERO_ADDR) {
-        return res.status(503).json({
-          error: 'CHAIN_NOT_CONFIGURED',
-          message: `RouterV1 address missing for source chain ${quote.srcChainId}`,
-        });
-      }
+      const integration = buildRouterIntegration(intent.intentId, quote, quoteReq.userAddress);
 
       res.json({
         intentId:   intent.intentId,
@@ -101,16 +96,16 @@ export function buildPartnerAPI(
           feeShareBps:   check.partner.feeShareBps,
           claimableNow:  keyManager.getRebateSummary(apiKey).totalUSDC,
         },
-        integration: {
-          contractAddress: routerAddress,
-          calldata:        buildRouterCalldata(intent.intentId, serializeQuote(quote)),
-          value:           estimateNativeGas(quote),
-          expiresAt:       quote.expiresAt,
-        },
+        integration,
       });
     } catch (err) {
       const msg = String(err);
-      const code = msg.toLowerCase().includes('amountin') || msg.toLowerCase().includes('payload') ? 400 : 500;
+      const code = msg.toLowerCase().includes('amountin')
+        || msg.toLowerCase().includes('payload')
+        || msg.toLowerCase().includes('calldata')
+        || msg.toLowerCase().includes('routerv1')
+        ? 400
+        : 500;
       res.status(code).json({ error: code === 400 ? 'INVALID_REQUEST' : 'INTERNAL', message: msg });
     }
   });
@@ -120,7 +115,7 @@ export function buildPartnerAPI(
     const check = keyManager.validateKey((req as any).apiKey);
     if (!check.allowed) return res.status(401).json({ error: check.reason });
 
-    const intent = intentEngine.get(req.params.id);
+    const intent = intentEngine.get(String(req.params.id));
     if (!intent) return res.status(404).json({ error: 'NOT_FOUND' });
 
     res.json({
@@ -240,12 +235,3 @@ const LIMIT_MESSAGES: Record<string, string> = {
   DAILY_LIMIT:    'Daily transaction limit reached. Resets at UTC midnight or upgrade.',
   ABUSE_DETECTED: 'Unusual quote pattern detected. Contact support if this is in error.',
 };
-
-// ── Stubs ──────────────────────────────────────────────────────────────────────
-function getRouterAddress(chainId: number): string {
-  return getChainConfig(chainId)?.routerV1 ?? ZERO_ADDR;
-}
-function buildRouterCalldata(_intentId: string, _quote: any): string {
-  return '0x'; // TODO: encode RouterV1.initiateSwap(intent, swapPluginId, railPluginId)
-}
-function estimateNativeGas(_quote: any): string { return '0'; }
