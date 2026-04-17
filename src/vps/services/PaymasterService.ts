@@ -44,7 +44,7 @@ export interface PaymasterOpts {
   chainId:        number;
   senderAddress:  string;     // User's smart wallet address
   routerV1:       string;     // RouterV1 address on this chain
-  paymasterAddr:  string;     // RufloPaymaster address on this chain
+  paymasterAddr:  string;     // Paymaster address on this chain
   signerKey:      string;     // VPS private key for paymasterAndData signing
   gasToken:       string;     // ERC-20 address user pays gas in
   swapCalldata:   string;     // ABI-encoded RouterV1.initiateSwap() calldata

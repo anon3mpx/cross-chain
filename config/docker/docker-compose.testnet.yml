@@ -1,26 +1,26 @@
 services:
   postgres:
     image: postgres:16-alpine
-    container_name: ruflo-postgres
+    container_name: empx-cross-chain-postgres
     restart: unless-stopped
     environment:
-      POSTGRES_DB: ruflo
+      POSTGRES_DB: empx-cross-chain
       POSTGRES_USER: postgres
       POSTGRES_PASSWORD: postgres
     ports:
       - "5432:5432"
     volumes:
-      - ruflo_pg_data:/var/lib/postgresql/data
+      - empx-cross-chain_pg_data:/var/lib/postgresql/data
       - ../../src/vps/db/schema.sql:/docker-entrypoint-initdb.d/001_schema.sql:ro
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U postgres -d ruflo"]
+      test: ["CMD-SHELL", "pg_isready -U postgres -d empx-cross-chain"]
       interval: 5s
       timeout: 5s
       retries: 20
 
   redis:
     image: redis:7-alpine
-    container_name: ruflo-redis
+    container_name: empx-cross-chain-redis
     restart: unless-stopped
     ports:
       - "6379:6379"
@@ -31,11 +31,11 @@ services:
       retries: 20
 
   api:
-    image: ruflo-vps:testnet
+    image: empx-cross-chain-vps:testnet
     build:
       context: ../..
       dockerfile: config/docker/Dockerfile
-    container_name: ruflo-api
+    container_name: empx-cross-chain-api
     restart: unless-stopped
     depends_on:
       postgres:
@@ -46,7 +46,7 @@ services:
       - path: ../../.env
         required: false
     environment:
-      DATABASE_URL: postgres://postgres:postgres@postgres:5432/ruflo
+      DATABASE_URL: postgres://postgres:postgres@postgres:5432/empx-cross-chain
       REDIS_URL: redis://redis:6379
       REDIS_ENABLED: "true"
       ENABLE_PARTNER_API: "false"
@@ -55,7 +55,7 @@ services:
       ENABLE_CCTP_RELAY: "false"
       VPS_JSON_LIMIT: "32kb"
       VPS_RATE_LIMIT_STORE: "redis"
-      VPS_RATE_LIMIT_REDIS_PREFIX: "ruflo:rate-limit:testnet"
+      VPS_RATE_LIMIT_REDIS_PREFIX: "empx-cross-chain:rate-limit:testnet"
       VPS_RATE_LIMIT_WINDOW_MS: "60000"
       VPS_RATE_LIMIT_MAX: "120"
       VPS_QUOTE_RATE_LIMIT_WINDOW_MS: "60000"
@@ -65,11 +65,11 @@ services:
       - "8787:8787"
 
   worker:
-    image: ruflo-vps:testnet
+    image: empx-cross-chain-vps:testnet
     build:
       context: ../..
       dockerfile: config/docker/Dockerfile
-    container_name: ruflo-worker
+    container_name: empx-cross-chain-worker
     restart: unless-stopped
     depends_on:
       postgres:
@@ -82,7 +82,7 @@ services:
       - path: ../../.env
         required: false
     environment:
-      DATABASE_URL: postgres://postgres:postgres@postgres:5432/ruflo
+      DATABASE_URL: postgres://postgres:postgres@postgres:5432/empx-cross-chain
       REDIS_URL: redis://redis:6379
       REDIS_ENABLED: "true"
       ENABLE_PARTNER_API: "false"
@@ -104,7 +104,7 @@ services:
 
   adminer:
     image: adminer:latest
-    container_name: ruflo-adminer
+    container_name: empx-cross-chain-adminer
     restart: unless-stopped
     depends_on:
       postgres:
@@ -116,7 +116,7 @@ services:
 
   swagger-ui:
     image: swaggerapi/swagger-ui
-    container_name: ruflo-swagger-ui
+    container_name: empx-cross-chain-swagger-ui
     restart: unless-stopped
     depends_on:
       api:
@@ -129,4 +129,4 @@ services:
       - ../../openapi.json:/app/openapi.json:ro
 
 volumes:
-  ruflo_pg_data:
+  empx-cross-chain_pg_data:

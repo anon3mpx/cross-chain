@@ -142,7 +142,7 @@ function buildRateLimitStore(): RateLimitStore {
   return new RedisRateLimitStore(
     memoryRateLimitStore,
     redisUrl,
-    process.env.VPS_RATE_LIMIT_REDIS_PREFIX ?? 'ruflo:rate-limit',
+    process.env.VPS_RATE_LIMIT_REDIS_PREFIX ?? 'empx:rate-limit',
   );
 }
 

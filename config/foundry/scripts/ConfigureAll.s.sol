@@ -6,7 +6,7 @@ import {ScriptBase} from "./ScriptBase.sol";
 import {PluginRegistry} from "src/contracts/PluginRegistry.sol";
 import {RouterV1} from "src/contracts/RouterV1.sol";
 import {ReceiverV1} from "src/contracts/ReceiverV1.sol";
-import {RufloPaymaster} from "src/contracts/Paymaster.sol";
+import {Paymaster} from "src/contracts/Paymaster.sol";
 
 import {IRailPlugin} from "src/contracts/interfaces/IRailPlugin.sol";
 import {ISwapPlugin} from "src/contracts/interfaces/ISwapPlugin.sol";
@@ -89,7 +89,7 @@ contract ConfigureAll is ScriptBase {
         address paymasterAddr = vm.envOr("PAYMASTER", address(0));
         if (paymasterAddr == address(0)) return;
 
-        RufloPaymaster paymaster = RufloPaymaster(payable(paymasterAddr));
+        Paymaster paymaster = Paymaster(payable(paymasterAddr));
 
         if (vm.envOr("PAYMASTER_SET_SIGNER", false)) {
             address newSigner = vm.envAddress("PAYMASTER_NEW_SIGNER");
