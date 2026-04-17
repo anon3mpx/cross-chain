@@ -1,0 +1,18 @@
+{
+  "name": "ruflo-vps-runtime",
+  "version": "1.0.0",
+  "private": true,
+  "type": "commonjs",
+  "scripts": {
+    "vps:api": "tsx src/vps/app/api.ts",
+    "vps:worker": "tsx src/vps/app/worker.ts"
+  },
+  "dependencies": {
+    "ethers": "6.16.0",
+    "express": "5.2.1",
+    "pg": "8.20.0",
+    "redis": "5.11.0",
+    "tsx": "4.21.0",
+    "ws": "8.20.0"
+  }
+}

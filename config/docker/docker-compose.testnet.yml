@@ -31,6 +31,7 @@ services:
       retries: 20
 
   api:
+    image: ruflo-vps:testnet
     build:
       context: ../..
       dockerfile: config/docker/Dockerfile
@@ -52,11 +53,19 @@ services:
       ENABLE_EVENT_MONITOR: "false"
       ENABLE_RECOVERY_ENGINE: "false"
       ENABLE_CCTP_RELAY: "false"
-    command: npm run vps:api
+      VPS_JSON_LIMIT: "32kb"
+      VPS_RATE_LIMIT_STORE: "redis"
+      VPS_RATE_LIMIT_REDIS_PREFIX: "ruflo:rate-limit:testnet"
+      VPS_RATE_LIMIT_WINDOW_MS: "60000"
+      VPS_RATE_LIMIT_MAX: "120"
+      VPS_QUOTE_RATE_LIMIT_WINDOW_MS: "60000"
+      VPS_QUOTE_RATE_LIMIT_MAX: "20"
+    command: ["npm", "run", "vps:api"]
     ports:
       - "8787:8787"
 
   worker:
+    image: ruflo-vps:testnet
     build:
       context: ../..
       dockerfile: config/docker/Dockerfile
@@ -77,20 +86,47 @@ services:
       REDIS_URL: redis://redis:6379
       REDIS_ENABLED: "true"
       ENABLE_PARTNER_API: "false"
-      ENABLE_EVENT_MONITOR: "true"
+      ENABLE_EVENT_MONITOR: "false"
       ENABLE_RECOVERY_ENGINE: "true"
+      RPC_POLLING_INTERVAL_MS: "60000"
       RECOVERY_INTERVAL_MS: "30000"
-      ENABLE_CCTP_RELAY: "true"
+      ENABLE_CCTP_RELAY: "false"
       CCTP_ATTESTATION_BASE_URL: "https://iris-api-sandbox.circle.com"
       CCTP_ATTESTATION_POLL_MS: "4000"
       CCTP_ATTESTATION_TIMEOUT_MS: "600000"
-      CCTP_RELAY_LOOKBACK_BLOCKS: "4000"
+      CCTP_RELAY_LOOKBACK_BLOCKS: "0"
       CCTP_RELAY_RETRY_INTERVAL_MS: "15000"
       CCTP_RELAY_RETRY_BASE_MS: "15000"
       CCTP_RELAY_RETRY_MAX_MS: "300000"
       CCTP_RELAY_MAX_RETRY_ATTEMPTS: "0"
       CCTP_RELAY_RECONCILE_INTERVAL_MS: "60000"
-    command: npm run vps:worker
+    command: ["npm", "run", "vps:worker"]
+
+  adminer:
+    image: adminer:latest
+    container_name: ruflo-adminer
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    ports:
+      - "8080:8080"
+    environment:
+      ADMINER_DEFAULT_SERVER: postgres
+
+  swagger-ui:
+    image: swaggerapi/swagger-ui
+    container_name: ruflo-swagger-ui
+    restart: unless-stopped
+    depends_on:
+      api:
+        condition: service_started
+    ports:
+      - "8081:8080"
+    environment:
+      SWAGGER_JSON: /app/openapi.json
+    volumes:
+      - ../../openapi.json:/app/openapi.json:ro
 
 volumes:
   ruflo_pg_data:
