@@ -27,10 +27,22 @@ export class EventMonitor {
   // ── Setup ──────────────────────────────────────────────────────────────────
 
   addChain(chain: ChainConfig): void {
-    const primary  = new ethers.JsonRpcProvider(chain.rpcUrl);
-    const fallback = new ethers.JsonRpcProvider(chain.rpcFallback);
+    if (!chain.rpcUrl) return;
+    const pollingIntervalMs = this._readIntEnv('RPC_POLLING_INTERVAL_MS', 4000);
+    const primary  = new ethers.JsonRpcProvider(chain.rpcUrl, undefined, {
+      polling: true,
+      batchMaxCount: 1,
+    });
+    primary.pollingInterval = pollingIntervalMs;
+    const fallback = chain.rpcFallback
+      ? new ethers.JsonRpcProvider(chain.rpcFallback, undefined, {
+          polling: true,
+          batchMaxCount: 1,
+        })
+      : undefined;
+    if (fallback) fallback.pollingInterval = pollingIntervalMs;
     this.providers.set(chain.chainId, primary);
-    this.fallbackProviders.set(chain.chainId, fallback);
+    if (fallback) this.fallbackProviders.set(chain.chainId, fallback);
 
     if (chain.routerV1) this._watchRouter(chain);
     if (chain.receiverV1) this._watchReceiver(chain);
@@ -40,7 +52,7 @@ export class EventMonitor {
 
   private _watchRouter(chain: ChainConfig): void {
     const provider = this.providers.get(chain.chainId)!;
-    const contract = new ethers.Contract(chain.routerV1, ROUTER_ABI, provider);
+    const contract = new ethers.Contract(chain.routerV1!, ROUTER_ABI, provider);
     this.contracts.set(`${chain.chainId}:router`, contract);
 
     contract.on('IntentInitiated', (intentId, user, tokenIn, amountIn, dstChainId, railTxId, event) => {
@@ -60,7 +72,7 @@ export class EventMonitor {
 
   private _watchReceiver(chain: ChainConfig): void {
     const provider = this.providers.get(chain.chainId)!;
-    const contract = new ethers.Contract(chain.receiverV1, RECEIVER_ABI, provider);
+    const contract = new ethers.Contract(chain.receiverV1!, RECEIVER_ABI, provider);
     this.contracts.set(`${chain.chainId}:receiver`, contract);
 
     contract.on('IntentSettled', (intentId, user, tokenOut, amountOut, event) => {
@@ -89,5 +101,13 @@ export class EventMonitor {
   stop(): void {
     this.contracts.forEach(contract => contract.removeAllListeners());
     this.providers.forEach(provider => provider.destroy());
+    this.fallbackProviders.forEach(provider => provider.destroy());
+  }
+
+  private _readIntEnv(name: string, fallback: number): number {
+    const raw = process.env[name];
+    if (!raw) return fallback;
+    const parsed = Number(raw);
+    return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
   }
 }

@@ -5,69 +5,108 @@ import "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import "@openzeppelin/contracts/access/Ownable2Step.sol";
 
 /// @title AxelarReceiverAdapter
-/// @notice Destination-side adapter that forwards Axelar-delivered settlement
-///         tokens + payload into ReceiverV1.execute().
+/// @notice Destination-side Axelar ITS executable that forwards settlement +
+///         payload into ReceiverV1.execute().
 contract AxelarReceiverAdapter is Ownable2Step {
     using SafeERC20 for IERC20;
 
-    address public immutable gateway;
+    bytes32 public constant EXECUTE_SUCCESS = keccak256("its-execute-success");
+
+    address public immutable interchainTokenService;
     address public immutable receiver;
 
-    // keccak256(sourceChain + ":" + sourceAddress) => trusted
+    // keccak256(abi.encode(sourceChain, sourceAddress)) => trusted
     mapping(bytes32 => bool) public trustedSources;
+    // tokenId => expected local token address. address(0) means unsupported.
+    mapping(bytes32 => address) public trustedTokenById;
 
-    event TrustedSourceSet(string sourceChain, string sourceAddress, bool trusted);
-    event AxelarMessageForwarded(bytes32 indexed sourceKey, address token, uint256 amount);
+    event TrustedSourceSet(string sourceChain, bytes sourceAddress, bool trusted);
+    event TrustedTokenSet(bytes32 indexed tokenId, address indexed token, bool trusted);
+    event AxelarMessageForwarded(
+        bytes32 indexed commandId,
+        bytes32 indexed sourceKey,
+        bytes32 indexed tokenId,
+        address token,
+        uint256 amount
+    );
 
-    error UnauthorizedGateway(address caller);
+    error UnauthorizedInterchainTokenService(address caller);
     error UntrustedSource(bytes32 sourceKey);
+    error UntrustedToken(bytes32 tokenId, address token, address expected);
     error ZeroAddress(string field);
 
-    constructor(address _gateway, address _receiver, address _owner) Ownable(_owner) {
-        if (_gateway == address(0)) revert ZeroAddress("gateway");
+    constructor(address _interchainTokenService, address _receiver, address _owner) Ownable(_owner) {
+        if (_interchainTokenService == address(0)) revert ZeroAddress("interchainTokenService");
         if (_receiver == address(0)) revert ZeroAddress("receiver");
-        gateway = _gateway;
+        interchainTokenService = _interchainTokenService;
         receiver = _receiver;
     }
 
-    /// @notice Called by Axelar gateway/executable wrapper once tokens are delivered.
-    function executeWithToken(
+    /// @notice Official Axelar ITS executable callback.
+    /// @dev ITS transfers tokens to this adapter before invoking this function.
+    function executeWithInterchainToken(
+        bytes32 commandId,
         string calldata sourceChain,
-        string calldata sourceAddress,
-        address settlementToken,
-        uint256 amount,
-        bytes calldata payload
-    ) external {
-        if (msg.sender != gateway) revert UnauthorizedGateway(msg.sender);
+        bytes calldata sourceAddress,
+        bytes calldata data,
+        bytes32 tokenId,
+        address token,
+        uint256 amount
+    ) external returns (bytes32) {
+        if (msg.sender != interchainTokenService) {
+            revert UnauthorizedInterchainTokenService(msg.sender);
+        }
 
         bytes32 sourceKey = _sourceKey(sourceChain, sourceAddress);
         if (!trustedSources[sourceKey]) revert UntrustedSource(sourceKey);
 
-        IERC20(settlementToken).safeTransfer(receiver, amount);
-        IReceiverExecutorAxelar(receiver).execute(settlementToken, amount, payload);
+        address expectedToken = trustedTokenById[tokenId];
+        if (expectedToken == address(0) || expectedToken != token) {
+            revert UntrustedToken(tokenId, token, expectedToken);
+        }
 
-        emit AxelarMessageForwarded(sourceKey, settlementToken, amount);
+        IERC20(token).safeTransfer(receiver, amount);
+        IReceiverExecutorAxelar(receiver).execute(token, amount, data);
+
+        emit AxelarMessageForwarded(commandId, sourceKey, tokenId, token, amount);
+        return EXECUTE_SUCCESS;
     }
 
     function setTrustedSource(
         string calldata sourceChain,
-        string calldata sourceAddress,
+        bytes calldata sourceAddress,
         bool trusted
     ) external onlyOwner {
         trustedSources[_sourceKey(sourceChain, sourceAddress)] = trusted;
         emit TrustedSourceSet(sourceChain, sourceAddress, trusted);
     }
 
+    function setTrustedSourceAddress(
+        string calldata sourceChain,
+        address sourceAddress,
+        bool trusted
+    ) external onlyOwner {
+        bytes memory sourceAddressBytes = abi.encodePacked(sourceAddress);
+        trustedSources[_sourceKey(sourceChain, sourceAddressBytes)] = trusted;
+        emit TrustedSourceSet(sourceChain, sourceAddressBytes, trusted);
+    }
+
+    function setTrustedToken(bytes32 tokenId, address token, bool trusted) external onlyOwner {
+        if (trusted && token == address(0)) revert ZeroAddress("token");
+        trustedTokenById[tokenId] = trusted ? token : address(0);
+        emit TrustedTokenSet(tokenId, token, trusted);
+    }
+
     function rescueTokens(address token, uint256 amount) external onlyOwner {
         IERC20(token).safeTransfer(owner(), amount);
     }
 
-    function _sourceKey(string calldata sourceChain, string calldata sourceAddress)
+    function _sourceKey(string memory sourceChain, bytes memory sourceAddress)
         internal
         pure
         returns (bytes32)
     {
-        return keccak256(abi.encodePacked(sourceChain, ":", sourceAddress));
+        return keccak256(abi.encode(sourceChain, sourceAddress));
     }
 }
 

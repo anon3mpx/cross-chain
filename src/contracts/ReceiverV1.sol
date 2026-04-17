@@ -68,6 +68,7 @@ contract ReceiverV1 is ReentrancyGuard, Pausable, Ownable2Step {
 
         // ── Case 1: Direct delivery — no aggregator on this chain or same token ─
         if (swapPluginId == bytes32(0) || tokenOut == settlementToken) {
+            if (amount < minAmountOut) revert SwapOutputTooLow(intentId, amount, minAmountOut);
             IERC20(settlementToken).safeTransfer(user, amount);
             emit DirectDelivery(intentId, user, settlementToken, amount);
             return;

@@ -7,6 +7,7 @@
 import express, { Request, Response } from 'express';
 import { IntentEngine } from '../services/IntentEngine';
 import { QuoteEngine } from '../services/QuoteEngine';
+import { buildRouterIntegration } from '../services/IntentCalldataBuilder';
 import { IntentStatus } from '../types';
 import { parseQuoteRequest, serializeQuote } from './quoteCodec';
 
@@ -33,16 +34,19 @@ export function buildStatusAPI(
 
       // Pre-create intent in QUOTED state
       const intent = intentEngine.create(quote, quoteReq.userAddress);
-      res.json({ quote: serializeQuote(quote), intentId: intent.intentId });
+      const integration = buildRouterIntegration(intent.intentId, quote, quoteReq.userAddress);
+      res.json({ quote: serializeQuote(quote), intentId: intent.intentId, integration });
     } catch (err) {
-      res.status(400).json({ error: String(err) });
+      const msg = String(err);
+      const code = msg.toLowerCase().includes('calldata') || msg.toLowerCase().includes('routerv1') ? 503 : 400;
+      res.status(code).json({ error: msg });
     }
   });
 
   // ── GET /intent/:id ────────────────────────────────────────────────────────
   // Poll this for intent status. Frontend shows progress to user.
   app.get('/intent/:id', (req: Request, res: Response) => {
-    const intent = intentEngine.get(req.params.id);
+    const intent = intentEngine.get(String(req.params.id));
     if (!intent) return res.status(404).json({ error: 'Intent not found' });
 
     res.json({

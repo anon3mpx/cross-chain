@@ -1,0 +1,96 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: ruflo-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ruflo
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+    ports:
+      - "5432:5432"
+    volumes:
+      - ruflo_pg_data:/var/lib/postgresql/data
+      - ../../src/vps/db/schema.sql:/docker-entrypoint-initdb.d/001_schema.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d ruflo"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  redis:
+    image: redis:7-alpine
+    container_name: ruflo-redis
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  api:
+    build:
+      context: ../..
+      dockerfile: config/docker/Dockerfile
+    container_name: ruflo-api
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    env_file:
+      - path: ../../.env
+        required: false
+    environment:
+      DATABASE_URL: postgres://postgres:postgres@postgres:5432/ruflo
+      REDIS_URL: redis://redis:6379
+      REDIS_ENABLED: "true"
+      ENABLE_PARTNER_API: "false"
+      ENABLE_EVENT_MONITOR: "false"
+      ENABLE_RECOVERY_ENGINE: "false"
+      ENABLE_CCTP_RELAY: "false"
+    command: npm run vps:api
+    ports:
+      - "8787:8787"
+
+  worker:
+    build:
+      context: ../..
+      dockerfile: config/docker/Dockerfile
+    container_name: ruflo-worker
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      api:
+        condition: service_started
+    env_file:
+      - path: ../../.env
+        required: false
+    environment:
+      DATABASE_URL: postgres://postgres:postgres@postgres:5432/ruflo
+      REDIS_URL: redis://redis:6379
+      REDIS_ENABLED: "true"
+      ENABLE_PARTNER_API: "false"
+      ENABLE_EVENT_MONITOR: "true"
+      ENABLE_RECOVERY_ENGINE: "true"
+      RECOVERY_INTERVAL_MS: "30000"
+      ENABLE_CCTP_RELAY: "true"
+      CCTP_ATTESTATION_BASE_URL: "https://iris-api-sandbox.circle.com"
+      CCTP_ATTESTATION_POLL_MS: "4000"
+      CCTP_ATTESTATION_TIMEOUT_MS: "600000"
+      CCTP_RELAY_LOOKBACK_BLOCKS: "4000"
+      CCTP_RELAY_RETRY_INTERVAL_MS: "15000"
+      CCTP_RELAY_RETRY_BASE_MS: "15000"
+      CCTP_RELAY_RETRY_MAX_MS: "300000"
+      CCTP_RELAY_MAX_RETRY_ATTEMPTS: "0"
+      CCTP_RELAY_RECONCILE_INTERVAL_MS: "60000"
+    command: npm run vps:worker
+
+volumes:
+  ruflo_pg_data:

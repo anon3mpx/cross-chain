@@ -6,8 +6,9 @@
 
 import { Rail, RailConfig, RailScore, SettlementToken, ChainConfig, CHAIN_ID } from '../types';
 
-const PLUGIN_ID = {
+export const PLUGIN_ID = {
   CCTP_V2:      '0xb148ea5f936a28661e11743b1650193f1b14a2322b9541503bf6815a84a1a6e9',
+  CCTP_V2_FAST: '0x9181644edfd36b07ccd623494a3681a4a6b9cd5d52611accda20264cd09259ac',
   AXELAR_V1:    '0xdee0b34b74b60e53553685c32477090103c2b806eb925a8cd000efa92bef3e8b',
   LZ_V2:        '0xc472efb7b9a986e1446d8bf9dec51e88548a1d8eb4a0810e6424d97a878d34fc',
   VIA_LABS_V1:  '0x3c09500df72dbac855e61899e0dd4420addc8367cb7a5f60906b5450d7a71687',
@@ -99,6 +100,14 @@ export const CHAIN_RAILS: Record<number, Rail[]> = {
   7777777:[Rail.LAYERZERO, Rail.VIA_LABS],                 // Zora
   1284:   [Rail.AXELAR, Rail.LAYERZERO, Rail.VIA_LABS],   // Moonbeam
   42220:  [Rail.AXELAR, Rail.LAYERZERO, Rail.VIA_LABS],   // Celo
+  // ── Testnet coverage (for staging/integration) ─────────────────────────
+  11155111: [Rail.CCTP, Rail.AXELAR, Rail.LAYERZERO], // Ethereum Sepolia
+  421614:   [Rail.CCTP, Rail.AXELAR, Rail.LAYERZERO], // Arbitrum Sepolia
+  84532:    [Rail.CCTP, Rail.AXELAR, Rail.LAYERZERO], // Base Sepolia
+  11155420: [Rail.CCTP, Rail.AXELAR, Rail.LAYERZERO], // Optimism Sepolia
+  43113:    [Rail.CCTP, Rail.AXELAR, Rail.LAYERZERO], // Avalanche Fuji
+  80002:    [Rail.CCTP, Rail.AXELAR, Rail.LAYERZERO], // Polygon Amoy
+  97:       [Rail.AXELAR, Rail.LAYERZERO],             // BSC Testnet
   // ── Non-EVM destinations — liquidity rails only ──────────────────────────
   [CHAIN_ID.BTC]:    [Rail.THORCHAIN],
   [CHAIN_ID.SOL]:    [Rail.THORCHAIN, Rail.WORMHOLE, Rail.CCTP],  // CCTP v2 on Solana (domain 5)

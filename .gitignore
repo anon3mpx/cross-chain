@@ -29,7 +29,7 @@ Thumbs.db
 
 # Agent configs
 .agents
-.swarm 
+.swarm
 
 # Environment variables
 .env

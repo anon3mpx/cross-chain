@@ -20,7 +20,7 @@ contract LayerZeroRailPlugin is IRailPlugin, ERC165, Ownable2Step {
 
     // EVM chainId => LayerZero endpoint ID (eid)
     mapping(uint32 => uint32) public chainIdToEid;
-    // EVM chainId => ReceiverV1 on destination
+    // EVM chainId => LayerZeroReceiverAdapter composer on destination
     mapping(uint32 => address) public destinationReceivers;
     // EVM chainId => extra options blob (executor config, gas, etc.)
     mapping(uint32 => bytes) public sendOptionsByChain;
@@ -37,7 +37,9 @@ contract LayerZeroRailPlugin is IRailPlugin, ERC165, Ownable2Step {
     error UnsupportedSettlementToken(uint8 token);
     error UnsupportedRoute(uint32 dstChainId);
     error ReceiverNotConfigured(uint32 dstChainId);
+    error SettlementTokenMismatch(address provided, address expected);
     error InsufficientNativeFee(uint256 provided, uint256 required);
+    error UnsupportedLzTokenFee(uint256 lzTokenFee);
 
     constructor(
         address _usdc,
@@ -80,19 +82,32 @@ contract LayerZeroRailPlugin is IRailPlugin, ERC165, Ownable2Step {
         return settlementToken == uint8(IntentTypes.SettlementToken.USDC);
     }
 
-    function estimateFee(uint32 dstChainId, uint256 amount, uint8 /*settlementToken*/)
+    function estimateFee(uint32 dstChainId, uint256 amount, uint8 settlementToken)
         external
         view
         override
         returns (uint256 fee, uint256 eta)
     {
-        uint32 dstEid = chainIdToEid[dstChainId];
-        if (dstEid == 0) revert UnsupportedRoute(dstChainId);
+        if (settlementToken != uint8(IntentTypes.SettlementToken.USDC)) {
+            revert UnsupportedSettlementToken(settlementToken);
+        }
 
-        bytes memory payload = abi.encode(bytes32(0), bytes(""));
+        uint32 dstEid = chainIdToEid[dstChainId];
+        address dstReceiver = destinationReceivers[dstChainId];
+        if (dstEid == 0) revert UnsupportedRoute(dstChainId);
+        if (dstReceiver == address(0)) revert ReceiverNotConfigured(dstChainId);
+
+        bytes memory payload = abi.encode(
+            bytes32(0),
+            address(0),
+            address(0),
+            uint256(0),
+            bytes(""),
+            bytes32(0)
+        );
         SendParam memory sendParam = SendParam({
             dstEid: dstEid,
-            to: bytes32(0),
+            to: _addressToBytes32(dstReceiver),
             amountLD: amount,
             minAmountLD: amount,
             extraOptions: sendOptionsByChain[dstChainId],
@@ -101,6 +116,7 @@ contract LayerZeroRailPlugin is IRailPlugin, ERC165, Ownable2Step {
         });
 
         MessagingFee memory mFee = oft.quoteSend(sendParam, false);
+        if (mFee.lzTokenFee != 0) revert UnsupportedLzTokenFee(mFee.lzTokenFee);
         fee = mFee.nativeFee;
         eta = 120;
     }
@@ -115,8 +131,11 @@ contract LayerZeroRailPlugin is IRailPlugin, ERC165, Ownable2Step {
         address dstReceiver = destinationReceivers[params.dstChainId];
         if (dstEid == 0) revert UnsupportedRoute(params.dstChainId);
         if (dstReceiver == address(0)) revert ReceiverNotConfigured(params.dstChainId);
+        if (params.settlementTokenAddr != usdc) {
+            revert SettlementTokenMismatch(params.settlementTokenAddr, usdc);
+        }
 
-        bytes memory composePayload = abi.encode(params.intentId, params.dstCalldata);
+        bytes memory composePayload = params.dstCalldata;
 
         SendParam memory sendParam = SendParam({
             dstEid: dstEid,
@@ -129,6 +148,7 @@ contract LayerZeroRailPlugin is IRailPlugin, ERC165, Ownable2Step {
         });
 
         MessagingFee memory feeQuote = oft.quoteSend(sendParam, false);
+        if (feeQuote.lzTokenFee != 0) revert UnsupportedLzTokenFee(feeQuote.lzTokenFee);
         if (msg.value < feeQuote.nativeFee) {
             revert InsufficientNativeFee(msg.value, feeQuote.nativeFee);
         }
@@ -220,5 +240,16 @@ interface ILayerZeroOFT {
         SendParam calldata _sendParam,
         MessagingFee calldata _fee,
         address payable _refundAddress
-    ) external payable returns (bytes32 guid);
+    ) external payable returns (MessagingReceipt memory receipt, OFTReceipt memory oftReceipt);
+}
+
+struct MessagingReceipt {
+    bytes32 guid;
+    uint64 nonce;
+    MessagingFee fee;
+}
+
+struct OFTReceipt {
+    uint256 amountSentLD;
+    uint256 amountReceivedLD;
 }
