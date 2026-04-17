@@ -6,6 +6,10 @@ const ROUTER_V1_IFACE = new Interface([
   'function initiateSwap((address user,address tokenIn,address tokenOut,uint256 amountIn,uint256 minAmountOut,uint256 minSrcSwapOut,uint32 dstChainId,uint8 rail,uint8 settlementToken,uint256 feeAmount,bytes swapDataSrc,bytes swapDataDst,bytes32 swapPluginIdSrc,bytes32 dstSwapPluginId,bytes32 railPluginId,bytes railData,address dstReceiver,bytes nativeDstAddress,string thorAssetIdentifier,uint256 minThorOutput,bytes32 intentId,uint256 deadline) intent)',
 ]);
 
+const ROUTER_V1_LEGACY_IFACE = new Interface([
+  'function initiateSwap((address user,address tokenIn,address tokenOut,uint256 amountIn,uint256 minAmountOut,uint256 minSrcSwapOut,uint32 dstChainId,uint8 rail,uint8 settlementToken,uint256 feeAmount,bytes swapDataSrc,bytes swapDataDst,bytes32 dstSwapPluginId,address dstReceiver,bytes nativeDstAddress,string thorAssetIdentifier,uint256 minThorOutput,bytes32 intentId,uint256 deadline) intent,bytes32 swapPluginId,bytes32 railPluginId)',
+]);
+
 const RAIL_ENUM_VALUE: Record<string, number> = {
   [Rail.CCTP]: 0,
   [Rail.AXELAR]: 1,
@@ -56,6 +60,9 @@ export function buildRouterCalldata(
   quote: QuoteResult,
   userAddress: string,
 ): string {
+  const srcCfg = getChainConfig(quote.srcChainId);
+  if (!srcCfg) throw new Error(`calldata: unknown source chain ${quote.srcChainId}`);
+
   const dstCfg = getChainConfig(quote.dstChainId);
   if (!dstCfg) throw new Error(`calldata: unknown destination chain ${quote.dstChainId}`);
 
@@ -95,6 +102,43 @@ export function buildRouterCalldata(
     intentId: normalizeBytes32(intentId, 'intentId'),
     deadline: toBigIntStrict(quote.expiresAt, 'expiresAt'),
   };
+
+  if (srcCfg.routerV1Abi === 'legacy') {
+    if (payload.railData !== '0x') {
+      throw new Error(
+        `calldata: legacy RouterV1 on chain ${quote.srcChainId} cannot encode railData; ` +
+        'deploy the current RouterV1 ABI or set CHAIN_<chainId>_ROUTER_V1_ABI=current',
+      );
+    }
+
+    const legacyPayload = {
+      user: payload.user,
+      tokenIn: payload.tokenIn,
+      tokenOut: payload.tokenOut,
+      amountIn: payload.amountIn,
+      minAmountOut: payload.minAmountOut,
+      minSrcSwapOut: payload.minSrcSwapOut,
+      dstChainId: payload.dstChainId,
+      rail: payload.rail,
+      settlementToken: payload.settlementToken,
+      feeAmount: payload.feeAmount,
+      swapDataSrc: payload.swapDataSrc,
+      swapDataDst: payload.swapDataDst,
+      dstSwapPluginId: payload.dstSwapPluginId,
+      dstReceiver: payload.dstReceiver,
+      nativeDstAddress: payload.nativeDstAddress,
+      thorAssetIdentifier: payload.thorAssetIdentifier,
+      minThorOutput: payload.minThorOutput,
+      intentId: payload.intentId,
+      deadline: payload.deadline,
+    };
+
+    return ROUTER_V1_LEGACY_IFACE.encodeFunctionData('initiateSwap', [
+      legacyPayload,
+      payload.swapPluginIdSrc,
+      payload.railPluginId,
+    ]);
+  }
 
   return ROUTER_V1_IFACE.encodeFunctionData('initiateSwap', [payload]);
 }

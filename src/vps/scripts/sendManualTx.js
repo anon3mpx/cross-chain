@@ -9,11 +9,11 @@ const { Contract, Interface, JsonRpcProvider, Wallet } = require('ethers');
  * 2) Run: node src/vps/scripts/sendManualTx.js
  */
 
-const RPC_URL = 'https://sepolia.base.org';
+const RPC_URL = 'https://arbitrum-sepolia-testnet.api.pocket.network';
 const PRIVATE_KEY = '';
 
-const TO = '0x44733101c97a41e7f14c995bd212c8d455606751';
-const DATA = '0xa97e15e100000000000000000000000000000000000000000000000000000000000000600000000000000000000000000000000000000000000000000000000000000000b148ea5f936a28661e11743b1650193f1b14a2322b9541503bf6815a84a1a6e900000000000000000000000005f8cc8753d90d67dbb8c02118440b8283f941c9000000000000000000000000036cbd53842c5426634e7929541ec2318f3dcf7e00000000000000000000000075faf114eafb1bdbe2f0316df893fd58ce46aa4d00000000000000000000000000000000000000000000000000000000001e848000000000000000000000000000000000000000000000000000000000001e0fb400000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000066eee000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000004e20000000000000000000000000000000000000000000000000000000000000026000000000000000000000000000000000000000000000000000000000000002800000000000000000000000000000000000000000000000000000000000000000000000000000000000000000b2abe546163021d539e4cc991354c29a124b38ce00000000000000000000000000000000000000000000000000000000000002a000000000000000000000000000000000000000000000000000000000000002c00000000000000000000000000000000000000000000000000000000000000000d70bf26451cf6e5adbca791f47d878fa0c93f920ca024debb0ec681b1834d7eb0000000000000000000000000000000000000000000000000000000069dfa0c00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000';
+const TO = '0x233f82f89333c74bedd2325fd8ca140ffc63ed9e';
+const DATA = '0xa97e15e100000000000000000000000000000000000000000000000000000000000000600000000000000000000000000000000000000000000000000000000000000000b148ea5f936a28661e11743b1650193f1b14a2322b9541503bf6815a84a1a6e900000000000000000000000005f8cc8753d90d67dbb8c02118440b8283f941c900000000000000000000000075faf114eafb1bdbe2f0316df893fd58ce46aa4d000000000000000000000000036cbd53842c5426634e7929541ec2318f3dcf7e00000000000000000000000000000000000000000000000000000000001e848000000000000000000000000000000000000000000000000000000000001e366000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000014a34000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000004e2000000000000000000000000000000000000000000000000000000000000002600000000000000000000000000000000000000000000000000000000000000280000000000000000000000000000000000000000000000000000000000000000000000000000000000000000094f41058563e46c27aba75ab592752cc09061c6e00000000000000000000000000000000000000000000000000000000000002a000000000000000000000000000000000000000000000000000000000000002c0000000000000000000000000000000000000000000000000000000000000000025f0e7119dc3f54c09997940fc70ff2073311948fb00f7c92fd0a13fca65e34e0000000000000000000000000000000000000000000000000000000069e263ea0000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000';
 const VALUE_WEI = '0';
 
 // Set a gas limit explicitly to bypass estimateGas failures.
@@ -26,12 +26,55 @@ const ROUTER_IFACE = new Interface([
   'function initiateSwap((address user,address tokenIn,address tokenOut,uint256 amountIn,uint256 minAmountOut,uint256 minSrcSwapOut,uint32 dstChainId,uint8 rail,uint8 settlementToken,uint256 feeAmount,bytes swapDataSrc,bytes swapDataDst,bytes32 swapPluginIdSrc,bytes32 dstSwapPluginId,bytes32 railPluginId,bytes railData,address dstReceiver,bytes nativeDstAddress,string thorAssetIdentifier,uint256 minThorOutput,bytes32 intentId,uint256 deadline) intent)',
 ]);
 
+const ROUTER_LEGACY_IFACE = new Interface([
+  'function initiateSwap((address user,address tokenIn,address tokenOut,uint256 amountIn,uint256 minAmountOut,uint256 minSrcSwapOut,uint32 dstChainId,uint8 rail,uint8 settlementToken,uint256 feeAmount,bytes swapDataSrc,bytes swapDataDst,bytes32 dstSwapPluginId,address dstReceiver,bytes nativeDstAddress,string thorAssetIdentifier,uint256 minThorOutput,bytes32 intentId,uint256 deadline) intent,bytes32 swapPluginId,bytes32 railPluginId)',
+]);
+
+const ROUTER_ERRORS_IFACE = new Interface([
+  'error IntentExpired(bytes32 intentId)',
+  'error IntentDeadlineTooFar(bytes32 intentId)',
+  'error IntentAlreadyExecuted(bytes32 intentId)',
+  'error FeeTooHigh(uint256 feeAmount, uint256 maxAllowed)',
+  'error ZeroAmount()',
+  'error AmountBelowMinimum(uint256 amount, uint256 minimum)',
+  'error ZeroAddress(string field)',
+  'error SrcSwapSlippage(uint256 got, uint256 min)',
+]);
+
 const ERC20_ABI = [
   'function symbol() view returns (string)',
   'function decimals() view returns (uint8)',
   'function balanceOf(address owner) view returns (uint256)',
   'function allowance(address owner, address spender) view returns (uint256)',
 ];
+
+function loadDotEnv() {
+  const envPath = path.resolve(process.cwd(), '.env');
+  if (!fs.existsSync(envPath)) return;
+
+  for (const rawLine of fs.readFileSync(envPath, 'utf8').split(/\r?\n/)) {
+    const line = rawLine.trim();
+    if (!line || line.startsWith('#')) continue;
+
+    const idx = line.indexOf('=');
+    if (idx <= 0) continue;
+
+    const key = line.slice(0, idx).trim();
+    let value = line.slice(idx + 1).trim();
+    if (!key || Object.prototype.hasOwnProperty.call(process.env, key)) continue;
+
+    if ((value.startsWith('"') && value.endsWith('"')) || (value.startsWith("'") && value.endsWith("'"))) {
+      value = value.slice(1, -1);
+    }
+    process.env[key] = value;
+  }
+}
+
+function requireValue(label, v) {
+  if (typeof v !== 'string' || v.trim() === '') {
+    throw new Error(`missing ${label}. Set it in .env or export it before running this script.`);
+  }
+}
 
 function assertPrivateKey(v) {
   if (typeof v !== 'string' || !/^0x[0-9a-fA-F]{64}$/.test(v)) {
@@ -51,10 +94,52 @@ function assertHexData(v) {
   }
 }
 
+function extractRevertData(err) {
+  if (!err) return undefined;
+  const candidates = [
+    err.data,
+    err.error && err.error.data,
+    err.info && err.info.error && err.info.error.data,
+    err.info && err.info.data,
+  ];
+  for (const candidate of candidates) {
+    if (typeof candidate === 'string' && /^0x[0-9a-fA-F]+$/.test(candidate)) return candidate;
+  }
+  return undefined;
+}
+
+function describeRouterCustomError(revertData) {
+  if (!revertData) return null;
+  try {
+    const decoded = ROUTER_ERRORS_IFACE.parseError(revertData);
+    if (!decoded) return null;
+
+    switch (decoded.name) {
+      case 'IntentExpired':
+        return `RouterV1.IntentExpired: intentId=${decoded.args.intentId}. Regenerate quote/calldata and resend.`;
+      case 'IntentDeadlineTooFar':
+        return `RouterV1.IntentDeadlineTooFar: intentId=${decoded.args.intentId}.`;
+      case 'IntentAlreadyExecuted':
+        return `RouterV1.IntentAlreadyExecuted: intentId=${decoded.args.intentId}.`;
+      case 'FeeTooHigh':
+        return `RouterV1.FeeTooHigh: feeAmount=${decoded.args.feeAmount.toString()}, maxAllowed=${decoded.args.maxAllowed.toString()}.`;
+      case 'AmountBelowMinimum':
+        return `RouterV1.AmountBelowMinimum: amountIn=${decoded.args.amount.toString()}, minimum=${decoded.args.minimum.toString()}.`;
+      case 'ZeroAddress':
+        return `RouterV1.ZeroAddress: field=${decoded.args.field}.`;
+      case 'SrcSwapSlippage':
+        return `RouterV1.SrcSwapSlippage: got=${decoded.args.got.toString()}, min=${decoded.args.min.toString()}.`;
+      default:
+        return `RouterV1.${decoded.name}`;
+    }
+  } catch {
+    return null;
+  }
+}
+
 async function tryDecodeAndCheckAllowance(provider, wallet) {
   try {
-    const decoded = ROUTER_IFACE.decodeFunctionData('initiateSwap', DATA);
-    const intent = decoded.intent;
+    const intent = decodeRouterIntent(DATA);
 
     const tokenIn = intent.tokenIn;
     const amountIn = BigInt(intent.amountIn.toString());
@@ -69,6 +154,13 @@ async function tryDecodeAndCheckAllowance(provider, wallet) {
     console.log(`  feeAmount(raw): ${feeAmount.toString()}`);
     console.log(`  amountAfterFee(raw): ${amountAfterFee.toString()}`);
     console.log(`  deadline: ${deadline} (in ${deadline - now}s)`);
+
+    if (deadline < now) {
+      throw new Error(`RouterV1.IntentExpired: regenerate quote/calldata before sending (deadline=${deadline}, now=${now}).`);
+    }
+    if (deadline > now + (30 * 60)) {
+      throw new Error(`RouterV1.IntentDeadlineTooFar: deadline exceeds RouterV1 max window (deadline=${deadline}, now=${now}).`);
+    }
 
     if (/^0x[0-9a-fA-F]{40}$/.test(tokenIn)) {
       const erc20 = new Contract(tokenIn, ERC20_ABI, provider);
@@ -91,12 +183,42 @@ async function tryDecodeAndCheckAllowance(provider, wallet) {
         console.log('  WARNING: allowance < amountIn (tx will revert).');
       }
     }
-  } catch {
+  } catch (err) {
+    const msg = String(err && err.message ? err.message : err);
+    if (msg.startsWith('RouterV1.')) throw err;
     console.log('\nDATA is not RouterV1 initiateSwap calldata (skipping decode/check).');
   }
 }
 
+function decodeRouterIntent(calldataHex) {
+  try {
+    return ROUTER_IFACE.decodeFunctionData('initiateSwap', calldataHex).intent;
+  } catch {
+    return ROUTER_LEGACY_IFACE.decodeFunctionData('initiateSwap', calldataHex).intent;
+  }
+}
+
+async function preflightCall(provider, wallet, txReq) {
+  try {
+    await provider.call({
+      ...txReq,
+      from: wallet.address,
+    });
+  } catch (err) {
+    const revertData = extractRevertData(err);
+    const decoded = describeRouterCustomError(revertData);
+    if (decoded) {
+      throw new Error(`${decoded}${revertData ? ` (revertData=${revertData})` : ''}`);
+    }
+    throw err;
+  }
+}
+
 async function main() {
+  requireValue('DEPLOYER_PRIVATE_KEY', PRIVATE_KEY);
+  requireValue('TX_DATA', DATA);
+  requireValue('TX_TO, CHAIN_84532_ROUTER_V1, or ROUTER_V1', TO);
+
   assertPrivateKey(PRIVATE_KEY);
   assertAddress('TO', TO);
   assertHexData(DATA);
@@ -128,6 +250,8 @@ async function main() {
     value,
     gasLimit,
   };
+
+  await preflightCall(provider, wallet, txReq);
 
   const tx = await wallet.sendTransaction(txReq);
   console.log(`\ntxHash: ${tx.hash}`);
