@@ -1,0 +1,533 @@
+{
+  "openapi": "3.0.3",
+  "info": {
+    "title": "Empx Cross-chain VPS Public API",
+    "version": "1.0.0",
+    "description": "OpenAPI definition for the public Empx Cross-chain VPS HTTP API exposed by src/vps/api/StatusAPI.ts. Partner-specific endpoints under /partner are intentionally excluded."
+  },
+  "servers": [
+    {
+      "url": "http://localhost:8787",
+      "description": "Default local Docker/API port from config/docker/docker-compose.testnet.yml"
+    }
+  ],
+  "tags": [
+    {
+      "name": "Public",
+      "description": "Unauthenticated public status and quote endpoints"
+    }
+  ],
+  "paths": {
+    "/quote": {
+      "post": {
+        "tags": [
+          "Public"
+        ],
+        "operationId": "createQuote",
+        "summary": "Create a swap quote and intent",
+        "description": "Returns a quote, a pre-created intent ID, and RouterV1 integration calldata for the user transaction.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/QuoteRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Quote created",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/QuoteResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request or no available route",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Rate limit exceeded",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Router calldata could not be prepared",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/intent/{id}": {
+      "get": {
+        "tags": [
+          "Public"
+        ],
+        "operationId": "getIntentStatus",
+        "summary": "Get intent status",
+        "description": "Returns the current status and transaction identifiers for an intent.",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "description": "Intent ID returned by POST /quote.",
+            "schema": {
+              "$ref": "#/components/schemas/IntentId"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Intent status",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/IntentStatusResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Intent was not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Rate limit exceeded",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/health": {
+      "get": {
+        "tags": [
+          "Public"
+        ],
+        "operationId": "getHealth",
+        "summary": "Get API health",
+        "description": "Returns process health and intent counts grouped by status.",
+        "responses": {
+          "200": {
+            "description": "API health",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HealthResponse"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Rate limit exceeded",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "schemas": {
+      "Address": {
+        "type": "string",
+        "description": "EVM address or token identifier accepted by the VPS quote engine."
+      },
+      "BigIntString": {
+        "type": "string",
+        "pattern": "^[0-9]+$",
+        "description": "Unsigned integer encoded as a base-10 string."
+      },
+      "Bytes": {
+        "type": "string",
+        "pattern": "^0x[0-9a-fA-F]*$"
+      },
+      "Bytes32": {
+        "type": "string",
+        "pattern": "^0x[0-9a-fA-F]{64}$"
+      },
+      "IntentId": {
+        "$ref": "#/components/schemas/Bytes32"
+      },
+      "Rail": {
+        "type": "string",
+        "enum": [
+          "CCTP",
+          "AXELAR",
+          "LAYERZERO",
+          "VIA_LABS",
+          "WORMHOLE",
+          "THORCHAIN"
+        ]
+      },
+      "RailType": {
+        "type": "string",
+        "enum": [
+          "messaging",
+          "liquidity"
+        ]
+      },
+      "SettlementToken": {
+        "type": "string",
+        "enum": [
+          "USDC",
+          "USDT",
+          "ETH",
+          "BTC",
+          "SOL"
+        ]
+      },
+      "IntentStatus": {
+        "type": "string",
+        "enum": [
+          "CREATED",
+          "QUOTED",
+          "SUBMITTED",
+          "IN_TRANSIT",
+          "DESTINATION_RECEIVED",
+          "SETTLED",
+          "STUCK",
+          "RECOVERING",
+          "FAILED"
+        ]
+      },
+      "QuoteRequest": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "tokenIn",
+          "tokenOut",
+          "amountIn",
+          "srcChainId",
+          "dstChainId",
+          "userAddress"
+        ],
+        "properties": {
+          "tokenIn": {
+            "$ref": "#/components/schemas/Address"
+          },
+          "tokenOut": {
+            "$ref": "#/components/schemas/Address"
+          },
+          "amountIn": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/BigIntString"
+              },
+              {
+                "type": "integer",
+                "minimum": 1
+              }
+            ],
+            "description": "Input amount in the token's smallest units. The API accepts a positive integer number or base-10 string."
+          },
+          "srcChainId": {
+            "type": "integer",
+            "description": "Source chain ID."
+          },
+          "dstChainId": {
+            "type": "integer",
+            "description": "Destination chain ID."
+          },
+          "userAddress": {
+            "$ref": "#/components/schemas/Address"
+          },
+          "nativeDstAddress": {
+            "type": "string",
+            "description": "Native destination address for non-EVM destinations when required."
+          },
+          "urgency": {
+            "type": "string",
+            "enum": [
+              "fast",
+              "normal"
+            ],
+            "default": "normal"
+          }
+        }
+      },
+      "QuoteResult": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "intentId",
+          "srcChainId",
+          "dstChainId",
+          "tokenIn",
+          "tokenOut",
+          "amountIn",
+          "estimatedOut",
+          "minAmountOut",
+          "minSrcSwapOut",
+          "feeAmountUSD",
+          "feeAmountToken",
+          "rail",
+          "railType",
+          "settlementToken",
+          "etaSeconds",
+          "expiresAt",
+          "railPluginId",
+          "railData",
+          "swapPluginIdSrc",
+          "swapPluginIdDst",
+          "swapDataSrc",
+          "swapDataDst"
+        ],
+        "properties": {
+          "intentId": {
+            "$ref": "#/components/schemas/IntentId"
+          },
+          "srcChainId": {
+            "type": "integer"
+          },
+          "dstChainId": {
+            "type": "integer"
+          },
+          "tokenIn": {
+            "$ref": "#/components/schemas/Address"
+          },
+          "tokenOut": {
+            "$ref": "#/components/schemas/Address"
+          },
+          "amountIn": {
+            "$ref": "#/components/schemas/BigIntString"
+          },
+          "estimatedOut": {
+            "$ref": "#/components/schemas/BigIntString"
+          },
+          "minAmountOut": {
+            "$ref": "#/components/schemas/BigIntString"
+          },
+          "minSrcSwapOut": {
+            "$ref": "#/components/schemas/BigIntString"
+          },
+          "feeAmountUSD": {
+            "type": "number"
+          },
+          "feeAmountToken": {
+            "$ref": "#/components/schemas/BigIntString"
+          },
+          "rail": {
+            "$ref": "#/components/schemas/Rail"
+          },
+          "railType": {
+            "$ref": "#/components/schemas/RailType"
+          },
+          "settlementToken": {
+            "$ref": "#/components/schemas/SettlementToken"
+          },
+          "etaSeconds": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "expiresAt": {
+            "type": "integer",
+            "description": "Unix timestamp in seconds."
+          },
+          "railPluginId": {
+            "$ref": "#/components/schemas/Bytes32"
+          },
+          "railData": {
+            "$ref": "#/components/schemas/Bytes"
+          },
+          "swapPluginIdSrc": {
+            "$ref": "#/components/schemas/Bytes32"
+          },
+          "swapPluginIdDst": {
+            "$ref": "#/components/schemas/Bytes32"
+          },
+          "swapDataSrc": {
+            "$ref": "#/components/schemas/Bytes"
+          },
+          "swapDataDst": {
+            "$ref": "#/components/schemas/Bytes"
+          },
+          "thorAsset": {
+            "type": "string"
+          },
+          "minThorOutput": {
+            "$ref": "#/components/schemas/BigIntString"
+          },
+          "nativeDstAddress": {
+            "type": "string"
+          }
+        }
+      },
+      "RouterIntegration": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "contractAddress",
+          "calldata",
+          "value",
+          "expiresAt"
+        ],
+        "properties": {
+          "contractAddress": {
+            "$ref": "#/components/schemas/Address"
+          },
+          "calldata": {
+            "$ref": "#/components/schemas/Bytes"
+          },
+          "value": {
+            "$ref": "#/components/schemas/BigIntString"
+          },
+          "expiresAt": {
+            "type": "integer",
+            "description": "Unix timestamp in seconds."
+          }
+        }
+      },
+      "QuoteResponse": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "quote",
+          "intentId",
+          "integration"
+        ],
+        "properties": {
+          "quote": {
+            "$ref": "#/components/schemas/QuoteResult"
+          },
+          "intentId": {
+            "$ref": "#/components/schemas/IntentId"
+          },
+          "integration": {
+            "$ref": "#/components/schemas/RouterIntegration"
+          }
+        }
+      },
+      "IntentStatusResponse": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "intentId",
+          "status",
+          "rail",
+          "etaSeconds",
+          "createdAt",
+          "updatedAt"
+        ],
+        "properties": {
+          "intentId": {
+            "$ref": "#/components/schemas/IntentId"
+          },
+          "status": {
+            "$ref": "#/components/schemas/IntentStatus"
+          },
+          "srcTxHash": {
+            "type": "string"
+          },
+          "dstTxHash": {
+            "type": "string"
+          },
+          "railTxId": {
+            "type": "string"
+          },
+          "rail": {
+            "$ref": "#/components/schemas/Rail"
+          },
+          "etaSeconds": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "createdAt": {
+            "type": "integer",
+            "description": "Unix timestamp in milliseconds."
+          },
+          "updatedAt": {
+            "type": "integer",
+            "description": "Unix timestamp in milliseconds."
+          },
+          "errorMessage": {
+            "type": "string"
+          }
+        }
+      },
+      "HealthResponse": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "ok",
+          "intents",
+          "ts"
+        ],
+        "properties": {
+          "ok": {
+            "type": "boolean",
+            "enum": [
+              true
+            ]
+          },
+          "intents": {
+            "type": "object",
+            "description": "Intent counts keyed by IntentStatus.",
+            "additionalProperties": {
+              "type": "integer",
+              "minimum": 0
+            }
+          },
+          "ts": {
+            "type": "integer",
+            "description": "Unix timestamp in milliseconds."
+          }
+        }
+      },
+      "ErrorResponse": {
+        "type": "object",
+        "additionalProperties": true,
+        "required": [
+          "error"
+        ],
+        "properties": {
+          "error": {
+            "type": "string"
+          },
+          "message": {
+            "type": "string"
+          }
+        }
+      }
+    }
+  }
+}

@@ -6,7 +6,7 @@ import {ScriptBase} from "./ScriptBase.sol";
 import {PluginRegistry} from "src/contracts/PluginRegistry.sol";
 import {RouterV1} from "src/contracts/RouterV1.sol";
 import {ReceiverV1} from "src/contracts/ReceiverV1.sol";
-import {RufloPaymaster} from "src/contracts/Paymaster.sol";
+import {Paymaster} from "src/contracts/Paymaster.sol";
 
 import {IRailPlugin} from "src/contracts/interfaces/IRailPlugin.sol";
 import {ISwapPlugin} from "src/contracts/interfaces/ISwapPlugin.sol";
@@ -40,6 +40,7 @@ contract ConfigureAll is ScriptBase {
 
         _configureAxelarAdapter();
         _configureLayerZeroAdapter();
+        _configureLayerZeroOftPeer();
 
         vm.stopBroadcast();
     }
@@ -89,7 +90,7 @@ contract ConfigureAll is ScriptBase {
         address paymasterAddr = vm.envOr("PAYMASTER", address(0));
         if (paymasterAddr == address(0)) return;
 
-        RufloPaymaster paymaster = RufloPaymaster(payable(paymasterAddr));
+        Paymaster paymaster = Paymaster(payable(paymasterAddr));
 
         if (vm.envOr("PAYMASTER_SET_SIGNER", false)) {
             address newSigner = vm.envAddress("PAYMASTER_NEW_SIGNER");
@@ -219,6 +220,26 @@ contract ConfigureAll is ScriptBase {
         }
     }
 
+    function _configureLayerZeroOftPeer() internal {
+        if (!vm.envOr("LZ_OFT_SET_PEER", false)) return;
+
+        address oft = vm.envAddress("LZ_OFT");
+        uint32 peerEid = uint32(vm.envUint("LZ_OFT_PEER_EID"));
+
+        address peerAddress = vm.envOr("LZ_OFT_PEER_ADDRESS", address(0));
+        if (peerAddress != address(0)) {
+            ILayerZeroOFTPeerConfig(oft).setPeer(peerEid, bytes32(uint256(uint160(peerAddress))));
+            emit ScriptLogAddress("LZ_OFT_PEER_ADDRESS", peerAddress);
+        } else {
+            bytes32 peer = vm.envBytes32("LZ_OFT_PEER");
+            ILayerZeroOFTPeerConfig(oft).setPeer(peerEid, peer);
+            emit ScriptLogBytes32("LZ_OFT_PEER", peer);
+        }
+
+        emit ScriptLogAddress("LZ_OFT", oft);
+        emit ScriptLogBytes32("LZ_OFT_PEER_EID", bytes32(uint256(peerEid)));
+    }
+
     function _registerRailIfProvided(PluginRegistry registry, address railPlugin) internal {
         if (railPlugin == address(0)) return;
 
@@ -248,4 +269,8 @@ contract ConfigureAll is ScriptBase {
         receiver.addApprovedCaller(caller);
         emit ScriptLogAddress("ReceiverApprovedCaller", caller);
     }
+}
+
+interface ILayerZeroOFTPeerConfig {
+    function setPeer(uint32 _eid, bytes32 _peer) external;
 }

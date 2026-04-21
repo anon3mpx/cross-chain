@@ -16,6 +16,13 @@ function env(key: string): string | undefined {
   return trimmed.length > 0 ? trimmed : undefined;
 }
 
+function routerV1Abi(chainId: number): 'legacy' | 'current' {
+  const raw = (env(`CHAIN_${chainId}_ROUTER_V1_ABI`) ?? env('ROUTER_V1_ABI') ?? 'legacy').toLowerCase();
+  if (['current', 'v2', 'new'].includes(raw)) return 'current';
+  if (['legacy', 'v1', 'old'].includes(raw)) return 'legacy';
+  throw new Error(`invalid CHAIN_${chainId}_ROUTER_V1_ABI: ${raw}`);
+}
+
 const cfg = (
   chainId: number,
   name: string,
@@ -35,6 +42,7 @@ const cfg = (
   rpcUrl: env(`CHAIN_${chainId}_RPC_URL`) ?? '',
   rpcFallback: env(`CHAIN_${chainId}_RPC_FALLBACK`) ?? env(`CHAIN_${chainId}_RPC_URL`) ?? '',
   routerV1: env(`CHAIN_${chainId}_ROUTER_V1`),
+  routerV1Abi: routerV1Abi(chainId),
   receiverV1: env(`CHAIN_${chainId}_RECEIVER_V1`),
   nativeStable,
   blockTimeMs,

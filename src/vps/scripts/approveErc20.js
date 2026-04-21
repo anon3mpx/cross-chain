@@ -8,17 +8,45 @@ const { Contract, JsonRpcProvider, Wallet } = require('ethers');
  *   node src/vps/scripts/approveErc20.js
  */
 
-const RPC_URL = 'https://sepolia.base.org';
+const RPC_URL = 'https://sepolia.optimism.io';
 const PRIVATE_KEY = '';
-const TOKEN_ADDRESS = '0x036CbD53842c5426634e7929541eC2318f3dCF7e'; // USDC on Base Sepolia
-const SPENDER_ADDRESS = '0x44733101c97a41e7f14c995bd212c8d455606751'; // Router on Base Sepolia (for approving router to pull tokens for CCTP test route)
-const AMOUNT_RAW = '10000000'; // raw units (USDC 1.0 = 1000000)
+const TOKEN_ADDRESS = '0x2f2A9DbFd8c503a0aC56413B774e39030df85331'; // USDC on Arbitrum Sepolia
+const SPENDER_ADDRESS = '0x78546a4ace4529582d7ddf4356baf110fa343701'; // Router on Arbitrum Sepolia (for approving router to pull tokens for CCTP test route)
+const AMOUNT_RAW = '200000000'; // raw units (USDC 1.0 = 1000000)
 
 const ERC20_ABI = [
   'function approve(address spender, uint256 amount) external returns (bool)',
   'function allowance(address owner, address spender) external view returns (uint256)',
   'function symbol() external view returns (string)',
 ];
+
+function loadDotEnv() {
+  const envPath = path.resolve(process.cwd(), '.env');
+  if (!fs.existsSync(envPath)) return;
+
+  for (const rawLine of fs.readFileSync(envPath, 'utf8').split(/\r?\n/)) {
+    const line = rawLine.trim();
+    if (!line || line.startsWith('#')) continue;
+
+    const idx = line.indexOf('=');
+    if (idx <= 0) continue;
+
+    const key = line.slice(0, idx).trim();
+    let value = line.slice(idx + 1).trim();
+    if (!key || Object.prototype.hasOwnProperty.call(process.env, key)) continue;
+
+    if ((value.startsWith('"') && value.endsWith('"')) || (value.startsWith("'") && value.endsWith("'"))) {
+      value = value.slice(1, -1);
+    }
+    process.env[key] = value;
+  }
+}
+
+function requireValue(label, v) {
+  if (typeof v !== 'string' || v.trim() === '') {
+    throw new Error(`missing ${label}. Set it in .env or export it before running this script.`);
+  }
+}
 
 function assertHex40(label, v) {
   if (typeof v !== 'string' || !/^0x[0-9a-fA-F]{40}$/.test(v)) {
@@ -33,6 +61,10 @@ function assertPrivateKey(v) {
 }
 
 async function main() {
+  requireValue('DEPLOYER_PRIVATE_KEY', PRIVATE_KEY);
+  requireValue('TOKEN_ADDRESS, CHAIN_84532_TOKEN_CCTP_USDC, or CHAIN_84532_TOKEN_USDC', TOKEN_ADDRESS);
+  requireValue('SPENDER_ADDRESS, TX_TO, CHAIN_84532_ROUTER_V1, or ROUTER_V1', SPENDER_ADDRESS);
+
   assertPrivateKey(PRIVATE_KEY);
   assertHex40('TOKEN_ADDRESS', TOKEN_ADDRESS);
   assertHex40('SPENDER_ADDRESS', SPENDER_ADDRESS);

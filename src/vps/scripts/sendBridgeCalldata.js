@@ -8,6 +8,10 @@ const ROUTER_INITIATE_IFACE = new Interface([
   'function initiateSwap((address user,address tokenIn,address tokenOut,uint256 amountIn,uint256 minAmountOut,uint256 minSrcSwapOut,uint32 dstChainId,uint8 rail,uint8 settlementToken,uint256 feeAmount,bytes swapDataSrc,bytes swapDataDst,bytes32 swapPluginIdSrc,bytes32 dstSwapPluginId,bytes32 railPluginId,bytes railData,address dstReceiver,bytes nativeDstAddress,string thorAssetIdentifier,uint256 minThorOutput,bytes32 intentId,uint256 deadline) intent)',
 ]);
 
+const ROUTER_INITIATE_LEGACY_IFACE = new Interface([
+  'function initiateSwap((address user,address tokenIn,address tokenOut,uint256 amountIn,uint256 minAmountOut,uint256 minSrcSwapOut,uint32 dstChainId,uint8 rail,uint8 settlementToken,uint256 feeAmount,bytes swapDataSrc,bytes swapDataDst,bytes32 dstSwapPluginId,address dstReceiver,bytes nativeDstAddress,string thorAssetIdentifier,uint256 minThorOutput,bytes32 intentId,uint256 deadline) intent,bytes32 swapPluginId,bytes32 railPluginId)',
+]);
+
 const ROUTER_ERRORS_IFACE = new Interface([
   'error IntentExpired(bytes32 intentId)',
   'error IntentDeadlineTooFar(bytes32 intentId)',
@@ -270,8 +274,7 @@ function describeRouterCustomError(revertData) {
 
 function preflightRouterIntent(calldataHex) {
   try {
-    const decoded = ROUTER_INITIATE_IFACE.decodeFunctionData('initiateSwap', calldataHex);
-    const intent = decoded.intent;
+    const intent = decodeRouterIntent(calldataHex);
     const amountIn = BigInt(intent.amountIn.toString());
     const feeAmount = BigInt(intent.feeAmount.toString());
     const amountAfterFee = amountIn - feeAmount;
@@ -297,6 +300,14 @@ function preflightRouterIntent(calldataHex) {
     // If this is not RouterV1 calldata, skip preflight silently.
     const msg = String((e && e.message) || e);
     if (msg.startsWith('preflight:')) throw e;
+  }
+}
+
+function decodeRouterIntent(calldataHex) {
+  try {
+    return ROUTER_INITIATE_IFACE.decodeFunctionData('initiateSwap', calldataHex).intent;
+  } catch {
+    return ROUTER_INITIATE_LEGACY_IFACE.decodeFunctionData('initiateSwap', calldataHex).intent;
   }
 }
 

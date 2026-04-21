@@ -6,7 +6,7 @@ import {ScriptBase} from "./ScriptBase.sol";
 import {PluginRegistry} from "src/contracts/PluginRegistry.sol";
 import {RouterV1} from "src/contracts/RouterV1.sol";
 import {ReceiverV1} from "src/contracts/ReceiverV1.sol";
-import {RufloPaymaster} from "src/contracts/Paymaster.sol";
+import {Paymaster} from "src/contracts/Paymaster.sol";
 
 import {CCTPRailPlugin} from "src/contracts/rails/CCTPRailPlugin.sol";
 import {CCTPFastRailPlugin} from "src/contracts/rails/CCTPFastRailPlugin.sol";
@@ -72,8 +72,8 @@ contract DeployAll is ScriptBase {
         address paymasterSigner = vm.envOr("PAYMASTER_SIGNER", address(0));
         if (entryPoint == address(0) || paymasterSigner == address(0)) return;
 
-        RufloPaymaster paymaster = new RufloPaymaster(entryPoint, paymasterSigner, owner);
-        emit ScriptLogAddress("RufloPaymaster", address(paymaster));
+        Paymaster paymaster = new Paymaster(entryPoint, paymasterSigner, owner);
+        emit ScriptLogAddress("Paymaster", address(paymaster));
     }
 
     function _deploySwapPlugins(address owner) internal {

@@ -29,15 +29,17 @@ export class EventMonitor {
   addChain(chain: ChainConfig): void {
     if (!chain.rpcUrl) return;
     const pollingIntervalMs = this._readIntEnv('RPC_POLLING_INTERVAL_MS', 4000);
-    const primary  = new ethers.JsonRpcProvider(chain.rpcUrl, undefined, {
+    const primary  = new ethers.JsonRpcProvider(chain.rpcUrl, chain.chainId, {
       polling: true,
       batchMaxCount: 1,
+      staticNetwork: true,
     });
     primary.pollingInterval = pollingIntervalMs;
     const fallback = chain.rpcFallback
-      ? new ethers.JsonRpcProvider(chain.rpcFallback, undefined, {
+      ? new ethers.JsonRpcProvider(chain.rpcFallback, chain.chainId, {
           polling: true,
           batchMaxCount: 1,
+          staticNetwork: true,
         })
       : undefined;
     if (fallback) fallback.pollingInterval = pollingIntervalMs;

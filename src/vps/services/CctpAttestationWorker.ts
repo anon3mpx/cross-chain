@@ -129,10 +129,11 @@ export class CctpAttestationWorker {
 
     for (const chain of Object.values(CHAIN_CONFIGS)) {
       if (!chain.isEVM || !chain.rpcUrl) continue;
-      const provider = new JsonRpcProvider(chain.rpcUrl, undefined, {
+      const provider = new JsonRpcProvider(chain.rpcUrl, chain.chainId, {
         polling: true,
         // Some public/testnet RPCs return malformed batched responses.
         batchMaxCount: 1,
+        staticNetwork: true,
       });
       provider.pollingInterval = pollingIntervalMs;
       provider.on('error', (err) => {
@@ -187,7 +188,8 @@ export class CctpAttestationWorker {
     const provider = this.providers.get(chainId);
     if (!provider) return;
     try {
-      const lookbackBlocks = this._readIntEnv('CCTP_RELAY_LOOKBACK_BLOCKS', 4000);
+      const lookbackBlocks = this._readNonNegativeIntEnv('CCTP_RELAY_LOOKBACK_BLOCKS', 4000);
+      if (lookbackBlocks === 0) return;
       const latest = await provider.getBlockNumber();
       const fromBlock = Math.max(0, latest - lookbackBlocks);
 

@@ -1,0 +1,14 @@
+*
+
+!src
+!src/vps
+!src/vps/**
+
+!config
+!config/docker
+!config/docker/Dockerfile
+!config/docker/docker-compose.testnet.yml
+!config/docker/package.json
+!config/docker/package-lock.json
+
+!.dockerignore

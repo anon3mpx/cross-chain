@@ -5,22 +5,216 @@
 // ─────────────────────────────────────────────────────────
 
 import express, { Request, Response } from 'express';
+import { createClient, RedisClientType } from 'redis';
 import { IntentEngine } from '../services/IntentEngine';
 import { QuoteEngine } from '../services/QuoteEngine';
 import { buildRouterIntegration } from '../services/IntentCalldataBuilder';
 import { IntentStatus } from '../types';
 import { parseQuoteRequest, serializeQuote } from './quoteCodec';
 
+interface RateLimitOptions {
+  windowMs: number;
+  max: number;
+  keyPrefix: string;
+}
+
+interface RateLimitBucket {
+  count: number;
+  resetAt: number;
+}
+
+interface RateLimitStore {
+  increment(key: string, windowMs: number): Promise<RateLimitBucket>;
+  prune?(): void;
+}
+
+class MemoryRateLimitStore implements RateLimitStore {
+  private buckets = new Map<string, RateLimitBucket>();
+
+  async increment(key: string, windowMs: number): Promise<RateLimitBucket> {
+    const now = Date.now();
+    const current = this.buckets.get(key);
+    const bucket = !current || current.resetAt <= now
+      ? { count: 0, resetAt: now + windowMs }
+      : current;
+
+    bucket.count += 1;
+    this.buckets.set(key, bucket);
+    return bucket;
+  }
+
+  prune(): void {
+    const now = Date.now();
+    for (const [key, bucket] of this.buckets.entries()) {
+      if (bucket.resetAt <= now) this.buckets.delete(key);
+    }
+  }
+}
+
+class RedisRateLimitStore implements RateLimitStore {
+  private client?: RedisClientType;
+  private connectPromise?: Promise<void>;
+  private warnedFallback = false;
+
+  constructor(
+    private readonly fallback: RateLimitStore,
+    private readonly url: string,
+    private readonly prefix: string,
+  ) {}
+
+  async increment(key: string, windowMs: number): Promise<RateLimitBucket> {
+    try {
+      const client = await this.getClient();
+      const redisKey = `${this.prefix}:${key}`;
+      const count = await client.incr(redisKey);
+      let ttlMs = await client.pTTL(redisKey);
+
+      if (count === 1 || ttlMs < 0) {
+        await client.pExpire(redisKey, windowMs);
+        ttlMs = windowMs;
+      }
+
+      return {
+        count,
+        resetAt: Date.now() + Math.max(1, ttlMs),
+      };
+    } catch (err) {
+      if (!this.warnedFallback) {
+        console.warn('[RateLimit] Redis unavailable; using in-memory fallback', err);
+        this.warnedFallback = true;
+      }
+      return this.fallback.increment(key, windowMs);
+    }
+  }
+
+  private async getClient(): Promise<RedisClientType> {
+    if (this.client?.isOpen) return this.client;
+
+    if (!this.client) {
+      this.client = createClient({ url: this.url });
+      this.client.on('error', (err) => {
+        console.warn('[RateLimit] Redis client error', err);
+      });
+    }
+
+    if (!this.connectPromise) {
+      this.connectPromise = this.client.connect().then(
+        () => undefined,
+        (err) => {
+          this.connectPromise = undefined;
+          throw err;
+        },
+      );
+    }
+
+    await this.connectPromise;
+    return this.client;
+  }
+}
+
+const memoryRateLimitStore = new MemoryRateLimitStore();
+
+function readIntEnv(name: string, fallback: number): number {
+  const raw = process.env[name];
+  if (!raw) return fallback;
+  const parsed = Number(raw);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
+}
+
+function clientKey(req: Request): string {
+  const forwardedFor = req.headers['x-forwarded-for'];
+  const firstForwarded = Array.isArray(forwardedFor)
+    ? forwardedFor[0]
+    : forwardedFor?.split(',')[0];
+  return (firstForwarded || req.ip || req.socket.remoteAddress || 'unknown').trim();
+}
+
+function buildRateLimitStore(): RateLimitStore {
+  const store = (process.env.VPS_RATE_LIMIT_STORE ?? 'memory').trim().toLowerCase();
+  if (store !== 'redis') return memoryRateLimitStore;
+
+  const redisUrl = process.env.VPS_RATE_LIMIT_REDIS_URL || process.env.REDIS_URL;
+  if (!redisUrl) {
+    console.warn('[RateLimit] VPS_RATE_LIMIT_STORE=redis but no Redis URL is configured; using memory');
+    return memoryRateLimitStore;
+  }
+
+  return new RedisRateLimitStore(
+    memoryRateLimitStore,
+    redisUrl,
+    process.env.VPS_RATE_LIMIT_REDIS_PREFIX ?? 'empx:rate-limit',
+  );
+}
+
+function rateLimit(
+  { windowMs, max, keyPrefix }: RateLimitOptions,
+  store: RateLimitStore,
+): express.RequestHandler {
+  return (req, res, next) => {
+    if (req.method === 'OPTIONS') {
+      next();
+      return;
+    }
+
+    const key = `${keyPrefix}:${clientKey(req)}`;
+    void store.increment(key, windowMs).then((bucket) => {
+      const retryAfterSeconds = Math.max(1, Math.ceil((bucket.resetAt - Date.now()) / 1000));
+      res.setHeader('RateLimit-Limit', String(max));
+      res.setHeader('RateLimit-Remaining', String(Math.max(0, max - bucket.count)));
+      res.setHeader('RateLimit-Reset', String(Math.ceil(bucket.resetAt / 1000)));
+
+      if (bucket.count > max) {
+        res.setHeader('Retry-After', String(retryAfterSeconds));
+        res.status(429).json({
+          error: 'RATE_LIMITED',
+          message: 'Too many requests. Try again shortly.',
+        });
+        return;
+      }
+
+      next();
+    }).catch(next);
+  };
+}
+
 export function buildStatusAPI(
   intentEngine: IntentEngine,
   quoteEngine: QuoteEngine,
 ): express.Application {
   const app = express();
-  app.use(express.json());
+
+  app.use((req, res, next) => {
+    res.setHeader('Access-Control-Allow-Origin', process.env.VPS_CORS_ORIGIN ?? '*');
+    res.setHeader('Access-Control-Allow-Methods', 'GET,POST,OPTIONS');
+    res.setHeader('Access-Control-Allow-Headers', 'accept,content-type,x-api-key');
+    if (req.method === 'OPTIONS') {
+      res.status(204).end();
+      return;
+    }
+    next();
+  });
+
+  const rateLimitStore = buildRateLimitStore();
+  app.use(express.json({ limit: process.env.VPS_JSON_LIMIT ?? '32kb' }));
+  app.use(rateLimit({
+    windowMs: readIntEnv('VPS_RATE_LIMIT_WINDOW_MS', 60_000),
+    max: readIntEnv('VPS_RATE_LIMIT_MAX', 120),
+    keyPrefix: 'global',
+  }, rateLimitStore));
+
+  const quoteRateLimit = rateLimit({
+    windowMs: readIntEnv('VPS_QUOTE_RATE_LIMIT_WINDOW_MS', 60_000),
+    max: readIntEnv('VPS_QUOTE_RATE_LIMIT_MAX', 20),
+    keyPrefix: 'quote',
+  }, rateLimitStore);
+
+  setInterval(() => {
+    rateLimitStore.prune?.();
+  }, readIntEnv('VPS_RATE_LIMIT_PRUNE_MS', 60_000)).unref?.();
 
   // ── GET /quote ─────────────────────────────────────────────────────────────
   // Returns a full quote with intentId. Frontend uses this to build the tx.
-  app.post('/quote', async (req: Request, res: Response) => {
+  app.post('/quote', quoteRateLimit, async (req: Request, res: Response) => {
     try {
       const quoteReq = parseQuoteRequest(req.body, 'normal');
       if (!quoteReq.tokenIn || !quoteReq.tokenOut || !quoteReq.userAddress) {

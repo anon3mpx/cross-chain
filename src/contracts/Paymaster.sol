@@ -17,7 +17,7 @@ import "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
 ///
 ///      Token → ETH rate is provided by our off-chain VPS signer (not on-chain oracle)
 ///      to keep gas costs low. The signer key is rotated regularly.
-contract RufloPaymaster is Ownable2Step, ReentrancyGuard {
+contract Paymaster is Ownable2Step, ReentrancyGuard {
     using SafeERC20 for IERC20;
 
     // EIP-4337 EntryPoint v0.7
