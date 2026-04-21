@@ -38,6 +38,12 @@ export class IntentEngine {
     return intent;
   }
 
+  upsert(intent: Intent, emit = false): Intent {
+    this.intents.set(intent.intentId, intent);
+    if (emit) this._emit(intent);
+    return intent;
+  }
+
   // ── State Transitions ──────────────────────────────────────────────────────
 
   markSubmitted(intentId: string, srcTxHash: string): Intent {

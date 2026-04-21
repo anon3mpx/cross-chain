@@ -58,6 +58,7 @@ export type ChainId = typeof CHAIN_ID[keyof typeof CHAIN_ID];
 export enum IntentStatus {
   CREATED              = 'CREATED',
   QUOTED               = 'QUOTED',
+  CANCELLED            = 'CANCELLED',
   SUBMITTED            = 'SUBMITTED',
   IN_TRANSIT           = 'IN_TRANSIT',
   DESTINATION_RECEIVED = 'DESTINATION_RECEIVED',
@@ -65,6 +66,34 @@ export enum IntentStatus {
   STUCK                = 'STUCK',
   RECOVERING           = 'RECOVERING',
   FAILED               = 'FAILED',
+}
+
+export enum RefundCaseStatus {
+  REQUESTED    = 'REQUESTED',
+  UNDER_REVIEW = 'UNDER_REVIEW',
+  APPROVED     = 'APPROVED',
+  REJECTED     = 'REJECTED',
+  PROCESSING   = 'PROCESSING',
+  COMPLETED    = 'COMPLETED',
+}
+
+export enum RefundResolutionKind {
+  ONCHAIN_RESCUE       = 'ONCHAIN_RESCUE',
+  OFFCHAIN_COMPENSATION = 'OFFCHAIN_COMPENSATION',
+  PROTOCOL_RECOVERY    = 'PROTOCOL_RECOVERY',
+}
+
+export enum RefundCustodyLocation {
+  UNKNOWN            = 'UNKNOWN',
+  ROUTER             = 'ROUTER',
+  RECEIVER           = 'RECEIVER',
+  AXELAR_ADAPTER     = 'AXELAR_ADAPTER',
+  LAYERZERO_ADAPTER  = 'LAYERZERO_ADAPTER',
+  THORCHAIN_ROUTER   = 'THORCHAIN_ROUTER',
+  CCTP_PROTOCOL      = 'CCTP_PROTOCOL',
+  AXELAR_PROTOCOL    = 'AXELAR_PROTOCOL',
+  LAYERZERO_PROTOCOL = 'LAYERZERO_PROTOCOL',
+  EXTERNAL_PROTOCOL  = 'EXTERNAL_PROTOCOL',
 }
 
 export interface ChainConfig {
@@ -152,6 +181,27 @@ export interface Intent {
   fallbackRail?:    Rail;
   errorMessage?:    string;
   partnerApiKey?:   string;
+}
+
+export interface IntentRefundCase {
+  intentId: string;
+  status: RefundCaseStatus;
+  reason: string;
+  requestedBy?: string;
+  requestedAt: number;
+  updatedAt: number;
+  reviewedBy?: string;
+  reviewedAt?: number;
+  reviewNotes?: string;
+  adminNotes?: string;
+  custodyLocation: RefundCustodyLocation;
+  resolutionKind?: RefundResolutionKind;
+  rescueContract?: string;
+  rescueToken?: string;
+  rescueAmount?: string;
+  rescueTxHash?: string;
+  payoutAddress?: string;
+  payoutTxHash?: string;
 }
 
 export interface RailScore {

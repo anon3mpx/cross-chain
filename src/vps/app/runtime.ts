@@ -1,10 +1,11 @@
 import { CHAIN_CONFIGS } from '../config/chains';
-import { attachPostgresIntentPersistence, PostgresIntentPersistence } from '../db/bootstrap';
+import { createPostgresIntentStore, PostgresIntentStore } from '../db/bootstrap';
 import { buildPartnerAPI, setupWebhookPush } from '../api/PartnerAPI';
 import { ApiKeyManager } from '../services/ApiKeyManager';
 import { EventMonitor } from '../services/EventMonitor';
 import { CctpAttestationWorker } from '../services/CctpAttestationWorker';
 import { IntentEngine } from '../services/IntentEngine';
+import { IntentService } from '../services/IntentService';
 import { QuoteEngine } from '../services/QuoteEngine';
 import { RailSelector } from '../services/RailSelector';
 import { RecoveryEngine } from '../services/RecoveryEngine';
@@ -21,13 +22,14 @@ export interface RuntimeOptions {
 
 export interface RuntimeContext {
   intentEngine: IntentEngine;
+  intentService: IntentService;
   quoteEngine: QuoteEngine;
   eventMonitor?: EventMonitor;
   recoveryEngine?: RecoveryEngine;
   cctpRelayWorker?: CctpAttestationWorker;
   apiKeyManager?: ApiKeyManager;
   partnerApiRouter?: ReturnType<typeof buildPartnerAPI>;
-  postgres?: PostgresIntentPersistence;
+  postgres?: PostgresIntentStore;
   close(): Promise<void>;
 }
 
@@ -53,6 +55,8 @@ export async function buildRuntime(options: RuntimeOptions = {}): Promise<Runtim
   const enablePostgres = options.enablePostgres ?? shouldEnablePostgres();
 
   const intentEngine = new IntentEngine();
+  const postgres = enablePostgres ? createPostgresIntentStore() : undefined;
+  const intentService = new IntentService(intentEngine, postgres?.repo);
   const quoteCache: QuoteCache = await createQuoteCacheFromEnv(process.env);
   const quoteEngine = new QuoteEngine(quoteCache);
   registerDexQuoteAdapters(quoteEngine, process.env);
@@ -60,20 +64,24 @@ export async function buildRuntime(options: RuntimeOptions = {}): Promise<Runtim
   const rails = new RailSelector();
   const recoveryEngine = enableRecovery
     ? new RecoveryEngine(
-        intentEngine,
+        intentService,
         rails,
         async (intent, fallbackRail) => {
           // Recovery resubmission executor hook.
           // Replace this with your relayer queue producer when settlement flow is wired.
-          intentEngine.markInTransit(
+          await intentService.markInTransit(
             intent.intentId,
             `fallback:${fallbackRail}:${Date.now()}`,
+            {
+              actor: 'system',
+              eventSource: 'recovery-engine',
+            },
           );
         },
       )
     : undefined;
 
-  const eventMonitor = enableEventMonitor ? new EventMonitor(intentEngine) : undefined;
+  const eventMonitor = enableEventMonitor ? new EventMonitor(intentService) : undefined;
   if (eventMonitor) {
     for (const chain of Object.values(CHAIN_CONFIGS)) {
       if (!chain.isEVM) continue;
@@ -83,22 +91,14 @@ export async function buildRuntime(options: RuntimeOptions = {}): Promise<Runtim
     }
   }
 
-  const cctpRelayWorker = enableCctpRelay ? new CctpAttestationWorker(intentEngine) : undefined;
+  const cctpRelayWorker = enableCctpRelay ? new CctpAttestationWorker(intentService) : undefined;
   if (cctpRelayWorker) {
     await cctpRelayWorker.start();
   }
 
-  const postgres = enablePostgres
-    ? attachPostgresIntentPersistence(intentEngine, {
-        onError: (err, context) => {
-          console.error('[IntentPersistence] error', context, err);
-        },
-      })
-    : undefined;
-
   const apiKeyManager = enablePartnerApi ? new ApiKeyManager() : undefined;
   const partnerApiRouter = apiKeyManager
-    ? buildPartnerAPI(apiKeyManager, intentEngine, quoteEngine)
+    ? buildPartnerAPI(apiKeyManager, intentService, quoteEngine)
     : undefined;
   if (apiKeyManager) {
     setupWebhookPush(intentEngine, apiKeyManager);
@@ -106,6 +106,7 @@ export async function buildRuntime(options: RuntimeOptions = {}): Promise<Runtim
 
   return {
     intentEngine,
+    intentService,
     quoteEngine,
     eventMonitor,
     recoveryEngine,

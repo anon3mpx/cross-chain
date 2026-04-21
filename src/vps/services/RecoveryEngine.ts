@@ -5,9 +5,9 @@
 // Runs on a 30s polling interval — lightweight, no chain I/O.
 // ─────────────────────────────────────────────────────────
 
-import { IntentEngine } from './IntentEngine';
 import { RailSelector } from './RailSelector';
 import { Intent, Rail, IntentStatus } from '../types';
+import { IntentService } from './IntentService';
 
 const MAX_RETRIES = 3;
 
@@ -26,7 +26,7 @@ export class RecoveryEngine {
   private timer: ReturnType<typeof setInterval> | null = null;
 
   constructor(
-    private intentEngine: IntentEngine,
+    private intentService: IntentService,
     private railSelector: RailSelector,
     private onResubmit: (intent: Intent, fallbackRail: Rail) => Promise<void>,
   ) {}
@@ -41,7 +41,7 @@ export class RecoveryEngine {
   }
 
   private async _runCycle(): Promise<void> {
-    const stuck = this.intentEngine.findStuckIntents();
+    const stuck = await this.intentService.findStuckIntents();
     if (stuck.length === 0) return;
 
     console.log(`[RecoveryEngine] Found ${stuck.length} stuck intent(s)`);
@@ -53,10 +53,16 @@ export class RecoveryEngine {
 
   private async _recover(intent: Intent): Promise<void> {
     // Mark as stuck first
-    this.intentEngine.markStuck(intent.intentId, `Rail ${intent.quote.rail} timed out`);
+    await this.intentService.markStuck(intent.intentId, `Rail ${intent.quote.rail} timed out`, {
+      actor: 'system',
+      eventSource: 'recovery-engine',
+    });
 
     if (intent.retryCount >= MAX_RETRIES) {
-      this.intentEngine.markFailed(intent.intentId, `Max retries (${MAX_RETRIES}) exceeded`);
+      await this.intentService.markFailed(intent.intentId, `Max retries (${MAX_RETRIES}) exceeded`, {
+        actor: 'system',
+        eventSource: 'recovery-engine',
+      });
       console.error(`[RecoveryEngine] Intent ${intent.intentId} FAILED after ${MAX_RETRIES} retries`);
       return;
     }
@@ -67,18 +73,27 @@ export class RecoveryEngine {
     const nextRail = fallbacks.find(r => !usedRails.has(r));
 
     if (!nextRail) {
-      this.intentEngine.markFailed(intent.intentId, 'No more fallback rails available');
+      await this.intentService.markFailed(intent.intentId, 'No more fallback rails available', {
+        actor: 'system',
+        eventSource: 'recovery-engine',
+      });
       return;
     }
 
-    this.intentEngine.markRecovering(intent.intentId, nextRail);
+    await this.intentService.markRecovering(intent.intentId, nextRail, {
+      actor: 'system',
+      eventSource: 'recovery-engine',
+    });
     console.log(`[RecoveryEngine] Retrying ${intent.intentId} via ${nextRail} (attempt ${intent.retryCount + 1})`);
 
     try {
       await this.onResubmit(intent, nextRail);
     } catch (err) {
       console.error(`[RecoveryEngine] Resubmit failed for ${intent.intentId}:`, err);
-      this.intentEngine.markFailed(intent.intentId, String(err));
+      await this.intentService.markFailed(intent.intentId, String(err), {
+        actor: 'system',
+        eventSource: 'recovery-engine',
+      });
     }
   }
 }

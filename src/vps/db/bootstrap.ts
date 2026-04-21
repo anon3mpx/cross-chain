@@ -4,10 +4,21 @@ import { createPostgresPoolFromEnv } from './postgres';
 import { IntentPersistence, IntentPersistenceOptions } from './IntentPersistence';
 import { IntentRepository } from './IntentRepository';
 
+export interface PostgresIntentStore {
+  pool: Pool;
+  repo: IntentRepository;
+}
+
 export interface PostgresIntentPersistence {
   pool: Pool;
   repo: IntentRepository;
   persistence: IntentPersistence;
+}
+
+export function createPostgresIntentStore(): PostgresIntentStore {
+  const pool = createPostgresPoolFromEnv();
+  const repo = new IntentRepository(pool);
+  return { pool, repo };
 }
 
 /**

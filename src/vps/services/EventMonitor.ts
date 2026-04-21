@@ -5,8 +5,8 @@
 // ─────────────────────────────────────────────────────────
 
 import { ethers } from 'ethers';
-import { IntentEngine } from './IntentEngine';
 import { ChainConfig } from '../types';
+import { IntentService } from './IntentService';
 
 // ABI fragments — only the events we care about
 const ROUTER_ABI = [
@@ -22,7 +22,7 @@ export class EventMonitor {
   private fallbackProviders: Map<number, ethers.JsonRpcProvider> = new Map();
   private contracts: Map<string, ethers.Contract> = new Map(); // key = `${chainId}:${address}`
 
-  constructor(private intentEngine: IntentEngine) {}
+  constructor(private intentService: IntentService) {}
 
   // ── Setup ──────────────────────────────────────────────────────────────────
 
@@ -58,13 +58,16 @@ export class EventMonitor {
     this.contracts.set(`${chain.chainId}:router`, contract);
 
     contract.on('IntentInitiated', (intentId, user, tokenIn, amountIn, dstChainId, railTxId, event) => {
-      try {
-        this.intentEngine.markInTransit(intentId, railTxId);
-      } catch {
-        // Intent may not be in DB if submitted directly to contract (bypass VPS)
-        // Log and ignore — recovery engine will pick it up
+      void this.intentService.markInTransit(intentId, railTxId, {
+        actor: 'system',
+        eventSource: 'event-monitor',
+        chainId: chain.chainId,
+        txHash: event.log.transactionHash,
+        logIndex: event.log.index,
+        idempotencyKey: `${chain.chainId}:${event.log.transactionHash}:${event.log.index}:IntentInitiated`,
+      }).catch(() => {
         console.warn(`[EventMonitor] Unknown intentId from chain ${chain.chainId}: ${intentId}`);
-      }
+      });
     });
 
     provider.on('error', () => this._switchToFallback(chain.chainId));
@@ -78,11 +81,29 @@ export class EventMonitor {
     this.contracts.set(`${chain.chainId}:receiver`, contract);
 
     contract.on('IntentSettled', (intentId, user, tokenOut, amountOut, event) => {
-      this.intentEngine.markSettled(intentId, event.log.transactionHash);
+      void this.intentService.markSettled(intentId, event.log.transactionHash, {
+        actor: 'system',
+        eventSource: 'event-monitor',
+        chainId: chain.chainId,
+        txHash: event.log.transactionHash,
+        logIndex: event.log.index,
+        idempotencyKey: `${chain.chainId}:${event.log.transactionHash}:${event.log.index}:IntentSettled`,
+      }).catch((err) => {
+        console.warn('[EventMonitor] failed to mark intent settled', err);
+      });
     });
 
     contract.on('DirectDelivery', (intentId, user, settlementToken, amount, event) => {
-      this.intentEngine.markSettled(intentId, event.log.transactionHash);
+      void this.intentService.markSettled(intentId, event.log.transactionHash, {
+        actor: 'system',
+        eventSource: 'event-monitor',
+        chainId: chain.chainId,
+        txHash: event.log.transactionHash,
+        logIndex: event.log.index,
+        idempotencyKey: `${chain.chainId}:${event.log.transactionHash}:${event.log.index}:DirectDelivery`,
+      }).catch((err) => {
+        console.warn('[EventMonitor] failed to mark direct delivery settled', err);
+      });
     });
 
     provider.on('error', () => this._switchToFallback(chain.chainId));
