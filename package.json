@@ -4,6 +4,8 @@
     "sol:build": "forge build --config-path config/foundry.toml",
     "sol:test": "forge test --config-path config/foundry.toml -vv",
     "sol:deploy:all": "set -a; [ -f .env ] && . ./.env; set +a; test -n \"$RPC_URL\" || (echo \"RPC_URL is required (set env or .env)\" && exit 1); forge script config/foundry/scripts/DeployAll.s.sol:DeployAll --config-path config/foundry.toml --rpc-url \"$RPC_URL\" --broadcast -vvv",
+    "sol:deploy:oft": "set -a; [ -f .env ] && . ./.env; set +a; test -n \"$RPC_URL\" || (echo \"RPC_URL is required (set env or .env)\" && exit 1); forge script config/foundry/scripts/DeployOFT.s.sol:DeployOFT --config-path config/foundry.toml --rpc-url \"$RPC_URL\" --broadcast -vvv",
+    "sol:deploy:its": "set -a; [ -f .env ] && . ./.env; set +a; test -n \"$RPC_URL\" || (echo \"RPC_URL is required (set env or .env)\" && exit 1); forge script config/foundry/scripts/DeployITS.s.sol:DeployITS --config-path config/foundry.toml --rpc-url \"$RPC_URL\" --broadcast -vvv",
     "sol:configure:all": "set -a; [ -f .env ] && . ./.env; set +a; test -n \"$RPC_URL\" || (echo \"RPC_URL is required (set env or .env)\" && exit 1); forge script config/foundry/scripts/ConfigureAll.s.sol:ConfigureAll --config-path config/foundry.toml --rpc-url \"$RPC_URL\" --broadcast -vvv",
     "tx:send:calldata": "node src/vps/scripts/sendBridgeCalldata.js",
     "vps:api": "tsx src/vps/app/api.ts",
@@ -19,7 +21,12 @@
     "typescript": "^6.0.2"
   },
   "dependencies": {
+    "@layerzerolabs/lz-evm-messagelib-v2": "^3.0.168",
+    "@layerzerolabs/lz-evm-protocol-v2": "^3.0.168",
+    "@layerzerolabs/lz-evm-v1-0.7": "^3.0.168",
     "@layerzerolabs/lz-v2-utilities": "^3.0.168",
+    "@layerzerolabs/oapp-evm": "^0.4.1",
+    "@layerzerolabs/oft-evm": "^4.0.1",
     "agentic-flow": "^2.0.7",
     "ethers": "^6.16.0",
     "express": "^5.1.0",

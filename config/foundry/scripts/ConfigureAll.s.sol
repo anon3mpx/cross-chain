@@ -40,6 +40,7 @@ contract ConfigureAll is ScriptBase {
 
         _configureAxelarAdapter();
         _configureLayerZeroAdapter();
+        _configureLayerZeroOftPeer();
 
         vm.stopBroadcast();
     }
@@ -219,6 +220,26 @@ contract ConfigureAll is ScriptBase {
         }
     }
 
+    function _configureLayerZeroOftPeer() internal {
+        if (!vm.envOr("LZ_OFT_SET_PEER", false)) return;
+
+        address oft = vm.envAddress("LZ_OFT");
+        uint32 peerEid = uint32(vm.envUint("LZ_OFT_PEER_EID"));
+
+        address peerAddress = vm.envOr("LZ_OFT_PEER_ADDRESS", address(0));
+        if (peerAddress != address(0)) {
+            ILayerZeroOFTPeerConfig(oft).setPeer(peerEid, bytes32(uint256(uint160(peerAddress))));
+            emit ScriptLogAddress("LZ_OFT_PEER_ADDRESS", peerAddress);
+        } else {
+            bytes32 peer = vm.envBytes32("LZ_OFT_PEER");
+            ILayerZeroOFTPeerConfig(oft).setPeer(peerEid, peer);
+            emit ScriptLogBytes32("LZ_OFT_PEER", peer);
+        }
+
+        emit ScriptLogAddress("LZ_OFT", oft);
+        emit ScriptLogBytes32("LZ_OFT_PEER_EID", bytes32(uint256(peerEid)));
+    }
+
     function _registerRailIfProvided(PluginRegistry registry, address railPlugin) internal {
         if (railPlugin == address(0)) return;
 
@@ -248,4 +269,8 @@ contract ConfigureAll is ScriptBase {
         receiver.addApprovedCaller(caller);
         emit ScriptLogAddress("ReceiverApprovedCaller", caller);
     }
+}
+
+interface ILayerZeroOFTPeerConfig {
+    function setPeer(uint32 _eid, bytes32 _peer) external;
 }
