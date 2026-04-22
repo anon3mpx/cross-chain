@@ -32,7 +32,11 @@ export class RecoveryEngine {
   ) {}
 
   start(intervalMs = 30_000): void {
-    this.timer = setInterval(() => this._runCycle(), intervalMs);
+    this.timer = setInterval(() => {
+      void this._runCycle().catch((err) => {
+        console.error('[RecoveryEngine] Cycle failed', err);
+      });
+    }, intervalMs);
     console.log('[RecoveryEngine] Started — checking every', intervalMs / 1000, 's');
   }
 

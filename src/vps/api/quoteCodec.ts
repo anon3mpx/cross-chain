@@ -1,6 +1,14 @@
 import { QuoteRequest, QuoteResult } from '../types';
 
 type Json = null | boolean | number | string | Json[] | { [k: string]: Json };
+const EMPTY_TEXT_VALUES = new Set(['', 'undefined', 'null']);
+
+function parseOptionalText(raw: unknown): string | undefined {
+  if (raw === null || raw === undefined) return undefined;
+  const value = String(raw).trim();
+  if (EMPTY_TEXT_VALUES.has(value.toLowerCase())) return undefined;
+  return value;
+}
 
 function parseAmountIn(raw: unknown): bigint {
   if (typeof raw === 'bigint') {
@@ -35,7 +43,7 @@ export function parseQuoteRequest(input: any, defaultUrgency: 'fast' | 'normal' 
     srcChainId: Number(input.srcChainId),
     dstChainId: Number(input.dstChainId),
     userAddress: String(input.userAddress ?? ''),
-    nativeDstAddress: input.nativeDstAddress ? String(input.nativeDstAddress) : undefined,
+    nativeDstAddress: parseOptionalText(input.nativeDstAddress),
     urgency: input.urgency ? urgency : defaultUrgency,
   };
 }

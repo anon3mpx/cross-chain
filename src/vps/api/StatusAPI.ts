@@ -348,7 +348,9 @@ export function buildStatusAPI(
     intentId: string,
     action: IntentAction,
   ): { userAddress: string; reason?: string; srcTxHash: string; replacementTxHash?: string } {
-    const body = req.body as Record<string, unknown>;
+    const body = req.body && typeof req.body === 'object'
+      ? (req.body as Record<string, unknown>)
+      : {};
     const userAddress = typeof body.userAddress === 'string' ? body.userAddress.trim() : '';
     const signature = typeof body.signature === 'string' ? body.signature.trim() : '';
     const reason = typeof body.reason === 'string' ? body.reason : undefined;

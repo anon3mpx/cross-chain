@@ -59,6 +59,8 @@ const TERMINAL_INTENT_STATUSES = new Set<IntentStatus>([
 ]);
 
 export class IntentRepository {
+  private warnedMissingRefundTable = false;
+
   constructor(private readonly pool: Pool) {}
 
   async countIntentsByStatus(): Promise<Record<IntentStatus, number>> {
@@ -216,16 +218,30 @@ export class IntentRepository {
   }
 
   async getRefundCase(intentId: string): Promise<IntentRefundCase | null> {
-    const { rows } = await this.pool.query(
-      `SELECT intent_id, status, reason, requested_by, requested_at,
-              reviewed_by, reviewed_at, review_notes, admin_notes,
-              custody_location, resolution_kind, rescue_contract, rescue_token,
-              rescue_amount, rescue_tx_hash, payout_address, payout_tx_hash,
-              updated_at
-       FROM intent_refund_cases
-       WHERE intent_id = $1`,
-      [intentId],
-    );
+    let rows: any[];
+    try {
+      ({ rows } = await this.pool.query(
+        `SELECT intent_id, status, reason, requested_by, requested_at,
+                reviewed_by, reviewed_at, review_notes, admin_notes,
+                custody_location, resolution_kind, rescue_contract, rescue_token,
+                rescue_amount, rescue_tx_hash, payout_address, payout_tx_hash,
+                updated_at
+         FROM intent_refund_cases
+         WHERE intent_id = $1`,
+        [intentId],
+      ));
+    } catch (err) {
+      if (this.isMissingRefundTableError(err)) {
+        if (!this.warnedMissingRefundTable) {
+          console.warn(
+            '[IntentRepository] intent_refund_cases table missing; refund lookups disabled until migrations are applied',
+          );
+          this.warnedMissingRefundTable = true;
+        }
+        return null;
+      }
+      throw err;
+    }
 
     if (rows.length === 0) return null;
     return this.rowToRefundCase(rows[0]);
@@ -455,5 +471,18 @@ export class IntentRepository {
     });
 
     return normalize(current) !== normalize(updated);
+  }
+
+  private isMissingRefundTableError(err: unknown): boolean {
+    const code = typeof err === 'object' && err !== null && 'code' in err
+      ? String((err as { code?: unknown }).code)
+      : '';
+    const relation = typeof err === 'object' && err !== null && 'relation' in err
+      ? String((err as { relation?: unknown }).relation)
+      : '';
+    const message = err instanceof Error ? err.message : String(err);
+    const text = `${relation} ${message}`.toLowerCase();
+
+    return code === '42P01' && text.includes('intent_refund_cases');
   }
 }
