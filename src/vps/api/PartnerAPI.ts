@@ -88,7 +88,7 @@ export function buildPartnerAPI(
 
       const intent = await intentService.createQuotedIntent(quote, quoteReq.userAddress, apiKey);
       const { partnerRebate } = keyManager.splitFee(quote.feeAmountToken, check.partner);
-      const integration = buildRouterIntegration(intent.intentId, quote, quoteReq.userAddress);
+      const integration = await buildRouterIntegration(intent.intentId, quote, quoteReq.userAddress);
 
       res.json({
         intentId:   intent.intentId,

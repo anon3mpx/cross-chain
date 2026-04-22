@@ -232,7 +232,7 @@ export function buildStatusAPI(
 
       // Pre-create intent in QUOTED state
       const intent = await intentService.createQuotedIntent(quote, quoteReq.userAddress);
-      const integration = buildRouterIntegration(intent.intentId, quote, quoteReq.userAddress);
+      const integration = await buildRouterIntegration(intent.intentId, quote, quoteReq.userAddress);
       res.json({ quote: serializeQuote(quote), intentId: intent.intentId, integration });
     } catch (err) {
       const msg = String(err);

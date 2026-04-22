@@ -15,7 +15,7 @@ curl -X POST http://localhost:8787/quote -H 'content-type: application/json' -d 
 
 # Axelar api call: 
 
-curl -X POST http://localhost:8787/quote -H 'content-type: application/json' -d '{"srcChainId": 84532,"dstChainId": 11155420,"tokenIn": "0x2f2A9DbFd8c503a0aC56413B774e39030df85331","tokenOut": "0x2f2A9DbFd8c503a0aC56413B774e39030df85331","amountIn": "10000000","userAddress":"0x05f8cc8753d90d67dbb8c02118440b8283f941c9"}'
+curl -X POST http://localhost:8787/quote -H 'content-type: application/json' -d '{"srcChainId": 84532,"dstChainId": 11155420,"tokenIn": "0x2f2A9DbFd8c503a0aC56413B774e39030df85331","tokenOut": "0x2f2A9DbFd8c503a0aC56413B774e39030df85331","amountIn": "20000000","userAddress":"0x05f8cc8753d90d67dbb8c02118440b8283f941c9"}'
 
 {
   "quote": {
