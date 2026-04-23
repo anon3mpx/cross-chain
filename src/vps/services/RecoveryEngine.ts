@@ -8,19 +8,9 @@
 import { RailSelector } from './RailSelector';
 import { Intent, Rail, IntentStatus } from '../types';
 import { IntentService } from './IntentService';
+import { getFallbackRails } from '../rails/registry';
 
 const MAX_RETRIES = 3;
-
-// Fallback priority if primary rail is stuck
-const FALLBACK_ORDER: Record<Rail, Rail[]> = {
-  [Rail.CCTP]:      [Rail.VIA_LABS,  Rail.AXELAR,    Rail.LAYERZERO],
-  [Rail.VIA_LABS]:  [Rail.AXELAR,    Rail.LAYERZERO,  Rail.CCTP],
-  [Rail.AXELAR]:    [Rail.LAYERZERO, Rail.VIA_LABS,   Rail.CCTP],
-  [Rail.LAYERZERO]: [Rail.AXELAR,    Rail.VIA_LABS,   Rail.CCTP],
-  [Rail.WORMHOLE]:  [Rail.AXELAR,    Rail.LAYERZERO],
-  // THORChain: liquidity rail — no messaging fallback (different delivery model)
-  [Rail.THORCHAIN]: [],
-};
 
 export class RecoveryEngine {
   private timer: ReturnType<typeof setInterval> | null = null;
@@ -72,7 +62,7 @@ export class RecoveryEngine {
     }
 
     // Find next available fallback rail
-    const fallbacks = FALLBACK_ORDER[intent.quote.rail] ?? [];
+    const fallbacks = getFallbackRails(intent.quote.rail);
     const usedRails = new Set<Rail>([intent.quote.rail, ...(intent.fallbackRail ? [intent.fallbackRail] : [])]);
     const nextRail = fallbacks.find(r => !usedRails.has(r));
 

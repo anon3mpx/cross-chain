@@ -1,5 +1,6 @@
 import { Rail, SettlementToken } from '../types';
 import { hasAggregator } from './chains';
+import { getRailEnvAliases } from '../rails/registry';
 
 const ZERO_ADDR = '0x0000000000000000000000000000000000000000';
 const BYTES32_RE = /^0x[0-9a-fA-F]{64}$/;
@@ -36,15 +37,6 @@ function tokenEnvKey(chainId: number, token: SettlementToken): string {
   return `CHAIN_${chainId}_TOKEN_${token}`;
 }
 
-function railEnvNames(rail: Rail): string[] {
-  switch (rail) {
-    case Rail.LAYERZERO:
-      return [Rail.LAYERZERO, 'LZ'];
-    default:
-      return [rail];
-  }
-}
-
 /**
  * Returns settlement token address on a given chain.
  * Resolution order:
@@ -57,7 +49,7 @@ export function getSettlementTokenAddress(
   rail?: Rail,
 ): string | undefined {
   if (rail) {
-    for (const railName of railEnvNames(rail)) {
+    for (const railName of getRailEnvAliases(rail)) {
       const railScoped = asAddress(readEnv(`CHAIN_${chainId}_TOKEN_${railName}_${token}`));
       if (railScoped) return railScoped;
     }

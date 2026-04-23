@@ -11,11 +11,14 @@ import { RailSelector } from '../services/RailSelector';
 import { RecoveryEngine } from '../services/RecoveryEngine';
 import { createQuoteCacheFromEnv, QuoteCache } from '../cache/QuoteCache';
 import { registerDexQuoteAdapters } from '../bootstrap/dexAdapters';
+import { RailExecutionHandle, RailExecutionManager } from '../rails/execution';
+import { Rail } from '../types';
 
 export interface RuntimeOptions {
   enableEventMonitor?: boolean;
   enableRecovery?: boolean;
   enableCctpRelay?: boolean;
+  railExecution?: Partial<Record<Rail, boolean>>;
   enablePostgres?: boolean;
   enablePartnerApi?: boolean;
 }
@@ -26,6 +29,8 @@ export interface RuntimeContext {
   quoteEngine: QuoteEngine;
   eventMonitor?: EventMonitor;
   recoveryEngine?: RecoveryEngine;
+  railExecutionManager: RailExecutionManager;
+  railExecutions: ReadonlyMap<Rail, RailExecutionHandle>;
   cctpRelayWorker?: CctpAttestationWorker;
   apiKeyManager?: ApiKeyManager;
   partnerApiRouter?: ReturnType<typeof buildPartnerAPI>;
@@ -91,10 +96,13 @@ export async function buildRuntime(options: RuntimeOptions = {}): Promise<Runtim
     }
   }
 
-  const cctpRelayWorker = enableCctpRelay ? new CctpAttestationWorker(intentService) : undefined;
-  if (cctpRelayWorker) {
-    await cctpRelayWorker.start();
-  }
+  const railExecutionManager = new RailExecutionManager({ intentService });
+  const railExecutions = await railExecutionManager.startAll({
+    enabled: {
+      [Rail.CCTP]: options.railExecution?.[Rail.CCTP] ?? enableCctpRelay,
+    },
+  });
+  const cctpRelayWorker = railExecutionManager.getInstance<CctpAttestationWorker>(Rail.CCTP);
 
   const apiKeyManager = enablePartnerApi ? new ApiKeyManager() : undefined;
   const partnerApiRouter = apiKeyManager
@@ -110,6 +118,8 @@ export async function buildRuntime(options: RuntimeOptions = {}): Promise<Runtim
     quoteEngine,
     eventMonitor,
     recoveryEngine,
+    railExecutionManager,
+    railExecutions,
     cctpRelayWorker,
     postgres,
     apiKeyManager,
@@ -126,9 +136,9 @@ export async function buildRuntime(options: RuntimeOptions = {}): Promise<Runtim
         console.warn('[Runtime] monitor stop failed', err);
       }
       try {
-        cctpRelayWorker?.stop();
+        await railExecutionManager.stopAll();
       } catch (err) {
-        console.warn('[Runtime] cctp relay stop failed', err);
+        console.warn('[Runtime] rail execution stop failed', err);
       }
       try {
         await postgres?.pool.end();

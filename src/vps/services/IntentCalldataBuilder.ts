@@ -1,6 +1,7 @@
 import { Contract, Interface, JsonRpcProvider, ZeroAddress, getAddress, isAddress, toUtf8Bytes } from 'ethers';
 import { getChainConfig } from '../config/chains';
 import { QuoteResult, Rail, SettlementToken } from '../types';
+import { getRailEnumValue } from '../rails/registry';
 
 const ROUTER_V1_IFACE = new Interface([
   'function initiateSwap((address user,address tokenIn,address tokenOut,uint256 amountIn,uint256 minAmountOut,uint256 minSrcSwapOut,uint32 dstChainId,uint8 rail,uint8 settlementToken,uint256 feeAmount,bytes swapDataSrc,bytes swapDataDst,bytes32 swapPluginIdSrc,bytes32 dstSwapPluginId,bytes32 railPluginId,bytes railData,address dstReceiver,bytes nativeDstAddress,string thorAssetIdentifier,uint256 minThorOutput,bytes32 intentId,uint256 deadline) intent)',
@@ -21,16 +22,6 @@ const PLUGIN_REGISTRY_ABI = [
 const RAIL_FEE_ABI = [
   'function estimateFee(uint32 dstChainId,uint256 amount,uint8 settlementToken) view returns (uint256 fee,uint256 eta)',
 ];
-
-const RAIL_ENUM_VALUE: Record<string, number> = {
-  [Rail.CCTP]: 0,
-  [Rail.AXELAR]: 1,
-  [Rail.LAYERZERO]: 2,
-  [Rail.VIA_LABS]: 3,
-  // Forward-compatible placeholders for newer rails if Router enum extends.
-  [Rail.WORMHOLE]: 4,
-  [Rail.THORCHAIN]: 5,
-};
 
 const SETTLEMENT_ENUM_VALUE: Partial<Record<SettlementToken, number>> = {
   [SettlementToken.USDC]: 0,
@@ -78,7 +69,7 @@ export function buildRouterCalldata(
   const dstCfg = getChainConfig(quote.dstChainId);
   if (!dstCfg) throw new Error(`calldata: unknown destination chain ${quote.dstChainId}`);
 
-  const railValue = RAIL_ENUM_VALUE[quote.rail];
+  const railValue = getRailEnumValue(quote.rail);
   if (railValue === undefined) throw new Error(`calldata: unsupported rail ${quote.rail}`);
 
   const settlementValue = SETTLEMENT_ENUM_VALUE[quote.settlementToken];

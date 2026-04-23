@@ -15,6 +15,7 @@
 import EventEmitter from 'eventemitter3';
 import { IntentStatus, Rail, SettlementToken, CHAIN_ID } from '../types';
 import { buildIntentActionMessage, IntentAction } from '../utils/intentActionAuth';
+import { RailVariantLabel } from '../rails/registry';
 
 // ── Public-facing types (simplified — hides internal complexity) ───────────────
 
@@ -73,6 +74,7 @@ export interface IntentStatusView {
   dstTxHash?: string;
   railTxId?: string;
   rail: Rail;
+  railVariant?: RailVariantLabel;
   etaSeconds: number;
   createdAt?: number;
   updatedAt?: number;

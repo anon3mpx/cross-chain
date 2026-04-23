@@ -6,36 +6,24 @@
 
 import { AbiCoder } from 'ethers';
 import { QuoteRequest, QuoteResult, Rail, Route, RouteType } from '../types';
-import { PLUGIN_ID, RAIL_CONFIGS } from './RailSelector';
 import { RouteBuilder } from './RouterBuilder';
 import { getChainConfig } from '../config/chains';
 import { getSettlementTokenAddress, getSwapPluginIdForChain } from '../config/contracts';
 import { randomBytes } from 'crypto';
 import { InMemoryQuoteCache, QuoteCache } from '../cache/QuoteCache';
+import {
+  ZERO_PLUGIN_ID,
+  getCctpDomain,
+  getCctpMetadata,
+  getRailConfig,
+  isCctpFastPluginId,
+} from '../rails/registry';
 
 const CACHE_TTL_MS = 30_000;
-const ZERO_PLUGIN_ID = '0x' + '0'.repeat(64);
 const LOWER_HEX_ADDR_RE = /^0x[0-9a-f]{40}$/;
 const ROUTER_MAX_FEE_BPS = 100; // RouterV1.MAX_FEE_BPS
-const CCTP_FAST_FINALITY_THRESHOLD = 1000;
-const CCTP_FEE_BUFFER_BPS_DEFAULT = 2;
 const USDC_MICRO_UNITS = 1_000_000n;
 const abiCoder = AbiCoder.defaultAbiCoder();
-
-const CCTP_DOMAIN_BY_CHAIN_ID: Record<number, number> = {
-  1: 0,
-  11155111: 0,
-  43114: 1,
-  43113: 1,
-  10: 2,
-  11155420: 2,
-  42161: 3,
-  421614: 3,
-  8453: 6,
-  84532: 6,
-  137: 7,
-  80002: 7,
-};
 
 interface CctpFeeRow {
   finalityThreshold: number;
@@ -107,7 +95,7 @@ export class QuoteEngine {
     amountUSD: number,
   ): Promise<QuoteResult | null> {
     const hop = route.hops[0];
-    const config = RAIL_CONFIGS[hop.rail];
+    const config = getRailConfig(hop.rail);
     const settlementToken = hop.settlementTokenOut;
     const srcSwapEnabled = route.routeType === RouteType.FULL_SWAP || route.routeType === RouteType.SRC_SWAP;
     const dstSwapEnabled = route.routeType === RouteType.FULL_SWAP || route.routeType === RouteType.DST_SWAP;
@@ -200,7 +188,7 @@ export class QuoteEngine {
       rail:            hop.rail,
       railType:        config.railType,
       settlementToken,
-      etaSeconds:      railPluginId === PLUGIN_ID.CCTP_V2_FAST ? Math.min(route.totalEtaSeconds, 8) : route.totalEtaSeconds,
+      etaSeconds:      isCctpFastPluginId(railPluginId) ? Math.min(route.totalEtaSeconds, 8) : route.totalEtaSeconds,
       expiresAt:       Math.floor(Date.now() / 1000) + 120,
       railPluginId,
       railData,
@@ -237,8 +225,9 @@ export class QuoteEngine {
     if (!this._readBoolEnv('ENABLE_CCTP_FAST', false)) return fallback;
     if ((req.urgency ?? 'normal') !== 'fast') return fallback;
 
-    const srcDomain = CCTP_DOMAIN_BY_CHAIN_ID[req.srcChainId];
-    const dstDomain = CCTP_DOMAIN_BY_CHAIN_ID[req.dstChainId];
+    const cctp = getCctpMetadata();
+    const srcDomain = getCctpDomain(req.srcChainId);
+    const dstDomain = getCctpDomain(req.dstChainId);
     if (srcDomain === undefined || dstDomain === undefined) return fallback;
 
     const [fees, allowanceMicros] = await Promise.all([
@@ -250,19 +239,19 @@ export class QuoteEngine {
     // Safety fallback: if allowance is depleted, use standard finalized transfer.
     if (allowanceMicros < settlementAmount) return fallback;
 
-    const fastFee = fees.find((f) => f.finalityThreshold <= CCTP_FAST_FINALITY_THRESHOLD);
+    const fastFee = fees.find((f) => f.finalityThreshold <= cctp.fastFinalityThreshold);
     if (!fastFee) return fallback;
 
     const feeBps = BigInt(Math.max(0, Math.ceil(fastFee.minimumFee)));
     const feeAmount = this._ceilDiv(settlementAmount * feeBps, 10_000n);
 
-    const bufferBps = BigInt(this._readIntEnv('CCTP_FAST_MAX_FEE_BUFFER_BPS', CCTP_FEE_BUFFER_BPS_DEFAULT));
+    const bufferBps = BigInt(this._readIntEnv('CCTP_FAST_MAX_FEE_BUFFER_BPS', cctp.feeBufferBpsDefault));
     const maxFeeBps = feeBps + bufferBps;
     let maxFee = this._ceilDiv(settlementAmount * maxFeeBps, 10_000n);
     if (maxFee === 0n) maxFee = 1n;
 
-    const fastPluginId = this._resolvePluginId('CCTP_FAST_PLUGIN_ID', PLUGIN_ID.CCTP_V2_FAST);
-    const railData = abiCoder.encode(['uint32', 'uint256'], [CCTP_FAST_FINALITY_THRESHOLD, maxFee]);
+    const fastPluginId = this._resolvePluginId('CCTP_FAST_PLUGIN_ID', cctp.fastPluginId);
+    const railData = abiCoder.encode(['uint32', 'uint256'], [cctp.fastFinalityThreshold, maxFee]);
 
     return {
       railPluginId: fastPluginId,
