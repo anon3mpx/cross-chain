@@ -74,7 +74,7 @@ async function main(): Promise<void> {
   runtime.recoveryEngine?.start(intervalMs);
 
   console.log(
-    `[VPS Worker] running eventMonitor=${enableEventMonitor} recovery=${enableRecovery} cctpRelay=${enableCctpRelay}`,
+    `[VPS Worker] running eventMonitor=${enableEventMonitor} recovery=${enableRecovery} rails="${runtime.railExecutionManager.describe()}"`,
   );
 
   const shutdown = async (signal: string): Promise<void> => {

@@ -28,6 +28,14 @@ export interface RailProviderDefinition {
 }
 
 export const ZERO_PLUGIN_ID = '0x' + '0'.repeat(64);
+export type RailVariantLabel =
+  | 'CCTP_STANDARD'
+  | 'CCTP_FAST'
+  | 'AXELAR'
+  | 'LAYERZERO'
+  | 'VIA_LABS'
+  | 'WORMHOLE'
+  | 'THORCHAIN';
 
 export const PLUGIN_ID = {
   CCTP_V2: '0xb148ea5f936a28661e11743b1650193f1b14a2322b9541503bf6815a84a1a6e9',
@@ -280,6 +288,27 @@ export function getCctpDomain(chainId: number): number | undefined {
 
 export function isCctpFastPluginId(pluginId: string): boolean {
   return pluginId.toLowerCase() === getCctpMetadata().fastPluginId.toLowerCase();
+}
+
+export function getRailVariantLabel(rail: Rail, railPluginId?: string): RailVariantLabel {
+  if (rail === Rail.CCTP) {
+    return railPluginId && isCctpFastPluginId(railPluginId) ? 'CCTP_FAST' : 'CCTP_STANDARD';
+  }
+
+  switch (rail) {
+    case Rail.AXELAR:
+      return 'AXELAR';
+    case Rail.LAYERZERO:
+      return 'LAYERZERO';
+    case Rail.VIA_LABS:
+      return 'VIA_LABS';
+    case Rail.WORMHOLE:
+      return 'WORMHOLE';
+    case Rail.THORCHAIN:
+      return 'THORCHAIN';
+    default:
+      return 'CCTP_STANDARD';
+  }
 }
 
 export function inferRefundCustodyLocation(intent: Intent): RefundCustodyLocation {

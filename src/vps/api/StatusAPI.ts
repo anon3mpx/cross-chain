@@ -14,6 +14,7 @@ import { buildRouterIntegration } from '../services/IntentCalldataBuilder';
 import { Intent, IntentStatus } from '../types';
 import { parseQuoteRequest, serializeQuote } from './quoteCodec';
 import { buildIntentActionMessage, IntentAction, SIGNATURE_WINDOW_MS } from '../utils/intentActionAuth';
+import { getRailVariantLabel } from '../rails/registry';
 
 interface RateLimitOptions {
   windowMs: number;
@@ -332,6 +333,7 @@ export function buildStatusAPI(
       dstTxHash: intent.dstTxHash,
       railTxId: intent.railTxId,
       rail: intent.quote.rail,
+      railVariant: getRailVariantLabel(intent.quote.rail, intent.quote.railPluginId),
       etaSeconds: intent.quote.etaSeconds,
       createdAt: intent.createdAt,
       updatedAt: intent.updatedAt,

@@ -10,6 +10,7 @@ import { QuoteEngine } from '../services/QuoteEngine';
 import { buildRouterIntegration } from '../services/IntentCalldataBuilder';
 import { Intent } from '../types';
 import { parseQuoteRequest, serializeQuote } from './quoteCodec';
+import { getRailVariantLabel } from '../rails/registry';
 
 export function buildPartnerAPI(
   keyManager: ApiKeyManager,
@@ -131,6 +132,7 @@ export function buildPartnerAPI(
       dstTxHash:   intent.dstTxHash,
       railTxId:    intent.railTxId,
       rail:        intent.quote.rail,
+      railVariant: getRailVariantLabel(intent.quote.rail, intent.quote.railPluginId),
       etaSeconds:  intent.quote.etaSeconds,
       settled:     intent.status === 'SETTLED',
       failed:      intent.status === 'FAILED' || intent.status === 'CANCELLED',
