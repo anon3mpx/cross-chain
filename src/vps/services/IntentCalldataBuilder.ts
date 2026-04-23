@@ -1,4 +1,4 @@
-import { Interface, ZeroAddress, getAddress, isAddress, toUtf8Bytes } from 'ethers';
+import { Contract, Interface, JsonRpcProvider, ZeroAddress, getAddress, isAddress, toUtf8Bytes } from 'ethers';
 import { getChainConfig } from '../config/chains';
 import { QuoteResult, Rail, SettlementToken } from '../types';
 
@@ -9,6 +9,18 @@ const ROUTER_V1_IFACE = new Interface([
 const ROUTER_V1_LEGACY_IFACE = new Interface([
   'function initiateSwap((address user,address tokenIn,address tokenOut,uint256 amountIn,uint256 minAmountOut,uint256 minSrcSwapOut,uint32 dstChainId,uint8 rail,uint8 settlementToken,uint256 feeAmount,bytes swapDataSrc,bytes swapDataDst,bytes32 dstSwapPluginId,address dstReceiver,bytes nativeDstAddress,string thorAssetIdentifier,uint256 minThorOutput,bytes32 intentId,uint256 deadline) intent,bytes32 swapPluginId,bytes32 railPluginId)',
 ]);
+
+const ROUTER_REGISTRY_ABI = [
+  'function registry() view returns (address)',
+];
+
+const PLUGIN_REGISTRY_ABI = [
+  'function getRailPlugin(bytes32 pluginId) view returns (address)',
+];
+
+const RAIL_FEE_ABI = [
+  'function estimateFee(uint32 dstChainId,uint256 amount,uint8 settlementToken) view returns (uint256 fee,uint256 eta)',
+];
 
 const RAIL_ENUM_VALUE: Record<string, number> = {
   [Rail.CCTP]: 0,
@@ -37,11 +49,11 @@ export function getRouterAddress(chainId: number): string {
   return getChainConfig(chainId)?.routerV1 ?? ZeroAddress;
 }
 
-export function buildRouterIntegration(
+export async function buildRouterIntegration(
   intentId: string,
   quote: QuoteResult,
   userAddress: string,
-): RouterIntegration {
+): Promise<RouterIntegration> {
   const contractAddress = getRouterAddress(quote.srcChainId);
   if (contractAddress === ZeroAddress) {
     throw new Error(`calldata: RouterV1 missing for source chain ${quote.srcChainId}`);
@@ -50,7 +62,7 @@ export function buildRouterIntegration(
   return {
     contractAddress,
     calldata: buildRouterCalldata(intentId, quote, userAddress),
-    value: estimateNativeGas(quote),
+    value: await estimateNativeGas(quote),
     expiresAt: quote.expiresAt,
   };
 }
@@ -143,9 +155,62 @@ export function buildRouterCalldata(
   return ROUTER_V1_IFACE.encodeFunctionData('initiateSwap', [payload]);
 }
 
-function estimateNativeGas(_quote: QuoteResult): string {
-  // TODO: replace with chain-specific gas + rail fee estimation.
-  return '0';
+async function estimateNativeGas(quote: QuoteResult): Promise<string> {
+  if (quote.rail !== Rail.AXELAR && quote.rail !== Rail.LAYERZERO) {
+    return '0';
+  }
+
+  const srcCfg = getChainConfig(quote.srcChainId);
+  if (!srcCfg) throw new Error(`calldata: unknown source chain ${quote.srcChainId}`);
+
+  const rpcUrl = srcCfg.rpcUrl || srcCfg.rpcFallback;
+  if (!rpcUrl) {
+    throw new Error(`calldata: missing RPC URL for source chain ${quote.srcChainId}`);
+  }
+
+  const routerAddress = getRouterAddress(quote.srcChainId);
+  if (routerAddress === ZeroAddress) {
+    throw new Error(`calldata: RouterV1 missing for source chain ${quote.srcChainId}`);
+  }
+
+  const settlementValue = SETTLEMENT_ENUM_VALUE[quote.settlementToken];
+  if (settlementValue === undefined) {
+    throw new Error(`calldata: unsupported settlement token ${quote.settlementToken}`);
+  }
+
+  const provider = new JsonRpcProvider(rpcUrl);
+  const router = new Contract(routerAddress, ROUTER_REGISTRY_ABI, provider);
+  const registryAddress = await router.registry();
+  if (!isAddress(registryAddress) || registryAddress === ZeroAddress) {
+    throw new Error(`calldata: RouterV1 registry missing for source chain ${quote.srcChainId}`);
+  }
+
+  const registry = new Contract(registryAddress, PLUGIN_REGISTRY_ABI, provider);
+  const railPluginAddress = await registry.getRailPlugin(quote.railPluginId);
+  if (!isAddress(railPluginAddress) || railPluginAddress === ZeroAddress) {
+    throw new Error(`calldata: rail plugin ${quote.railPluginId} missing on chain ${quote.srcChainId}`);
+  }
+
+  const railPlugin = new Contract(railPluginAddress, RAIL_FEE_ABI, provider);
+  const bridgeAmount = estimateBridgeAmount(quote);
+  const [fee] = await railPlugin.estimateFee(quote.dstChainId, bridgeAmount, settlementValue);
+  return fee.toString();
+}
+
+function estimateBridgeAmount(quote: QuoteResult): bigint {
+  const amountAfterFee = quote.amountIn - quote.feeAmountToken;
+  if (amountAfterFee <= 0n) {
+    throw new Error('calldata: amount after fee must be positive');
+  }
+
+  // Current live routes are direct settlement-token transfers. If/when source
+  // swap payloads become active, minSrcSwapOut is the closest safe proxy we
+  // have in the quote model for the amount handed to the rail plugin.
+  if (quote.minSrcSwapOut > 0n) {
+    return quote.minSrcSwapOut;
+  }
+
+  return amountAfterFee;
 }
 
 function normalizeAddress(value: unknown, field: string): string {

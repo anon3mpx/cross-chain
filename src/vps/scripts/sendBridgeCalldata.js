@@ -23,6 +23,29 @@ const ROUTER_ERRORS_IFACE = new Interface([
   'error SrcSwapSlippage(uint256 got, uint256 min)',
 ]);
 
+const PLUGIN_REGISTRY_ERRORS_IFACE = new Interface([
+  'error PluginNotFound(bytes32 pluginId)',
+  'error PluginNotActive(bytes32 pluginId)',
+]);
+
+const AXELAR_ERRORS_IFACE = new Interface([
+  'error UnsupportedRoute(uint32 dstChainId)',
+  'error ReceiverNotConfigured(uint32 dstChainId)',
+  'error DestinationTokenNotConfigured(uint32 dstChainId)',
+  'error SettlementTokenMismatch(address provided, address expected)',
+  'error EmptyDestinationCalldata()',
+  'error InsufficientGasPayment(uint256 provided, uint256 required)',
+  'error InterchainTokenServiceMismatch(address tokenService, address expectedService)',
+]);
+
+const LAYERZERO_ERRORS_IFACE = new Interface([
+  'error UnsupportedRoute(uint32 dstChainId)',
+  'error ReceiverNotConfigured(uint32 dstChainId)',
+  'error SettlementTokenMismatch(address provided, address expected)',
+  'error InsufficientNativeFee(uint256 provided, uint256 required)',
+  'error UnsupportedLzTokenFee(uint256 lzTokenFee)',
+]);
+
 function parseArgs(argv) {
   const args = {
     file: 'bridge-calldata.md',
@@ -272,6 +295,84 @@ function describeRouterCustomError(revertData) {
   }
 }
 
+function describeKnownCustomError(revertData) {
+  return (
+    describeRouterCustomError(revertData) ||
+    describeRegistryCustomError(revertData) ||
+    describeAxelarCustomError(revertData) ||
+    describeLayerZeroCustomError(revertData)
+  );
+}
+
+function describeRegistryCustomError(revertData) {
+  if (!revertData) return null;
+  try {
+    const decoded = PLUGIN_REGISTRY_ERRORS_IFACE.parseError(revertData);
+    if (!decoded) return null;
+    if (decoded.name === 'PluginNotFound') {
+      return `PluginRegistry.PluginNotFound: pluginId=${decoded.args.pluginId}.`;
+    }
+    if (decoded.name === 'PluginNotActive') {
+      return `PluginRegistry.PluginNotActive: pluginId=${decoded.args.pluginId}.`;
+    }
+    return `PluginRegistry.${decoded.name}`;
+  } catch {
+    return null;
+  }
+}
+
+function describeAxelarCustomError(revertData) {
+  if (!revertData) return null;
+  try {
+    const decoded = AXELAR_ERRORS_IFACE.parseError(revertData);
+    if (!decoded) return null;
+    switch (decoded.name) {
+      case 'InsufficientGasPayment':
+        return `AxelarRailPlugin.InsufficientGasPayment: provided=${decoded.args.provided.toString()}, required=${decoded.args.required.toString()}. The Router tx value must cover Axelar source gas.`;
+      case 'UnsupportedRoute':
+        return `AxelarRailPlugin.UnsupportedRoute: dstChainId=${decoded.args.dstChainId.toString()}.`;
+      case 'ReceiverNotConfigured':
+        return `AxelarRailPlugin.ReceiverNotConfigured: dstChainId=${decoded.args.dstChainId.toString()}.`;
+      case 'DestinationTokenNotConfigured':
+        return `AxelarRailPlugin.DestinationTokenNotConfigured: dstChainId=${decoded.args.dstChainId.toString()}.`;
+      case 'SettlementTokenMismatch':
+        return `AxelarRailPlugin.SettlementTokenMismatch: provided=${decoded.args.provided}, expected=${decoded.args.expected}.`;
+      case 'EmptyDestinationCalldata':
+        return 'AxelarRailPlugin.EmptyDestinationCalldata: dstCalldata is required for Axelar receiver execution.';
+      case 'InterchainTokenServiceMismatch':
+        return `AxelarRailPlugin.InterchainTokenServiceMismatch: tokenService=${decoded.args.tokenService}, expected=${decoded.args.expectedService}.`;
+      default:
+        return `AxelarRailPlugin.${decoded.name}`;
+    }
+  } catch {
+    return null;
+  }
+}
+
+function describeLayerZeroCustomError(revertData) {
+  if (!revertData) return null;
+  try {
+    const decoded = LAYERZERO_ERRORS_IFACE.parseError(revertData);
+    if (!decoded) return null;
+    switch (decoded.name) {
+      case 'InsufficientNativeFee':
+        return `LayerZeroRailPlugin.InsufficientNativeFee: provided=${decoded.args.provided.toString()}, required=${decoded.args.required.toString()}.`;
+      case 'UnsupportedRoute':
+        return `LayerZeroRailPlugin.UnsupportedRoute: dstChainId=${decoded.args.dstChainId.toString()}.`;
+      case 'ReceiverNotConfigured':
+        return `LayerZeroRailPlugin.ReceiverNotConfigured: dstChainId=${decoded.args.dstChainId.toString()}.`;
+      case 'SettlementTokenMismatch':
+        return `LayerZeroRailPlugin.SettlementTokenMismatch: provided=${decoded.args.provided}, expected=${decoded.args.expected}.`;
+      case 'UnsupportedLzTokenFee':
+        return `LayerZeroRailPlugin.UnsupportedLzTokenFee: lzTokenFee=${decoded.args.lzTokenFee.toString()}.`;
+      default:
+        return `LayerZeroRailPlugin.${decoded.name}`;
+    }
+  } catch {
+    return null;
+  }
+}
+
 function preflightRouterIntent(calldataHex) {
   try {
     const intent = decodeRouterIntent(calldataHex);
@@ -313,7 +414,7 @@ function decodeRouterIntent(calldataHex) {
 
 main().catch((err) => {
   const revertData = extractRevertData(err);
-  const decoded = describeRouterCustomError(revertData);
+  const decoded = describeKnownCustomError(revertData);
   if (decoded) {
     console.error(`ERROR: ${decoded}`);
     if (revertData) console.error(`revertData: ${revertData}`);

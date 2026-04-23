@@ -13,10 +13,10 @@ const { Contract, Interface, JsonRpcProvider, Wallet } = require('ethers');
 const RPC_URL = 'https://sepolia.optimism.io';
 const PRIVATE_KEY = '';
 
-// const TO = '0x6a68e37f678c4eb104372ed4b6ac97bd0ddef30a';
-const TO = '0x78546a4ace4529582d7ddf4356baf110fa343701'; // Router on Arbitrum Sepolia (for CCTP/LZ test route)
-const DATA = '0x075dd231000000000000000000000000000000000000000000000000000000000000002000000000000000000000000005f8cc8753d90d67dbb8c02118440b8283f941c9000000000000000000000000c1d9a1f64291cf47e703eab6b27fa0660cae73240000000000000000000000001500116d88b6583e63e2fa9d4199f2eddf72149b00000000000000000000000000000000000000000000000000000000001e848000000000000000000000000000000000000000000000000000000000001e366000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000014a34000000000000000000000000000000000000000000000000000000000000000200000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000004e2000000000000000000000000000000000000000000000000000000000000002c000000000000000000000000000000000000000000000000000000000000002e000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000c472efb7b9a986e1446d8bf9dec51e88548a1d8eb4a0810e6424d97a878d34fc00000000000000000000000000000000000000000000000000000000000003000000000000000000000000008fb0438d0799c52920515b31310f53452c33e066000000000000000000000000000000000000000000000000000000000000032000000000000000000000000000000000000000000000000000000000000003400000000000000000000000000000000000000000000000000000000000000000407be0d137d4e92731e54dcc81b53872c1e1464fa748b096b8e4c496010874650000000000000000000000000000000000000000000000000000000069e7a2af00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000';
-const VALUE_WEI = '741174839113500';
+// const TO = '0x1dd7f1d4ebb5a1ad2a9d0d561b1ef3338cef58e8'; // router on base sepolia
+const TO = '0x1aae94a372f20271b6b2919d3890dc5583e091ac'; // Router on op Sepolia (for CCTP/LZ test route)
+const DATA = '0x075dd231000000000000000000000000000000000000000000000000000000000000002000000000000000000000000005f8cc8753d90d67dbb8c02118440b8283f941c90000000000000000000000005fd84259d66cd46123540766be93dfe6d43130d7000000000000000000000000036cbd53842c5426634e7929541ec2318f3dcf7e00000000000000000000000000000000000000000000000000000000001e848000000000000000000000000000000000000000000000000000000000001e34d400000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000014a34000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000004e2000000000000000000000000000000000000000000000000000000000000002c000000000000000000000000000000000000000000000000000000000000002e0000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000009181644edfd36b07ccd623494a3681a4a6b9cd5d52611accda20264cd09259ac0000000000000000000000000000000000000000000000000000000000000300000000000000000000000000b006c9609b8fe8d52d2a16b4463446eda853264b0000000000000000000000000000000000000000000000000000000000000360000000000000000000000000000000000000000000000000000000000000038000000000000000000000000000000000000000000000000000000000000000007dea4aeb4c31216b9ee7e5dcd05ed2f3187c9cc4c9e19da8bffc2363576cbf160000000000000000000000000000000000000000000000000000000069e8f6c200000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000004000000000000000000000000000000000000000000000000000000000000003e8000000000000000000000000000000000000000000000000000000000000031800000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000';
+const VALUE_WEI = '678316820540976';
 
 // Set a gas limit explicitly to bypass estimateGas failures.
 const GAS_LIMIT = '1200000';
@@ -41,6 +41,29 @@ const ROUTER_ERRORS_IFACE = new Interface([
   'error AmountBelowMinimum(uint256 amount, uint256 minimum)',
   'error ZeroAddress(string field)',
   'error SrcSwapSlippage(uint256 got, uint256 min)',
+]);
+
+const PLUGIN_REGISTRY_ERRORS_IFACE = new Interface([
+  'error PluginNotFound(bytes32 pluginId)',
+  'error PluginNotActive(bytes32 pluginId)',
+]);
+
+const AXELAR_ERRORS_IFACE = new Interface([
+  'error UnsupportedRoute(uint32 dstChainId)',
+  'error ReceiverNotConfigured(uint32 dstChainId)',
+  'error DestinationTokenNotConfigured(uint32 dstChainId)',
+  'error SettlementTokenMismatch(address provided, address expected)',
+  'error EmptyDestinationCalldata()',
+  'error InsufficientGasPayment(uint256 provided, uint256 required)',
+  'error InterchainTokenServiceMismatch(address tokenService, address expectedService)',
+]);
+
+const LAYERZERO_ERRORS_IFACE = new Interface([
+  'error UnsupportedRoute(uint32 dstChainId)',
+  'error ReceiverNotConfigured(uint32 dstChainId)',
+  'error SettlementTokenMismatch(address provided, address expected)',
+  'error InsufficientNativeFee(uint256 provided, uint256 required)',
+  'error UnsupportedLzTokenFee(uint256 lzTokenFee)',
 ]);
 
 const ERC20_ABI = [
@@ -139,6 +162,84 @@ function describeRouterCustomError(revertData) {
   }
 }
 
+function describeKnownCustomError(revertData) {
+  return (
+    describeRouterCustomError(revertData) ||
+    describeRegistryCustomError(revertData) ||
+    describeAxelarCustomError(revertData) ||
+    describeLayerZeroCustomError(revertData)
+  );
+}
+
+function describeRegistryCustomError(revertData) {
+  if (!revertData) return null;
+  try {
+    const decoded = PLUGIN_REGISTRY_ERRORS_IFACE.parseError(revertData);
+    if (!decoded) return null;
+    if (decoded.name === 'PluginNotFound') {
+      return `PluginRegistry.PluginNotFound: pluginId=${decoded.args.pluginId}.`;
+    }
+    if (decoded.name === 'PluginNotActive') {
+      return `PluginRegistry.PluginNotActive: pluginId=${decoded.args.pluginId}.`;
+    }
+    return `PluginRegistry.${decoded.name}`;
+  } catch {
+    return null;
+  }
+}
+
+function describeAxelarCustomError(revertData) {
+  if (!revertData) return null;
+  try {
+    const decoded = AXELAR_ERRORS_IFACE.parseError(revertData);
+    if (!decoded) return null;
+    switch (decoded.name) {
+      case 'InsufficientGasPayment':
+        return `AxelarRailPlugin.InsufficientGasPayment: provided=${decoded.args.provided.toString()}, required=${decoded.args.required.toString()}. The Router tx value must cover Axelar source gas.`;
+      case 'UnsupportedRoute':
+        return `AxelarRailPlugin.UnsupportedRoute: dstChainId=${decoded.args.dstChainId.toString()}.`;
+      case 'ReceiverNotConfigured':
+        return `AxelarRailPlugin.ReceiverNotConfigured: dstChainId=${decoded.args.dstChainId.toString()}.`;
+      case 'DestinationTokenNotConfigured':
+        return `AxelarRailPlugin.DestinationTokenNotConfigured: dstChainId=${decoded.args.dstChainId.toString()}.`;
+      case 'SettlementTokenMismatch':
+        return `AxelarRailPlugin.SettlementTokenMismatch: provided=${decoded.args.provided}, expected=${decoded.args.expected}.`;
+      case 'EmptyDestinationCalldata':
+        return 'AxelarRailPlugin.EmptyDestinationCalldata: dstCalldata is required for Axelar receiver execution.';
+      case 'InterchainTokenServiceMismatch':
+        return `AxelarRailPlugin.InterchainTokenServiceMismatch: tokenService=${decoded.args.tokenService}, expected=${decoded.args.expectedService}.`;
+      default:
+        return `AxelarRailPlugin.${decoded.name}`;
+    }
+  } catch {
+    return null;
+  }
+}
+
+function describeLayerZeroCustomError(revertData) {
+  if (!revertData) return null;
+  try {
+    const decoded = LAYERZERO_ERRORS_IFACE.parseError(revertData);
+    if (!decoded) return null;
+    switch (decoded.name) {
+      case 'InsufficientNativeFee':
+        return `LayerZeroRailPlugin.InsufficientNativeFee: provided=${decoded.args.provided.toString()}, required=${decoded.args.required.toString()}.`;
+      case 'UnsupportedRoute':
+        return `LayerZeroRailPlugin.UnsupportedRoute: dstChainId=${decoded.args.dstChainId.toString()}.`;
+      case 'ReceiverNotConfigured':
+        return `LayerZeroRailPlugin.ReceiverNotConfigured: dstChainId=${decoded.args.dstChainId.toString()}.`;
+      case 'SettlementTokenMismatch':
+        return `LayerZeroRailPlugin.SettlementTokenMismatch: provided=${decoded.args.provided}, expected=${decoded.args.expected}.`;
+      case 'UnsupportedLzTokenFee':
+        return `LayerZeroRailPlugin.UnsupportedLzTokenFee: lzTokenFee=${decoded.args.lzTokenFee.toString()}.`;
+      default:
+        return `LayerZeroRailPlugin.${decoded.name}`;
+    }
+  } catch {
+    return null;
+  }
+}
+
 async function tryDecodeAndCheckAllowance(provider, wallet) {
   try {
     const intent = decodeRouterIntent(DATA);
@@ -148,20 +249,30 @@ async function tryDecodeAndCheckAllowance(provider, wallet) {
     const feeAmount = BigInt(intent.feeAmount.toString());
     const amountAfterFee = amountIn - feeAmount;
     const deadline = Number(intent.deadline.toString());
-    const now = Math.floor(Date.now() / 1000);
+    const latestBlock = await provider.getBlock('latest');
+    const now = Number(latestBlock?.timestamp ?? Math.floor(Date.now() / 1000));
 
     console.log('\nDecoded RouterV1 intent:');
     console.log(`  tokenIn: ${tokenIn}`);
     console.log(`  amountIn(raw): ${amountIn.toString()}`);
     console.log(`  feeAmount(raw): ${feeAmount.toString()}`);
     console.log(`  amountAfterFee(raw): ${amountAfterFee.toString()}`);
-    console.log(`  deadline: ${deadline} (in ${deadline - now}s)`);
+    console.log(`  deadline: ${deadline} (in ${deadline - now}s vs latest source-chain block time)`);
+    if (latestBlock) {
+      console.log(`  latestBlock: ${latestBlock.number} @ ${now}`);
+    }
 
     if (deadline < now) {
-      throw new Error(`RouterV1.IntentExpired: regenerate quote/calldata before sending (deadline=${deadline}, now=${now}).`);
+      throw new Error(
+        `RouterV1.IntentExpired: regenerate quote/calldata before sending ` +
+        `(deadline=${deadline}, sourceChainNow=${now}).`,
+      );
     }
     if (deadline > now + (30 * 60)) {
-      throw new Error(`RouterV1.IntentDeadlineTooFar: deadline exceeds RouterV1 max window (deadline=${deadline}, now=${now}).`);
+      throw new Error(
+        `RouterV1.IntentDeadlineTooFar: deadline exceeds RouterV1 max window ` +
+        `(deadline=${deadline}, sourceChainNow=${now}).`,
+      );
     }
 
     if (/^0x[0-9a-fA-F]{40}$/.test(tokenIn)) {
@@ -208,7 +319,7 @@ async function preflightCall(provider, wallet, txReq) {
     });
   } catch (err) {
     const revertData = extractRevertData(err);
-    const decoded = describeRouterCustomError(revertData);
+    const decoded = describeKnownCustomError(revertData);
     if (decoded) {
       throw new Error(`${decoded}${revertData ? ` (revertData=${revertData})` : ''}`);
     }

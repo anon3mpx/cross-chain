@@ -10,8 +10,8 @@ import {
 } from 'ethers';
 import { CHAIN_CONFIGS } from '../config/chains';
 import { getSettlementTokenAddress } from '../config/contracts';
-import { IntentEngine } from './IntentEngine';
 import { Rail, SettlementToken } from '../types';
+import { IntentService } from './IntentService';
 
 const ROUTER_ABI = [
   'event IntentInitiated(bytes32 indexed intentId, address indexed user, address tokenIn, uint256 amountIn, uint32 dstChainId, bytes32 railTxId)',
@@ -112,7 +112,7 @@ export class CctpAttestationWorker {
   private reconciling = false;
   private running = false;
 
-  constructor(private intentEngine: IntentEngine) {}
+  constructor(private intentService: IntentService) {}
 
   async start(): Promise<void> {
     if (this.running) return;
@@ -573,15 +573,18 @@ export class CctpAttestationWorker {
     receiver: string,
   ): bigint {
     if (!receipt) return 0n;
+    const transferEvent = ERC20_TRANSFER_IFACE.getEvent('Transfer');
+    if (!transferEvent) return 0n;
     const receiverTopic = ethers.zeroPadValue(receiver.toLowerCase(), 32);
     for (const log of receipt.logs) {
       if (log.address.toLowerCase() !== settlementToken.toLowerCase()) continue;
-      if (log.topics[0] !== ERC20_TRANSFER_IFACE.getEvent('Transfer').topicHash) continue;
+      if (log.topics[0] !== transferEvent.topicHash) continue;
       if (log.topics.length < 3) continue;
       if (log.topics[1] !== ethers.zeroPadValue(ZeroAddress, 32)) continue;
       if (log.topics[2].toLowerCase() !== receiverTopic.toLowerCase()) continue;
 
       const parsed = ERC20_TRANSFER_IFACE.parseLog(log);
+      if (!parsed) continue;
       return BigInt(parsed.args.value);
     }
     return 0n;
@@ -655,19 +658,21 @@ export class CctpAttestationWorker {
   }
 
   private _safeMarkDestinationReceived(intentId: string, txHash: string): void {
-    try {
-      this.intentEngine.markDestinationReceived(intentId, txHash);
-    } catch {
+    void this.intentService.markDestinationReceived(intentId, txHash, {
+      actor: 'system',
+      eventSource: 'cctp-relay',
+    }).catch(() => {
       // intent can be unknown when tx bypasses quote server
-    }
+    });
   }
 
   private _safeMarkSettled(intentId: string, txHash: string): void {
-    try {
-      this.intentEngine.markSettled(intentId, txHash);
-    } catch {
+    void this.intentService.markSettled(intentId, txHash, {
+      actor: 'system',
+      eventSource: 'cctp-relay',
+    }).catch(() => {
       // intent can be unknown when tx bypasses quote server
-    }
+    });
   }
 
   private _isAlreadyRelayedError(err: unknown): boolean {

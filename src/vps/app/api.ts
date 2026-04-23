@@ -1,3 +1,4 @@
+import { buildAdminAPI } from '../api/AdminAPI';
 import { buildStatusAPI } from '../api/StatusAPI';
 import { buildRuntime } from './runtime';
 
@@ -14,10 +15,11 @@ async function main(): Promise<void> {
     enableRecovery: false,
   });
 
-  const app = buildStatusAPI(runtime.intentEngine, runtime.quoteEngine);
+  const app = buildStatusAPI(runtime.intentService, runtime.quoteEngine);
   if (runtime.partnerApiRouter) {
     app.use('/partner', runtime.partnerApiRouter);
   }
+  app.use('/admin', buildAdminAPI(runtime.intentService));
 
   const host = process.env.VPS_API_HOST ?? '0.0.0.0';
   const port = readInt('VPS_API_PORT', 8787);

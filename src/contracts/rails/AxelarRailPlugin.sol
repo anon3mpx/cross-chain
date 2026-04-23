@@ -40,7 +40,9 @@ contract AxelarRailPlugin is IRailPlugin, ERC165, Ownable2Step {
     error ReceiverNotConfigured(uint32 dstChainId);
     error DestinationTokenNotConfigured(uint32 dstChainId);
     error SettlementTokenMismatch(address provided, address expected);
+    error EmptyDestinationCalldata();
     error InsufficientGasPayment(uint256 provided, uint256 required);
+    error InterchainTokenServiceMismatch(address tokenService, address expectedService);
 
     constructor(
         address _usdc,
@@ -129,10 +131,17 @@ contract AxelarRailPlugin is IRailPlugin, ERC165, Ownable2Step {
         if (params.settlementTokenAddr != usdc) {
             revert SettlementTokenMismatch(params.settlementTokenAddr, usdc);
         }
+        if (params.dstCalldata.length == 0) revert EmptyDestinationCalldata();
 
-        // Transfer settlement token from RouterV1 and approve ITS for bridging.
+        // Pull settlement tokens from RouterV1 into the plugin. For Axelar lock/unlock
+        // style tokens, the interchain token contract itself prepares the token
+        // manager correctly; calling the ITS service entrypoint directly can fail.
         IERC20(usdc).safeTransferFrom(msg.sender, address(this), params.amount);
-        IERC20(usdc).forceApprove(address(interchainTokenService), params.amount);
+
+        address tokenService = IAxelarInterchainToken(usdc).interchainTokenService();
+        if (tokenService != address(interchainTokenService)) {
+            revert InterchainTokenServiceMismatch(tokenService, address(interchainTokenService));
+        }
 
         // Axelar requires source-chain gas prepayment for remote execution.
         uint256 gasFee = gasService.estimateGasFee(
@@ -144,12 +153,11 @@ contract AxelarRailPlugin is IRailPlugin, ERC165, Ownable2Step {
         );
         if (msg.value < gasFee) revert InsufficientGasPayment(msg.value, gasFee);
 
-        interchainTokenService.callContractWithInterchainToken{value: gasFee}(
-            dstTokenId,
+        IAxelarInterchainToken(usdc).interchainTransfer{value: gasFee}(
             dstChainName,
             _addressToBytes(dstReceiver),
             params.amount,
-            params.dstCalldata
+            bytes.concat(bytes4(0), params.dstCalldata)
         );
 
         if (msg.value > gasFee) {
@@ -241,5 +249,16 @@ interface IAxelarITS {
         bytes calldata destinationAddress,
         uint256 amount,
         bytes calldata data
+    ) external payable;
+}
+
+interface IAxelarInterchainToken {
+    function interchainTokenService() external view returns (address interchainTokenServiceAddress);
+
+    function interchainTransfer(
+        string calldata destinationChain,
+        bytes calldata recipient,
+        uint256 amount,
+        bytes calldata metadata
     ) external payable;
 }

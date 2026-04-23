@@ -5,13 +5,15 @@
 import express, { Request, Response, NextFunction } from 'express';
 import { ApiKeyManager, PartnerTier } from '../services/ApiKeyManager';
 import { IntentEngine } from '../services/IntentEngine';
+import { IntentService } from '../services/IntentService';
 import { QuoteEngine } from '../services/QuoteEngine';
 import { buildRouterIntegration } from '../services/IntentCalldataBuilder';
+import { Intent } from '../types';
 import { parseQuoteRequest, serializeQuote } from './quoteCodec';
 
 export function buildPartnerAPI(
   keyManager: ApiKeyManager,
-  intentEngine: IntentEngine,
+  intentService: IntentService,
   quoteEngine: QuoteEngine,
 ): express.Router {
   const router = express.Router();
@@ -84,9 +86,9 @@ export function buildPartnerAPI(
       const quote = await quoteEngine.getQuote(quoteReq);
       if (!quote) return res.status(400).json({ error: 'NO_ROUTE', message: 'No route available for this chain pair and token combination' });
 
-      const intent = intentEngine.create(quote, quoteReq.userAddress);
+      const intent = await intentService.createQuotedIntent(quote, quoteReq.userAddress, apiKey);
       const { partnerRebate } = keyManager.splitFee(quote.feeAmountToken, check.partner);
-      const integration = buildRouterIntegration(intent.intentId, quote, quoteReq.userAddress);
+      const integration = await buildRouterIntegration(intent.intentId, quote, quoteReq.userAddress);
 
       res.json({
         intentId:   intent.intentId,
@@ -111,11 +113,15 @@ export function buildPartnerAPI(
   });
 
   // ── GET /partner/intent/:id ────────────────────────────────────────────────
-  router.get('/intent/:id', (req: Request, res: Response) => {
+  router.get('/intent/:id', async (req: Request, res: Response) => {
     const check = keyManager.validateKey((req as any).apiKey);
     if (!check.allowed) return res.status(401).json({ error: check.reason });
 
-    const intent = intentEngine.get(String(req.params.id));
+    const intentId = String(req.params.id);
+    const intent = await loadIntent(intentId);
+    if (intent === 'unavailable') {
+      return res.status(503).json({ error: 'STATUS_UNAVAILABLE' });
+    }
     if (!intent) return res.status(404).json({ error: 'NOT_FOUND' });
 
     res.json({
@@ -127,8 +133,12 @@ export function buildPartnerAPI(
       rail:        intent.quote.rail,
       etaSeconds:  intent.quote.etaSeconds,
       settled:     intent.status === 'SETTLED',
-      failed:      intent.status === 'FAILED',
+      failed:      intent.status === 'FAILED' || intent.status === 'CANCELLED',
       errorMessage: intent.errorMessage,
+      canCancel:   intentService.canCancel(intent.status),
+      canCancelInWallet: intent.status === 'SUBMITTED' && Boolean(intent.srcTxHash),
+      canRequestRefund: intentService.canRequestRefund(intent.status),
+      refund:      await intentService.getRefundCase(intent.intentId),
     });
   });
 
@@ -197,6 +207,15 @@ export function buildPartnerAPI(
   });
 
   return router;
+
+  async function loadIntent(intentId: string): Promise<Intent | 'unavailable' | undefined> {
+    try {
+      return (await intentService.getIntent(intentId)) ?? undefined;
+    } catch (err) {
+      console.error(`[PartnerAPI] failed to load intent ${intentId}`, err);
+      return 'unavailable';
+    }
+  }
 }
 
 // ── Webhook push helper ────────────────────────────────────────────────────────

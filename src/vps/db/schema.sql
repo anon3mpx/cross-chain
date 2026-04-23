@@ -25,7 +25,7 @@ CREATE TABLE IF NOT EXISTS intents (
 
   status             TEXT NOT NULL
                     CHECK (status IN (
-                      'CREATED','QUOTED','SUBMITTED','IN_TRANSIT','DESTINATION_RECEIVED',
+                      'CREATED','QUOTED','CANCELLED','SUBMITTED','IN_TRANSIT','DESTINATION_RECEIVED',
                       'SETTLED','STUCK','RECOVERING','FAILED'
                     )),
 
@@ -77,7 +77,7 @@ CREATE TABLE IF NOT EXISTS intent_events (
   prev_status        TEXT,
   new_status         TEXT NOT NULL
                     CHECK (new_status IN (
-                      'CREATED','QUOTED','SUBMITTED','IN_TRANSIT','DESTINATION_RECEIVED',
+                      'CREATED','QUOTED','CANCELLED','SUBMITTED','IN_TRANSIT','DESTINATION_RECEIVED',
                       'SETTLED','STUCK','RECOVERING','FAILED'
                     )),
 
@@ -99,6 +99,54 @@ CREATE INDEX IF NOT EXISTS idx_intent_events_intent_time
   ON intent_events(intent_id, occurred_at DESC);
 CREATE INDEX IF NOT EXISTS idx_intent_events_chain_tx
   ON intent_events(chain_id, tx_hash, log_index);
+
+-- -----------------------------------------------------------------------------
+-- 2b) intent_refund_cases: manual review / rescue / reimbursement workflow
+-- -----------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS intent_refund_cases (
+  intent_id          TEXT PRIMARY KEY REFERENCES intents(intent_id) ON DELETE CASCADE,
+  status             TEXT NOT NULL
+                    CHECK (status IN (
+                      'REQUESTED','UNDER_REVIEW','APPROVED','REJECTED','PROCESSING','COMPLETED'
+                    )),
+
+  reason             TEXT NOT NULL,
+  requested_by       CITEXT,
+  requested_at       TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+
+  reviewed_by        TEXT,
+  reviewed_at        TIMESTAMPTZ,
+  review_notes       TEXT,
+  admin_notes        TEXT,
+
+  custody_location   TEXT NOT NULL DEFAULT 'UNKNOWN'
+                    CHECK (custody_location IN (
+                      'UNKNOWN','ROUTER','RECEIVER','AXELAR_ADAPTER','LAYERZERO_ADAPTER',
+                      'THORCHAIN_ROUTER','CCTP_PROTOCOL','AXELAR_PROTOCOL','LAYERZERO_PROTOCOL',
+                      'EXTERNAL_PROTOCOL'
+                    )),
+  resolution_kind    TEXT
+                    CHECK (resolution_kind IS NULL OR resolution_kind IN (
+                      'ONCHAIN_RESCUE','OFFCHAIN_COMPENSATION','PROTOCOL_RECOVERY'
+                    )),
+
+  rescue_contract    CITEXT,
+  rescue_token       CITEXT,
+  rescue_amount      TEXT,
+  rescue_tx_hash     TEXT,
+  payout_address     CITEXT,
+  payout_tx_hash     TEXT,
+
+  updated_at         TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_intent_refund_cases_status
+  ON intent_refund_cases(status, updated_at DESC);
+
+CREATE TRIGGER trg_intent_refund_cases_updated_at
+BEFORE UPDATE ON intent_refund_cases
+FOR EACH ROW
+EXECUTE FUNCTION set_updated_at();
 
 -- -----------------------------------------------------------------------------
 -- 3) intent_rail_attempts: each submit/fallback attempt per intent

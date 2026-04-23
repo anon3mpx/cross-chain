@@ -14,6 +14,7 @@
 
 import EventEmitter from 'eventemitter3';
 import { IntentStatus, Rail, SettlementToken, CHAIN_ID } from '../types';
+import { buildIntentActionMessage, IntentAction } from '../utils/intentActionAuth';
 
 // ── Public-facing types (simplified — hides internal complexity) ───────────────
 
@@ -65,6 +66,42 @@ export interface SwapResult {
   rail:      Rail;
 }
 
+export interface IntentStatusView {
+  intentId: string;
+  status: IntentStatus;
+  srcTxHash?: string;
+  dstTxHash?: string;
+  railTxId?: string;
+  rail: Rail;
+  etaSeconds: number;
+  createdAt?: number;
+  updatedAt?: number;
+  errorMessage?: string;
+  canCancel?: boolean;
+  canCancelInWallet?: boolean;
+  canRequestRefund?: boolean;
+  refund?: unknown;
+}
+
+export interface IntentActionRequest {
+  userAddress: string;
+  signature: string;
+  timestamp?: number;
+}
+
+export interface SubmitIntentRequest extends IntentActionRequest {
+  srcTxHash: string;
+}
+
+export interface CancelIntentRequest extends IntentActionRequest {
+  reason?: string;
+  replacementTxHash?: string;
+}
+
+export interface RefundIntentRequest extends IntentActionRequest {
+  reason: string;
+}
+
 // ── SwapHandle — returned from ruflo.swap(), emits real-time events ────────────
 
 export class SwapHandle extends EventEmitter {
@@ -98,13 +135,17 @@ export class SwapHandle extends EventEmitter {
         this.emit('failed', msg);
         this._ws?.close();
       }
+      if (msg.status === IntentStatus.CANCELLED) {
+        this.emit('cancelled', msg);
+        this._ws?.close();
+      }
     };
 
     this._ws.onerror = (err) => this.emit('error', err);
     return this;
   }
 
-  // ── Async settle — await until SETTLED or FAILED ──────────────────────────
+  // ── Async settle — await until terminal result ────────────────────────────
 
   settle(timeoutMs = 300_000): Promise<SwapResult> {
     return new Promise((resolve, reject) => {
@@ -126,6 +167,11 @@ export class SwapHandle extends EventEmitter {
         clearTimeout(timer);
         reject(new Error(`Swap failed: ${msg.errorMessage ?? 'unknown'}`));
       });
+
+      this.on('cancelled', (msg) => {
+        clearTimeout(timer);
+        reject(new Error(`Swap cancelled: ${msg.errorMessage ?? 'cancelled by user'}`));
+      });
     });
   }
 
@@ -136,18 +182,73 @@ export class SwapHandle extends EventEmitter {
     while (Date.now() - start < timeoutMs) {
       const status = await this._pollStatus();
       this.emit('status', status.status);
-      if (status.status === IntentStatus.SETTLED) return status;
+      if (status.status === IntentStatus.SETTLED) {
+        return {
+          intentId: status.intentId,
+          status: status.status,
+          srcTxHash: status.srcTxHash ?? '',
+          dstTxHash: status.dstTxHash ?? '',
+          amountOut: '',
+          rail: status.rail,
+        };
+      }
       if (status.status === IntentStatus.FAILED)  throw new Error(`Swap failed: ${status.errorMessage}`);
+      if (status.status === IntentStatus.CANCELLED) throw new Error(`Swap cancelled: ${status.errorMessage ?? 'cancelled by user'}`);
       await new Promise(r => setTimeout(r, intervalMs));
     }
     throw new Error('Swap timed out');
   }
 
-  private async _pollStatus(): Promise<any> {
+  async markSubmitted(input: SubmitIntentRequest): Promise<IntentStatusView> {
+    return this._postIntentAction('submitted', input);
+  }
+
+  async cancel(input: CancelIntentRequest): Promise<IntentStatusView> {
+    return this._postIntentAction('cancel', input);
+  }
+
+  async requestRefund(input: RefundIntentRequest): Promise<{ ok: true; refund: unknown; ts: number }> {
+    return this._postIntentAction('refund', input);
+  }
+
+  private async _pollStatus(): Promise<IntentStatusView> {
     const res = await fetch(`${this.baseUrl}/partner/intent/${this.intentId}`, {
       headers: { 'x-api-key': this.apiKey },
     });
-    return res.json();
+    return await res.json() as IntentStatusView;
+  }
+
+  private async _postIntentAction(
+    action: IntentAction,
+    input: SubmitIntentRequest | CancelIntentRequest | RefundIntentRequest,
+  ): Promise<any> {
+    const timestamp = input.timestamp ?? Date.now();
+    const body: Record<string, unknown> = {
+      userAddress: input.userAddress,
+      signature: input.signature,
+      timestamp,
+    };
+
+    if ('srcTxHash' in input) {
+      body.srcTxHash = input.srcTxHash;
+    }
+    if ('reason' in input) {
+      body.reason = input.reason;
+    }
+    if ('replacementTxHash' in input && input.replacementTxHash) {
+      body.replacementTxHash = input.replacementTxHash;
+    }
+
+    const res = await fetch(`${this.baseUrl}/intent/${this.intentId}/${action}`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+
+    if (!res.ok) {
+      throw new Error(`${action} failed: ${await res.text()}`);
+    }
+    return await res.json();
   }
 }
 
@@ -181,7 +282,22 @@ export class RufloSDK {
     });
 
     if (!res.ok) throw new Error(`Quote failed: ${await res.text()}`);
-    const { quote, integration } = await res.json();
+    const { quote, integration } = await res.json() as {
+      quote: {
+        intentId: string;
+        estimatedOut: string;
+        minAmountOut: string;
+        feeAmountUSD: number;
+        rail: Rail;
+        etaSeconds: number;
+        expiresAt: number;
+      };
+      integration: {
+        contractAddress: string;
+        calldata: string;
+        value: string;
+      };
+    };
 
     return {
       intentId:     quote.intentId,
@@ -211,7 +327,7 @@ export class RufloSDK {
 
   async getSupportedRoutes(): Promise<{ srcChainId: number; dstChainIds: number[]; rails: Rail[] }[]> {
     const res = await fetch(`${this.baseUrl}/routes`, { headers: { 'x-api-key': this.apiKey } });
-    return res.json();
+    return await res.json() as { srcChainId: number; dstChainIds: number[]; rails: Rail[] }[];
   }
 
   // ── Utils ──────────────────────────────────────────────────────────────────
@@ -226,3 +342,4 @@ export class RufloSDK {
 
 // ── Chain + token helpers (convenience re-exports for partner DX) ──────────────
 export { CHAIN_ID, Rail, IntentStatus, SettlementToken };
+export { buildIntentActionMessage };

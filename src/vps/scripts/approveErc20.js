@@ -9,10 +9,12 @@ const { Contract, JsonRpcProvider, Wallet } = require('ethers');
  */
 
 const RPC_URL = 'https://sepolia.optimism.io';
+// const RPC_URL = 'https://sepolia.base.org';
+
 const PRIVATE_KEY = '';
-const TOKEN_ADDRESS = '0x2f2A9DbFd8c503a0aC56413B774e39030df85331'; // USDC on Arbitrum Sepolia
-const SPENDER_ADDRESS = '0x78546a4ace4529582d7ddf4356baf110fa343701'; // Router on Arbitrum Sepolia (for approving router to pull tokens for CCTP test route)
-const AMOUNT_RAW = '200000000'; // raw units (USDC 1.0 = 1000000)
+const TOKEN_ADDRESS = '0x5fd84259d66Cd46123540766Be93DFE6D43130D7'; // USDC on Arbitrum Sepolia
+const SPENDER_ADDRESS = '0x1aae94a372f20271b6b2919d3890dc5583e091ac'; // Router on Arbitrum Sepolia (for approving router to pull tokens for CCTP test route)
+const AMOUNT_RAW = '20000000000'; // raw units (USDC 1.0 = 1000000)
 
 const ERC20_ABI = [
   'function approve(address spender, uint256 amount) external returns (bool)',

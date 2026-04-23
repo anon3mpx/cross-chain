@@ -2,13 +2,47 @@
 pragma solidity ^0.8.24;
 
 import {ERC20} from "@openzeppelin/contracts/token/ERC20/ERC20.sol";
-import {AxelarRailPlugin, IAxelarGasService, IAxelarITS} from "../../src/contracts/rails/AxelarRailPlugin.sol";
+import {
+    AxelarRailPlugin,
+    IAxelarGasService,
+    IAxelarITS,
+    IAxelarInterchainToken
+} from "../../src/contracts/rails/AxelarRailPlugin.sol";
 import {IntentTypes} from "../../src/contracts/interfaces/IIntentTypes.sol";
 
-contract MockUSDCAxelar is ERC20 {
-    constructor() ERC20("Mock USDC", "mUSDC") {}
+contract MockUSDCAxelar is ERC20, IAxelarInterchainToken {
+    address public immutable its;
+
+    string public lastDestinationChain;
+    bytes public lastDestinationAddress;
+    uint256 public lastAmount;
+    bytes public lastMetadata;
+    uint256 public lastPaidNativeFee;
+
+    constructor(address _its) ERC20("Mock USDC", "mUSDC") {
+        its = _its;
+    }
+
     function decimals() public pure override returns (uint8) { return 6; }
     function mint(address to, uint256 amount) external { _mint(to, amount); }
+
+    function interchainTokenService() external view returns (address interchainTokenServiceAddress) {
+        return its;
+    }
+
+    function interchainTransfer(
+        string calldata destinationChain,
+        bytes calldata recipient,
+        uint256 amount,
+        bytes calldata metadata
+    ) external payable {
+        lastDestinationChain = destinationChain;
+        lastDestinationAddress = recipient;
+        lastAmount = amount;
+        lastMetadata = metadata;
+        lastPaidNativeFee = msg.value;
+        _transfer(msg.sender, address(this), amount);
+    }
 }
 
 contract MockAxelarGasService is IAxelarGasService {
@@ -50,34 +84,13 @@ contract MockAxelarGasService is IAxelarGasService {
 }
 
 contract MockAxelarITS is IAxelarITS {
-    MockUSDCAxelar public immutable usdc;
-
-    bytes32 public lastTokenId;
-    string public lastDestinationChain;
-    bytes public lastDestinationAddress;
-    uint256 public lastAmount;
-    bytes public lastData;
-    uint256 public lastPaidNativeFee;
-
-    constructor(address _usdc) {
-        usdc = MockUSDCAxelar(_usdc);
-    }
-
     function callContractWithInterchainToken(
-        bytes32 tokenId,
-        string calldata destinationChain,
-        bytes calldata destinationAddress,
-        uint256 amount,
-        bytes calldata data
-    ) external payable {
-        lastTokenId = tokenId;
-        lastDestinationChain = destinationChain;
-        lastDestinationAddress = destinationAddress;
-        lastAmount = amount;
-        lastData = data;
-        lastPaidNativeFee = msg.value;
-        usdc.transferFrom(msg.sender, address(this), amount);
-    }
+        bytes32,
+        string calldata,
+        bytes calldata,
+        uint256,
+        bytes calldata
+    ) external payable {}
 }
 
 contract AxelarRailPluginTest {
@@ -91,9 +104,9 @@ contract AxelarRailPluginTest {
     uint256 private constant GAS_FEE = 0.01 ether;
 
     function setUp() public {
-        usdc = new MockUSDCAxelar();
+        its = new MockAxelarITS();
+        usdc = new MockUSDCAxelar(address(its));
         gasService = new MockAxelarGasService(GAS_FEE);
-        its = new MockAxelarITS(address(usdc));
         plugin = new AxelarRailPlugin(address(usdc), address(gasService), address(its), address(this));
 
         plugin.setRouteConfig(DST_CHAIN, "arbitrum", address(0xBEEF), DST_TOKEN_ID);
@@ -122,12 +135,15 @@ contract AxelarRailPluginTest {
         bytes32 railTxId = plugin.bridge{value: GAS_FEE + 1 wei}(params);
 
         _assertTrue(railTxId != bytes32(0), "rail tx id is zero");
-        _assertEq(its.lastAmount(), amount, "bridged amount mismatch");
-        _assertEq(its.lastTokenId(), DST_TOKEN_ID, "token id mismatch");
-        _assertEq(keccak256(bytes(its.lastDestinationChain())), keccak256(bytes("arbitrum")), "dst chain mismatch");
-        _assertEq(usdc.balanceOf(address(its)), amount, "ITS did not receive funds");
-        _assertEq(its.lastPaidNativeFee(), GAS_FEE, "gas fee mismatch");
-        _assertEq(keccak256(its.lastData()), keccak256(hex"1234"), "payload mismatch");
+        _assertEq(usdc.lastAmount(), amount, "bridged amount mismatch");
+        _assertEq(keccak256(bytes(usdc.lastDestinationChain())), keccak256(bytes("arbitrum")), "dst chain mismatch");
+        _assertEq(usdc.balanceOf(address(usdc)), amount, "token contract did not take funds");
+        _assertEq(usdc.lastPaidNativeFee(), GAS_FEE, "gas fee mismatch");
+        _assertEq(
+            keccak256(usdc.lastMetadata()),
+            keccak256(bytes.concat(bytes4(0), hex"1234")),
+            "payload metadata mismatch"
+        );
     }
 
     function testEstimateFeeRevertsOnUnsupportedRoute() public {

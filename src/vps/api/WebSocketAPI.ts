@@ -119,7 +119,7 @@ export class WebSocketAPI {
   }
 
   private _isTerminal(status: IntentStatus): boolean {
-    return status === IntentStatus.SETTLED || status === IntentStatus.FAILED;
+    return status === IntentStatus.SETTLED || status === IntentStatus.FAILED || status === IntentStatus.CANCELLED;
   }
 
   private _addSub(intentId: string, client: WsClient): void {
