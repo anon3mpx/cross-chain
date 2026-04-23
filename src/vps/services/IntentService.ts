@@ -6,9 +6,9 @@ import {
   QuoteResult,
   Rail,
   RefundCaseStatus,
-  RefundCustodyLocation,
 } from '../types';
 import { IntentEngine } from './IntentEngine';
+import { inferRefundCustodyLocation } from '../rails/registry';
 
 const STUCK_THRESHOLDS_MS: Record<Rail, number> = {
   [Rail.CCTP]: 3 * 60 * 1000,
@@ -200,7 +200,7 @@ export class IntentService {
       status: RefundCaseStatus.REQUESTED,
       reason: reason.trim(),
       requestedBy: userAddress,
-      custodyLocation: this.inferRefundCustodyLocation(intent),
+      custodyLocation: inferRefundCustodyLocation(intent),
     });
   }
 
@@ -236,26 +236,6 @@ export class IntentService {
 
   canRequestRefund(status: IntentStatus): boolean {
     return ![IntentStatus.CREATED, IntentStatus.QUOTED, IntentStatus.CANCELLED, IntentStatus.SETTLED].includes(status);
-  }
-
-  inferRefundCustodyLocation(intent: Intent): RefundCustodyLocation {
-    if (intent.status === IntentStatus.DESTINATION_RECEIVED) {
-      if (intent.quote.rail === Rail.AXELAR) return RefundCustodyLocation.RECEIVER;
-      if (intent.quote.rail === Rail.LAYERZERO) return RefundCustodyLocation.RECEIVER;
-    }
-
-    switch (intent.quote.rail) {
-      case Rail.CCTP:
-        return RefundCustodyLocation.CCTP_PROTOCOL;
-      case Rail.AXELAR:
-        return RefundCustodyLocation.AXELAR_PROTOCOL;
-      case Rail.LAYERZERO:
-        return RefundCustodyLocation.LAYERZERO_PROTOCOL;
-      case Rail.THORCHAIN:
-        return RefundCustodyLocation.THORCHAIN_ROUTER;
-      default:
-        return RefundCustodyLocation.EXTERNAL_PROTOCOL;
-    }
   }
 
   private async transition(

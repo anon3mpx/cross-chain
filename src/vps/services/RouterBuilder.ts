@@ -25,8 +25,9 @@
 import {
   Rail, SettlementToken, Route, RouteType, Hop,
 } from '../types';
-import { RAIL_CONFIGS, CHAIN_RAILS, RailSelector } from './RailSelector';
+import { RailSelector } from './RailSelector';
 import { getChainConfig, hasAggregator, HUB_CHAIN_IDS } from '../config/chains';
+import { getChainRails, getRailConfig } from '../rails/registry';
 
 // ── Route scoring ──────────────────────────────────────────────────────────────
 // Composite score for the full route (all hops combined).
@@ -103,8 +104,8 @@ export class RouteBuilder {
     amountUSD: number,
     urgency: 'fast' | 'normal',
   ): Route[] {
-    const srcRails = new Set(CHAIN_RAILS[srcChainId] ?? []);
-    const dstRails = new Set(CHAIN_RAILS[dstChainId] ?? []);
+    const srcRails = new Set(getChainRails(srcChainId));
+    const dstRails = new Set(getChainRails(dstChainId));
     const shared   = [...srcRails].filter(r => dstRails.has(r));
 
     if (shared.length === 0) return [];
@@ -115,7 +116,7 @@ export class RouteBuilder {
     const routeType = this._classifyRouteType(srcHasAgg, dstHasAgg);
 
     return shared.map(rail => {
-      const config    = RAIL_CONFIGS[rail];
+      const config    = getRailConfig(rail);
       const dstCfg    = dstChain ?? { chainId: dstChainId, nativeStable: SettlementToken.USDC } as any;
       const railScore = this.selector.selectRail(srcChainId, dstChainId, dstCfg, amountUSD, urgency)
                             .find(s => s.rail === rail);
@@ -172,13 +173,13 @@ export class RouteBuilder {
   ): Route[] {
     const routes: Route[] = [];
 
-    const srcRails = new Set(CHAIN_RAILS[srcChainId] ?? []);
-    const dstRails = new Set(CHAIN_RAILS[dstChainId] ?? []);
+    const srcRails = new Set(getChainRails(srcChainId));
+    const dstRails = new Set(getChainRails(dstChainId));
 
     for (const hubId of HUB_CHAIN_IDS) {
       if (hubId === srcChainId || hubId === dstChainId) continue;
 
-      const hubRails  = new Set(CHAIN_RAILS[hubId] ?? []);
+      const hubRails  = new Set(getChainRails(hubId));
       const leg1Rails = [...srcRails].filter(r => hubRails.has(r));
       const leg2Rails = [...hubRails].filter(r => dstRails.has(r));
 
@@ -198,8 +199,8 @@ export class RouteBuilder {
         for (const r2 of leg2Rails) {
           // Prefer not using the same rail twice when alternatives exist.
           if (r1 === r2 && leg1Rails.length > 1 && leg2Rails.length > 1) continue;
-          const c1 = RAIL_CONFIGS[r1];
-          const c2 = RAIL_CONFIGS[r2];
+          const c1 = getRailConfig(r1);
+          const c2 = getRailConfig(r2);
 
           const st1 = leg1Scores.find(s => s.rail === r1)?.settlementToken ?? SettlementToken.USDC;
           const st2 = leg2Scores.find(s => s.rail === r2)?.settlementToken ?? SettlementToken.USDC;

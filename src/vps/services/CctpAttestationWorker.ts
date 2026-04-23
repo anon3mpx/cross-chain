@@ -12,6 +12,7 @@ import { CHAIN_CONFIGS } from '../config/chains';
 import { getSettlementTokenAddress } from '../config/contracts';
 import { Rail, SettlementToken } from '../types';
 import { IntentService } from './IntentService';
+import { getCctpDomain, getRailEnumValue } from '../rails/registry';
 
 const ROUTER_ABI = [
   'event IntentInitiated(bytes32 indexed intentId, address indexed user, address tokenIn, uint256 amountIn, uint32 dstChainId, bytes32 railTxId)',
@@ -45,24 +46,6 @@ const ROUTER_IFACE = new Interface(ROUTER_ABI);
 const ROUTER_LEGACY_IFACE = new Interface(ROUTER_LEGACY_ABI);
 const MESSAGE_TRANSMITTER_IFACE = new Interface(MESSAGE_TRANSMITTER_ABI);
 const TOKEN_MESSENGER_IFACE = new Interface(TOKEN_MESSENGER_ABI);
-
-const CCTP_RAIL_ENUM_VALUE = 0;
-
-// CCTP domain mapping (mainnet + testnet chain IDs where domains are shared).
-const CCTP_DOMAIN_BY_CHAIN_ID: Record<number, number> = {
-  1: 0,         // Ethereum
-  11155111: 0,  // Ethereum Sepolia
-  43114: 1,     // Avalanche
-  43113: 1,     // Avalanche Fuji
-  10: 2,        // Optimism
-  11155420: 2,  // Optimism Sepolia
-  42161: 3,     // Arbitrum
-  421614: 3,    // Arbitrum Sepolia
-  8453: 6,      // Base
-  84532: 6,     // Base Sepolia
-  137: 7,       // Polygon
-  80002: 7,     // Polygon Amoy
-};
 
 interface RelayJob {
   intentId: string;
@@ -339,7 +322,7 @@ export class CctpAttestationWorker {
 
     const intent = decoded[0];
     const railValue = Number(intent.rail);
-    if (railValue !== CCTP_RAIL_ENUM_VALUE) return null;
+    if (railValue !== getRailEnumValue(Rail.CCTP)) return null;
 
     const decodedIntentId = String(intent.intentId).toLowerCase();
     if (decodedIntentId !== intentId) {
@@ -756,7 +739,7 @@ export class CctpAttestationWorker {
       throw new Error(`invalid CCTP domain override for chain ${srcChainId}: ${override}`);
     }
 
-    const known = CCTP_DOMAIN_BY_CHAIN_ID[srcChainId];
+    const known = getCctpDomain(srcChainId);
     if (known !== undefined) return known;
 
     throw new Error(
