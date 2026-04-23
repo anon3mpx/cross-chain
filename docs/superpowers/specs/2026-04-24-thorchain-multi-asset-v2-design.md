@@ -80,6 +80,16 @@ For a quote request:
 
 No route is permanently fixed to one rail.
 
+Offer comparison should be based on provider-aware economics, not just nominal output amount. The normalized offer model should preserve enough detail to compare:
+
+- provider fee
+- protocol fee
+- source-chain gas
+- destination or outbound fee / gas component
+- slippage or price impact, where applicable
+- expected settlement time
+- quote expiry / freshness confidence
+
 Examples:
 
 - If CCTP, Axelar, LayerZero, and THORChain can all serve a transfer, return all four offers.
@@ -103,10 +113,29 @@ Each offer should carry:
 - provider-native asset identifiers
 - quoted amount out
 - minimum executable amount out
-- fees
-- ETA
+- fee breakdown
+- gas cost breakdown
+- slippage / price impact data where applicable
+- settlement time estimate
 - expiry
 - provider-specific execution metadata
+
+The normalized offer model should preserve both:
+
+- user-facing economics for display and rail comparison
+- execution-critical provider parameters required to submit the transfer safely
+
+At minimum, the offer schema should support:
+
+- provider fee
+- protocol fee
+- source gas estimate
+- destination gas or outbound fee estimate where the provider exposes one
+- slippage or price impact, if the rail is liquidity-based
+- quote expiry / freshness window
+- settlement time estimate
+- minimum input amount required by the provider
+- minimum expected output after provider-side fee and slippage effects
 
 The internal model should support both:
 
@@ -159,6 +188,9 @@ The VPS is authoritative for:
 - `/inbound_addresses` lookups or cached discovery
 - router and vault resolution
 - minimum-amount handling using THORChain quote responses
+- provider-side fee decomposition
+- slippage / price impact extraction
+- outbound fee interpretation
 - memo construction inputs
 - quote expiry handling
 - chain halt / unsupported pool detection
@@ -183,7 +215,7 @@ Split the VPS work into focused components:
 - `THORChainQuoteWorker`
   - determines whether a requested pair is currently quotable
   - fetches live quote data
-  - normalizes fees, ETA, min amount, expected out, expiry, router, vault, and memo inputs
+  - normalizes fee breakdown, slippage, outbound fee, ETA, min amount, expected out, expiry, router, vault, and memo inputs
 - `THORChainExecutionWorker`
   - revalidates the selected offer if needed
   - prepares final execution metadata
@@ -200,6 +232,16 @@ THORChain should only be shown when:
 - the pair is currently supported
 - the requested amount satisfies `recommended_min_amount_in`
 - the quote has not expired
+
+THORChain offers should include, when available from the provider quote:
+
+- liquidity fee
+- outbound fee
+- total fee
+- slippage basis points
+- total swap seconds
+- quote expiry
+- recommended minimum input
 
 THORChain should disappear from the offer set when:
 
@@ -222,6 +264,14 @@ The long-term validation model should be:
 - execution includes provider-native token metadata
 - destination-side validation confirms the received token matches the expected asset encoded in the signed payload
 
+Axelar offers should normalize provider economics such as:
+
+- bridge fee or gas-service fee when quoted
+- source gas requirements
+- destination gas funding assumptions if applicable
+- settlement time estimate
+- any provider-specific execution expiry or validity window
+
 An emergency denylist should still exist for bad assets or route-level shutdowns.
 
 ### LayerZero
@@ -233,9 +283,25 @@ The V2 model should support:
 - VPS-managed OFT or adapter metadata per offer
 - destination-side validation that the callback source and settlement token match the expected route metadata
 
+LayerZero offers should normalize provider economics such as:
+
+- messaging fee
+- executor / DVN / endpoint fee components where surfaced
+- source-chain gas estimate
+- destination execution gas assumptions
+- settlement time estimate
+- route-specific validity constraints
+
 ### CCTP
 
 CCTP remains simpler because the asset universe is narrower, but it still needs to fit the same offer marketplace and intent validation model.
+
+CCTP offers should still expose:
+
+- Circle fee where applicable
+- source gas
+- estimated settlement time
+- fast-finality fee and buffer, when using fast mode
 
 ---
 
@@ -247,10 +313,12 @@ CCTP remains simpler because the asset universe is narrower, but it still needs 
 4. Successful offers are normalized into a common offer schema.
 5. API returns all viable offers.
 6. User selects one offer.
-7. VPS validates freshness and provider-specific execution prerequisites.
+7. VPS validates freshness, economic assumptions, and provider-specific execution prerequisites.
 8. Source execution is submitted using the chosen rail.
 9. Provider-specific monitoring updates intent state.
 10. Destination settlement is only accepted if the actual received asset matches the signed expected asset and amount constraints.
+
+The selected offer should be treated as an economic contract with the user. If a refresh materially changes fee, slippage, minimum input, settlement time, or expected output beyond the allowed tolerance, the VPS should invalidate the old offer rather than silently submitting changed economics.
 
 ---
 
@@ -289,6 +357,7 @@ For early mainnet validation, use a small but non-trivial canary amount and a kn
 - quote failure => omit THORChain offer
 - below minimum => omit THORChain offer
 - halted or unsupported state => omit THORChain offer
+- materially changed fee / slippage / output / settlement time on refresh => invalidate and require refresh
 - submitted but unconfirmed => monitor until success, stuck threshold, or failure
 
 ### Multi-asset receiver-side
@@ -308,6 +377,7 @@ Cover:
 
 - asset normalization
 - offer generation
+- provider economics normalization
 - receiver settlement validation
 - provider metadata encoding / decoding
 - stale quote handling
@@ -317,8 +387,10 @@ Cover:
 Cover:
 
 - THORChain quote parsing
+- THORChain fee / slippage parsing
 - THORChain offer omission on unsupported or stale state
 - Axelar / LayerZero dynamic asset metadata flow
+- provider fee and gas normalization across rails
 - execution payload correctness
 
 ### 3. Mainnet canary tests
