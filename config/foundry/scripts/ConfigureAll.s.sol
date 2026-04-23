@@ -75,15 +75,26 @@ contract ConfigureAll is ScriptBase {
     }
 
     function _configureRouter() internal {
-        bool shouldSet = vm.envOr("ROUTER_SET_FEE_RECIPIENT", false);
-        if (!shouldSet) return;
-
         address routerAddr = vm.envAddress("ROUTER_V1");
-        address newFeeRecipient = vm.envAddress("ROUTER_NEW_FEE_RECIPIENT");
-        _nonZero(newFeeRecipient, "ROUTER_NEW_FEE_RECIPIENT is required");
+        if (routerAddr == address(0)) return;
 
-        RouterV1(payable(routerAddr)).setFeeRecipient(newFeeRecipient);
-        emit ScriptLogAddress("RouterV1.feeRecipient", newFeeRecipient);
+        RouterV1 router = RouterV1(payable(routerAddr));
+
+        if (vm.envOr("ROUTER_SET_FEE_RECIPIENT", false)) {
+            address newFeeRecipient = vm.envAddress("ROUTER_NEW_FEE_RECIPIENT");
+            _nonZero(newFeeRecipient, "ROUTER_NEW_FEE_RECIPIENT is required");
+
+            router.setFeeRecipient(newFeeRecipient);
+            emit ScriptLogAddress("RouterV1.feeRecipient", newFeeRecipient);
+        }
+
+        if (vm.envOr("ROUTER_SET_INTENT_SIGNER", false)) {
+            address newIntentSigner = vm.envAddress("ROUTER_NEW_INTENT_SIGNER");
+            _nonZero(newIntentSigner, "ROUTER_NEW_INTENT_SIGNER is required");
+
+            router.setIntentSigner(newIntentSigner);
+            emit ScriptLogAddress("RouterV1.intentSigner", newIntentSigner);
+        }
     }
 
     function _configurePaymaster() internal {

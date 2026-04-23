@@ -1,10 +1,10 @@
-import { Contract, Interface, JsonRpcProvider, ZeroAddress, getAddress, isAddress, toUtf8Bytes } from 'ethers';
+import { Contract, Interface, JsonRpcProvider, Wallet, ZeroAddress, getAddress, isAddress, toUtf8Bytes } from 'ethers';
 import { getChainConfig } from '../config/chains';
 import { QuoteResult, Rail, SettlementToken } from '../types';
 import { getRailEnumValue } from '../rails/registry';
 
 const ROUTER_V1_IFACE = new Interface([
-  'function initiateSwap((address user,address tokenIn,address tokenOut,uint256 amountIn,uint256 minAmountOut,uint256 minSrcSwapOut,uint32 dstChainId,uint8 rail,uint8 settlementToken,uint256 feeAmount,bytes swapDataSrc,bytes swapDataDst,bytes32 swapPluginIdSrc,bytes32 dstSwapPluginId,bytes32 railPluginId,bytes railData,address dstReceiver,bytes nativeDstAddress,string thorAssetIdentifier,uint256 minThorOutput,bytes32 intentId,uint256 deadline) intent)',
+  'function initiateSwap((address user,address tokenIn,address tokenOut,uint256 amountIn,uint256 minAmountOut,uint256 minSrcSwapOut,uint32 dstChainId,uint8 rail,uint8 settlementToken,uint256 feeAmount,bytes swapDataSrc,bytes swapDataDst,bytes32 swapPluginIdSrc,bytes32 dstSwapPluginId,bytes32 railPluginId,bytes railData,address dstReceiver,bytes nativeDstAddress,string thorAssetIdentifier,uint256 minThorOutput,bytes32 intentId,uint256 deadline) intent,bytes signature)',
 ]);
 
 const ROUTER_V1_LEGACY_IFACE = new Interface([
@@ -29,6 +29,36 @@ const SETTLEMENT_ENUM_VALUE: Partial<Record<SettlementToken, number>> = {
   [SettlementToken.ETH]: 2,
 };
 
+const ROUTER_SIGNING_TYPES = {
+  SwapIntent: [
+    { name: 'user', type: 'address' },
+    { name: 'tokenIn', type: 'address' },
+    { name: 'tokenOut', type: 'address' },
+    { name: 'amountIn', type: 'uint256' },
+    { name: 'minAmountOut', type: 'uint256' },
+    { name: 'minSrcSwapOut', type: 'uint256' },
+    { name: 'dstChainId', type: 'uint32' },
+    { name: 'rail', type: 'uint8' },
+    { name: 'settlementToken', type: 'uint8' },
+    { name: 'feeAmount', type: 'uint256' },
+    { name: 'execution', type: 'IntentExecution' },
+  ],
+  IntentExecution: [
+    { name: 'swapDataSrc', type: 'bytes' },
+    { name: 'swapDataDst', type: 'bytes' },
+    { name: 'swapPluginIdSrc', type: 'bytes32' },
+    { name: 'dstSwapPluginId', type: 'bytes32' },
+    { name: 'railPluginId', type: 'bytes32' },
+    { name: 'railData', type: 'bytes' },
+    { name: 'dstReceiver', type: 'address' },
+    { name: 'nativeDstAddress', type: 'bytes' },
+    { name: 'thorAssetIdentifier', type: 'string' },
+    { name: 'minThorOutput', type: 'uint256' },
+    { name: 'intentId', type: 'bytes32' },
+    { name: 'deadline', type: 'uint256' },
+  ],
+} as const;
+
 export interface RouterIntegration {
   contractAddress: string;
   calldata: string;
@@ -52,17 +82,17 @@ export async function buildRouterIntegration(
 
   return {
     contractAddress,
-    calldata: buildRouterCalldata(intentId, quote, userAddress),
+    calldata: await buildRouterCalldata(intentId, quote, userAddress),
     value: await estimateNativeGas(quote),
     expiresAt: quote.expiresAt,
   };
 }
 
-export function buildRouterCalldata(
+export async function buildRouterCalldata(
   intentId: string,
   quote: QuoteResult,
   userAddress: string,
-): string {
+): Promise<string> {
   const srcCfg = getChainConfig(quote.srcChainId);
   if (!srcCfg) throw new Error(`calldata: unknown source chain ${quote.srcChainId}`);
 
@@ -107,43 +137,14 @@ export function buildRouterCalldata(
   };
 
   if (srcCfg.routerV1Abi === 'legacy') {
-    if (payload.railData !== '0x') {
-      throw new Error(
-        `calldata: legacy RouterV1 on chain ${quote.srcChainId} cannot encode railData; ` +
-        'deploy the current RouterV1 ABI or set CHAIN_<chainId>_ROUTER_V1_ABI=current',
-      );
-    }
-
-    const legacyPayload = {
-      user: payload.user,
-      tokenIn: payload.tokenIn,
-      tokenOut: payload.tokenOut,
-      amountIn: payload.amountIn,
-      minAmountOut: payload.minAmountOut,
-      minSrcSwapOut: payload.minSrcSwapOut,
-      dstChainId: payload.dstChainId,
-      rail: payload.rail,
-      settlementToken: payload.settlementToken,
-      feeAmount: payload.feeAmount,
-      swapDataSrc: payload.swapDataSrc,
-      swapDataDst: payload.swapDataDst,
-      dstSwapPluginId: payload.dstSwapPluginId,
-      dstReceiver: payload.dstReceiver,
-      nativeDstAddress: payload.nativeDstAddress,
-      thorAssetIdentifier: payload.thorAssetIdentifier,
-      minThorOutput: payload.minThorOutput,
-      intentId: payload.intentId,
-      deadline: payload.deadline,
-    };
-
-    return ROUTER_V1_LEGACY_IFACE.encodeFunctionData('initiateSwap', [
-      legacyPayload,
-      payload.swapPluginIdSrc,
-      payload.railPluginId,
-    ]);
+    throw new Error(
+      `calldata: legacy RouterV1 on chain ${quote.srcChainId} cannot verify signed intents; ` +
+      'deploy the current RouterV1 ABI or set CHAIN_<chainId>_ROUTER_V1_ABI=current',
+    );
   }
 
-  return ROUTER_V1_IFACE.encodeFunctionData('initiateSwap', [payload]);
+  const signature = await signRouterIntent(payload, quote.srcChainId, getRouterAddress(quote.srcChainId));
+  return ROUTER_V1_IFACE.encodeFunctionData('initiateSwap', [payload, signature]);
 }
 
 async function estimateNativeGas(quote: QuoteResult): Promise<string> {
@@ -223,6 +224,62 @@ function normalizeBytes(value: unknown, field: string): string {
     throw new Error(`calldata: invalid ${field}`);
   }
   return value.toLowerCase();
+}
+
+async function signRouterIntent(
+  payload: Record<string, unknown>,
+  chainId: number,
+  verifyingContract: string,
+): Promise<string> {
+  const signerKey = process.env.VPS_INTENT_SIGNER_PRIVATE_KEY
+    ?? process.env.INTENT_SIGNER_PRIVATE_KEY
+    ?? process.env.DEPLOYER_PRIVATE_KEY;
+  if (!signerKey) {
+    throw new Error(
+      'calldata: missing VPS_INTENT_SIGNER_PRIVATE_KEY (or INTENT_SIGNER_PRIVATE_KEY / DEPLOYER_PRIVATE_KEY)',
+    );
+  }
+
+  const wallet = new Wallet(signerKey);
+  return wallet.signTypedData(
+    {
+      name: 'EMPX-Cross-Chain Router',
+      version: '1',
+      chainId,
+      verifyingContract,
+    },
+    ROUTER_SIGNING_TYPES,
+    toTypedDataValue(payload),
+  );
+}
+
+function toTypedDataValue(payload: Record<string, unknown>) {
+  return {
+    user: payload.user,
+    tokenIn: payload.tokenIn,
+    tokenOut: payload.tokenOut,
+    amountIn: payload.amountIn,
+    minAmountOut: payload.minAmountOut,
+    minSrcSwapOut: payload.minSrcSwapOut,
+    dstChainId: payload.dstChainId,
+    rail: payload.rail,
+    settlementToken: payload.settlementToken,
+    feeAmount: payload.feeAmount,
+    execution: {
+      swapDataSrc: payload.swapDataSrc,
+      swapDataDst: payload.swapDataDst,
+      swapPluginIdSrc: payload.swapPluginIdSrc,
+      dstSwapPluginId: payload.dstSwapPluginId,
+      railPluginId: payload.railPluginId,
+      railData: payload.railData,
+      dstReceiver: payload.dstReceiver,
+      nativeDstAddress: payload.nativeDstAddress,
+      thorAssetIdentifier: payload.thorAssetIdentifier,
+      minThorOutput: payload.minThorOutput,
+      intentId: payload.intentId,
+      deadline: payload.deadline,
+    },
+  };
 }
 
 function toBigIntStrict(value: unknown, field: string): bigint {

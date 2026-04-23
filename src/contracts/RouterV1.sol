@@ -2,6 +2,8 @@
 pragma solidity ^0.8.24;
 
 import "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
+import "@openzeppelin/contracts/utils/cryptography/ECDSA.sol";
+import "@openzeppelin/contracts/utils/cryptography/EIP712.sol";
 import "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
 import "@openzeppelin/contracts/utils/Pausable.sol";
 import "@openzeppelin/contracts/access/Ownable2Step.sol";
@@ -15,11 +17,21 @@ import "./PluginRegistry.sol";
 ///         then hands off to the selected rail plugin.
 /// @dev Security: all user-supplied values validated; fee capped at 1%;
 ///      source-chain swap enforces minSrcSwapOut to prevent sandwich attacks.
-contract RouterV1 is ReentrancyGuard, Pausable, Ownable2Step {
+contract RouterV1 is EIP712, ReentrancyGuard, Pausable, Ownable2Step {
     using SafeERC20 for IERC20;
+
+    string private constant SIGNING_DOMAIN = "EMPX-Cross-Chain Router";
+    string private constant SIGNATURE_VERSION = "1";
+    bytes32 private constant INTENT_EXECUTION_TYPEHASH = keccak256(
+        "IntentExecution(bytes swapDataSrc,bytes swapDataDst,bytes32 swapPluginIdSrc,bytes32 dstSwapPluginId,bytes32 railPluginId,bytes railData,address dstReceiver,bytes nativeDstAddress,string thorAssetIdentifier,uint256 minThorOutput,bytes32 intentId,uint256 deadline)"
+    );
+    bytes32 private constant SWAP_INTENT_TYPEHASH = keccak256(
+        "SwapIntent(address user,address tokenIn,address tokenOut,uint256 amountIn,uint256 minAmountOut,uint256 minSrcSwapOut,uint32 dstChainId,uint8 rail,uint8 settlementToken,uint256 feeAmount,IntentExecution execution)IntentExecution(bytes swapDataSrc,bytes swapDataDst,bytes32 swapPluginIdSrc,bytes32 dstSwapPluginId,bytes32 railPluginId,bytes railData,address dstReceiver,bytes nativeDstAddress,string thorAssetIdentifier,uint256 minThorOutput,bytes32 intentId,uint256 deadline)"
+    );
 
     PluginRegistry public immutable registry;
     address public feeRecipient;
+    address public intentSigner;
 
     /// @dev Hard cap: fee can never exceed 1% of amountIn regardless of VPS config
     uint256 public constant MAX_FEE_BPS     = 100;
@@ -40,32 +52,39 @@ contract RouterV1 is ReentrancyGuard, Pausable, Ownable2Step {
         bytes32 railTxId
     );
     event FeeCollected(bytes32 indexed intentId, address token, uint256 amount);
+    event IntentSignerUpdated(address newSigner);
 
     error IntentExpired(bytes32 intentId);
     error IntentDeadlineTooFar(bytes32 intentId);
     error IntentAlreadyExecuted(bytes32 intentId);
+    error InvalidIntentSignature();
     error FeeTooHigh(uint256 feeAmount, uint256 maxAllowed);
     error ZeroAmount();
     error AmountBelowMinimum(uint256 amount, uint256 minimum);
     error ZeroAddress(string field);
     error SrcSwapSlippage(uint256 got, uint256 min);
 
-    constructor(address _registry, address _feeRecipient, address _weth, address _owner)
+    constructor(address _registry, address _feeRecipient, address _weth, address _intentSigner, address _owner)
         Ownable(_owner)
+        EIP712(SIGNING_DOMAIN, SIGNATURE_VERSION)
     {
         if (_registry    == address(0)) revert ZeroAddress("registry");
         if (_feeRecipient == address(0)) revert ZeroAddress("feeRecipient");
         if (_weth        == address(0)) revert ZeroAddress("weth");
+        if (_intentSigner == address(0)) revert ZeroAddress("intentSigner");
         registry     = PluginRegistry(_registry);
         feeRecipient = _feeRecipient;
         WETH         = _weth;
+        intentSigner = _intentSigner;
     }
 
     /// @notice Primary entry point — user calls this to initiate a cross-chain swap
     /// @param intent        Full intent struct, pre-built by VPS / SDK
-    /// @dev Source swap plugin and rail plugin are part of the signed intent.
+    /// @param signature     EIP-712 signature from the trusted VPS signer
+    /// @dev Source swap plugin and rail plugin are authenticated inside the signed intent.
     function initiateSwap(
-        IntentTypes.SwapIntent calldata intent
+        IntentTypes.SwapIntent calldata intent,
+        bytes calldata signature
     ) external payable nonReentrant whenNotPaused {
         // ── Structural validation ──────────────────────────────────────────────
         if (intent.amountIn == 0) revert ZeroAmount();
@@ -74,6 +93,7 @@ contract RouterV1 is ReentrancyGuard, Pausable, Ownable2Step {
         if (intent.user     == address(0)) revert ZeroAddress("user");
         if (intent.deadline < block.timestamp) revert IntentExpired(intent.intentId);
         if (intent.deadline > block.timestamp + MAX_DEADLINE_DELTA) revert IntentDeadlineTooFar(intent.intentId);
+        _verifyIntentSignature(intent, signature);
 
         // ── Fee cap — VPS cannot charge more than MAX_FEE_BPS ─────────────────
         uint256 maxFee = (intent.amountIn * MAX_FEE_BPS) / 10_000;
@@ -166,14 +186,74 @@ contract RouterV1 is ReentrancyGuard, Pausable, Ownable2Step {
         return amount - feeAmount;
     }
 
+    function hashIntent(IntentTypes.SwapIntent calldata intent) external view returns (bytes32) {
+        return _hashTypedDataV4(_hashIntentStruct(intent));
+    }
+
     function setFeeRecipient(address _feeRecipient) external onlyOwner {
         if (_feeRecipient == address(0)) revert ZeroAddress("feeRecipient");
         feeRecipient = _feeRecipient;
+    }
+    function setIntentSigner(address _intentSigner) external onlyOwner {
+        if (_intentSigner == address(0)) revert ZeroAddress("intentSigner");
+        intentSigner = _intentSigner;
+        emit IntentSignerUpdated(_intentSigner);
     }
     function pause()   external onlyOwner { _pause(); }
     function unpause() external onlyOwner { _unpause(); }
     function rescueTokens(address token, uint256 amount) external onlyOwner {
         IERC20(token).safeTransfer(owner(), amount);
+    }
+
+    function _verifyIntentSignature(
+        IntentTypes.SwapIntent calldata intent,
+        bytes calldata signature
+    ) internal view {
+        bytes32 digest = _hashTypedDataV4(_hashIntentStruct(intent));
+        (address recovered, ECDSA.RecoverError err,) = ECDSA.tryRecover(digest, signature);
+        if (err != ECDSA.RecoverError.NoError || recovered != intentSigner) {
+            revert InvalidIntentSignature();
+        }
+    }
+
+    function _hashIntentStruct(IntentTypes.SwapIntent calldata intent) internal pure returns (bytes32) {
+        IntentTypes.SwapIntent memory materialized = intent;
+        return keccak256(
+            abi.encode(
+                SWAP_INTENT_TYPEHASH,
+                materialized.user,
+                materialized.tokenIn,
+                materialized.tokenOut,
+                materialized.amountIn,
+                materialized.minAmountOut,
+                materialized.minSrcSwapOut,
+                materialized.dstChainId,
+                materialized.rail,
+                materialized.settlementToken,
+                materialized.feeAmount,
+                _hashExecution(materialized)
+            )
+        );
+    }
+
+    function _hashExecution(IntentTypes.SwapIntent memory intent) internal pure returns (bytes32) {
+        return keccak256(
+            abi.encode(
+                INTENT_EXECUTION_TYPEHASH,
+                keccak256(intent.swapDataSrc),
+                keccak256(intent.swapDataDst),
+                intent.swapPluginIdSrc,
+                intent.dstSwapPluginId,
+                intent.railPluginId,
+                keccak256(intent.railData),
+                intent.dstReceiver,
+                keccak256(intent.nativeDstAddress),
+                keccak256(bytes(intent.thorAssetIdentifier)),
+                intent.minThorOutput,
+                intent.intentId,
+                intent.deadline
+            )
+        );
     }
 
     receive() external payable {}

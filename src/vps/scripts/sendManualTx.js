@@ -25,7 +25,7 @@ const GAS_LIMIT = '1200000';
 const DRY_RUN = false;
 
 const ROUTER_IFACE = new Interface([
-  'function initiateSwap((address user,address tokenIn,address tokenOut,uint256 amountIn,uint256 minAmountOut,uint256 minSrcSwapOut,uint32 dstChainId,uint8 rail,uint8 settlementToken,uint256 feeAmount,bytes swapDataSrc,bytes swapDataDst,bytes32 swapPluginIdSrc,bytes32 dstSwapPluginId,bytes32 railPluginId,bytes railData,address dstReceiver,bytes nativeDstAddress,string thorAssetIdentifier,uint256 minThorOutput,bytes32 intentId,uint256 deadline) intent)',
+  'function initiateSwap((address user,address tokenIn,address tokenOut,uint256 amountIn,uint256 minAmountOut,uint256 minSrcSwapOut,uint32 dstChainId,uint8 rail,uint8 settlementToken,uint256 feeAmount,bytes swapDataSrc,bytes swapDataDst,bytes32 swapPluginIdSrc,bytes32 dstSwapPluginId,bytes32 railPluginId,bytes railData,address dstReceiver,bytes nativeDstAddress,string thorAssetIdentifier,uint256 minThorOutput,bytes32 intentId,uint256 deadline) intent,bytes signature)',
 ]);
 
 const ROUTER_LEGACY_IFACE = new Interface([
@@ -36,6 +36,7 @@ const ROUTER_ERRORS_IFACE = new Interface([
   'error IntentExpired(bytes32 intentId)',
   'error IntentDeadlineTooFar(bytes32 intentId)',
   'error IntentAlreadyExecuted(bytes32 intentId)',
+  'error InvalidIntentSignature()',
   'error FeeTooHigh(uint256 feeAmount, uint256 maxAllowed)',
   'error ZeroAmount()',
   'error AmountBelowMinimum(uint256 amount, uint256 minimum)',
@@ -146,6 +147,8 @@ function describeRouterCustomError(revertData) {
         return `RouterV1.IntentDeadlineTooFar: intentId=${decoded.args.intentId}.`;
       case 'IntentAlreadyExecuted':
         return `RouterV1.IntentAlreadyExecuted: intentId=${decoded.args.intentId}.`;
+      case 'InvalidIntentSignature':
+        return 'RouterV1.InvalidIntentSignature: the calldata does not match the Router intent signer. Regenerate the quote/integration.';
       case 'FeeTooHigh':
         return `RouterV1.FeeTooHigh: feeAmount=${decoded.args.feeAmount.toString()}, maxAllowed=${decoded.args.maxAllowed.toString()}.`;
       case 'AmountBelowMinimum':

@@ -26,6 +26,7 @@ import {UniswapV3SwapPlugin} from "src/contracts/plugins/UniswapV3SwapPlugin.sol
 ///      - OWNER
 ///      - FEE_RECIPIENT
 ///      - WETH
+///      - ROUTER_INTENT_SIGNER
 ///
 /// Optional env vars (deploys related components when present):
 ///      - USDC, USDT
@@ -44,17 +45,19 @@ contract DeployAll is ScriptBase {
         address owner = vm.envAddress("OWNER");
         address feeRecipient = vm.envAddress("FEE_RECIPIENT");
         address weth = vm.envAddress("WETH");
+        address routerIntentSigner = vm.envAddress("ROUTER_INTENT_SIGNER");
 
         _nonZero(owner, "OWNER is required");
         _nonZero(feeRecipient, "FEE_RECIPIENT is required");
         _nonZero(weth, "WETH is required");
+        _nonZero(routerIntentSigner, "ROUTER_INTENT_SIGNER is required");
 
         vm.startBroadcast(deployerPk);
 
         PluginRegistry registry = new PluginRegistry(owner);
         emit ScriptLogAddress("PluginRegistry", address(registry));
 
-        RouterV1 router = new RouterV1(address(registry), feeRecipient, weth, owner);
+        RouterV1 router = new RouterV1(address(registry), feeRecipient, weth, routerIntentSigner, owner);
         emit ScriptLogAddress("RouterV1", address(router));
 
         ReceiverV1 receiver = new ReceiverV1(address(registry), owner);
