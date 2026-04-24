@@ -14,10 +14,18 @@ contract AxelarRailPlugin is IRailPlugin, ERC165, Ownable2Step {
 
     bytes32 public constant override railId = keccak256("AXELAR_V1");
     uint256 public constant DEFAULT_GAS_FOR_DST = 200_000;
+    bytes32 internal constant LEGACY_ROUTE_ASSET_ID = bytes32(0);
 
     address public immutable usdc;
     IAxelarGasService public immutable gasService;
     IAxelarITS public immutable interchainTokenService;
+
+    struct AxelarRouteConfig {
+        string chainName;
+        address receiver;
+        bytes32 destinationTokenId;
+        address sourceSettlementToken;
+    }
 
     // EVM chainId => Axelar chain name (example: "ethereum", "avalanche")
     mapping(uint32 => string) public chainIdToAxelarName;
@@ -25,6 +33,10 @@ contract AxelarRailPlugin is IRailPlugin, ERC165, Ownable2Step {
     mapping(uint32 => address) public destinationReceivers;
     // EVM chainId => destination ITS token identifier for settlement token
     mapping(uint32 => bytes32) public destinationTokenIds;
+    // EVM chainId + source settlement asset identifier => route config
+    mapping(uint32 => mapping(bytes32 => AxelarRouteConfig)) public routeConfigs;
+    // Settlement token enum => source token address on this chain
+    mapping(uint8 => address) public settlementTokens;
 
     event AxelarBridgeInitiated(
         bytes32 indexed intentId,
@@ -53,6 +65,7 @@ contract AxelarRailPlugin is IRailPlugin, ERC165, Ownable2Step {
         usdc = _usdc;
         gasService = IAxelarGasService(_gasService);
         interchainTokenService = IAxelarITS(_interchainTokenService);
+        settlementTokens[uint8(IntentTypes.SettlementToken.USDC)] = _usdc;
     }
 
     function supportsRoute(uint32 /*srcChainId*/, uint32 dstChainId)
@@ -70,19 +83,20 @@ contract AxelarRailPlugin is IRailPlugin, ERC165, Ownable2Step {
         override
         returns (address)
     {
-        if (settlementToken != uint8(IntentTypes.SettlementToken.USDC)) {
+        address token = settlementTokens[settlementToken];
+        if (token == address(0)) {
             revert UnsupportedSettlementToken(settlementToken);
         }
-        return usdc;
+        return token;
     }
 
     function supportsSettlementToken(uint8 settlementToken)
         external
-        pure
+        view
         override
         returns (bool)
     {
-        return settlementToken == uint8(IntentTypes.SettlementToken.USDC);
+        return settlementTokens[settlementToken] != address(0);
     }
 
     function estimateFee(uint32 dstChainId, uint256 /*amount*/, uint8 settlementToken)
@@ -91,7 +105,7 @@ contract AxelarRailPlugin is IRailPlugin, ERC165, Ownable2Step {
         override
         returns (uint256 fee, uint256 eta)
     {
-        if (settlementToken != uint8(IntentTypes.SettlementToken.USDC)) {
+        if (settlementTokens[settlementToken] == address(0)) {
             revert UnsupportedSettlementToken(settlementToken);
         }
 
@@ -102,8 +116,17 @@ contract AxelarRailPlugin is IRailPlugin, ERC165, Ownable2Step {
         }
         if (dstReceiver == address(0)) revert ReceiverNotConfigured(dstChainId);
 
-        bytes memory payload =
-            abi.encode(bytes32(0), address(0), address(0), uint256(0), bytes(""), bytes32(0));
+        bytes memory payload = abi.encode(
+            bytes32(0),
+            address(0),
+            address(0),
+            uint256(0),
+            settlementTokens[settlementToken],
+            bytes32(0),
+            uint256(0),
+            bytes(""),
+            bytes32(0)
+        );
 
         fee = gasService.estimateGasFee(
             dstChainName,
@@ -121,24 +144,29 @@ contract AxelarRailPlugin is IRailPlugin, ERC165, Ownable2Step {
         override
         returns (bytes32 railTxId)
     {
-        string memory dstChainName = chainIdToAxelarName[params.dstChainId];
-        address dstReceiver = destinationReceivers[params.dstChainId];
-        bytes32 dstTokenId = destinationTokenIds[params.dstChainId];
+        AxelarRouteConfig memory route = _resolveRouteConfig(params.dstChainId, params.settlementAssetId);
+        string memory dstChainName = route.chainName;
+        address dstReceiver = route.receiver;
+        bytes32 dstTokenId = route.destinationTokenId;
+        address srcSettlementToken = route.sourceSettlementToken;
 
         if (bytes(dstChainName).length == 0) revert UnsupportedRoute(params.dstChainId);
         if (dstReceiver == address(0)) revert ReceiverNotConfigured(params.dstChainId);
         if (dstTokenId == bytes32(0)) revert DestinationTokenNotConfigured(params.dstChainId);
-        if (params.settlementTokenAddr != usdc) {
-            revert SettlementTokenMismatch(params.settlementTokenAddr, usdc);
+        if (srcSettlementToken == address(0)) {
+            revert UnsupportedRoute(params.dstChainId);
+        }
+        if (params.settlementTokenAddr != srcSettlementToken) {
+            revert SettlementTokenMismatch(params.settlementTokenAddr, srcSettlementToken);
         }
         if (params.dstCalldata.length == 0) revert EmptyDestinationCalldata();
 
         // Pull settlement tokens from RouterV1 into the plugin. For Axelar lock/unlock
         // style tokens, the interchain token contract itself prepares the token
         // manager correctly; calling the ITS service entrypoint directly can fail.
-        IERC20(usdc).safeTransferFrom(msg.sender, address(this), params.amount);
+        IERC20(srcSettlementToken).safeTransferFrom(msg.sender, address(this), params.amount);
 
-        address tokenService = IAxelarInterchainToken(usdc).interchainTokenService();
+        address tokenService = IAxelarInterchainToken(srcSettlementToken).interchainTokenService();
         if (tokenService != address(interchainTokenService)) {
             revert InterchainTokenServiceMismatch(tokenService, address(interchainTokenService));
         }
@@ -153,7 +181,7 @@ contract AxelarRailPlugin is IRailPlugin, ERC165, Ownable2Step {
         );
         if (msg.value < gasFee) revert InsufficientGasPayment(msg.value, gasFee);
 
-        IAxelarInterchainToken(usdc).interchainTransfer{value: gasFee}(
+        IAxelarInterchainToken(srcSettlementToken).interchainTransfer{value: gasFee}(
             dstChainName,
             _addressToBytes(dstReceiver),
             params.amount,
@@ -192,9 +220,66 @@ contract AxelarRailPlugin is IRailPlugin, ERC165, Ownable2Step {
         address receiver,
         bytes32 destinationTokenId
     ) external onlyOwner {
-        chainIdToAxelarName[chainId] = axelarChainName;
-        destinationReceivers[chainId] = receiver;
-        destinationTokenIds[chainId] = destinationTokenId;
+        _storeRouteConfig(
+            chainId,
+            LEGACY_ROUTE_ASSET_ID,
+            axelarChainName,
+            receiver,
+            destinationTokenId,
+            usdc
+        );
+    }
+
+    function setRouteConfig(
+        uint32 chainId,
+        bytes32 settlementAssetId,
+        string calldata axelarChainName,
+        address receiver,
+        bytes32 destinationTokenId,
+        address sourceSettlementToken
+    ) external onlyOwner {
+        _storeRouteConfig(
+            chainId,
+            settlementAssetId,
+            axelarChainName,
+            receiver,
+            destinationTokenId,
+            sourceSettlementToken
+        );
+    }
+
+    function setSettlementTokenAddress(uint8 settlementToken, address token) external onlyOwner {
+        settlementTokens[settlementToken] = token;
+    }
+
+    function _storeRouteConfig(
+        uint32 chainId,
+        bytes32 settlementAssetId,
+        string calldata axelarChainName,
+        address receiver,
+        bytes32 destinationTokenId,
+        address sourceSettlementToken
+    ) internal {
+        routeConfigs[chainId][settlementAssetId] = AxelarRouteConfig({
+            chainName: axelarChainName,
+            receiver: receiver,
+            destinationTokenId: destinationTokenId,
+            sourceSettlementToken: sourceSettlementToken
+        });
+
+        if (settlementAssetId == LEGACY_ROUTE_ASSET_ID) {
+            chainIdToAxelarName[chainId] = axelarChainName;
+            destinationReceivers[chainId] = receiver;
+            destinationTokenIds[chainId] = destinationTokenId;
+        }
+    }
+
+    function _resolveRouteConfig(uint32 chainId, bytes32 settlementAssetId)
+        internal
+        view
+        returns (AxelarRouteConfig memory route)
+    {
+        return routeConfigs[chainId][settlementAssetId];
     }
 
     function supportsInterface(bytes4 interfaceId)

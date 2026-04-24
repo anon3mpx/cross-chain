@@ -16,6 +16,20 @@ export interface CctpRailMetadata {
   feeBufferBpsDefault: number;
 }
 
+export interface DynamicAssetSupportMetadata {
+  routeAssetKey: 'settlementAssetId';
+  destinationTokenIdEnvPrefixes: string[];
+  expectedDestinationAssetId: 'keccak256(abi.encode(chainId,tokenAddress))';
+}
+
+export interface LayerZeroRouteSupportMetadata {
+  routeAssetKey: 'settlementAssetId';
+  oftAddressEnvPrefixes: string[];
+  dstEidEnvPrefixes: string[];
+  extraOptionsEnvPrefixes: string[];
+  expectedDestinationAssetId: 'keccak256(abi.encode(chainId,tokenAddress))';
+}
+
 export interface RailProviderDefinition {
   rail: Rail;
   enumValue: number;
@@ -25,6 +39,8 @@ export interface RailProviderDefinition {
   refundCustodyLocation: RefundCustodyLocation;
   receiverCustodyLocation?: RefundCustodyLocation;
   cctp?: CctpRailMetadata;
+  dynamicAssetSupport?: DynamicAssetSupportMetadata;
+  layerZeroRouteSupport?: LayerZeroRouteSupportMetadata;
 }
 
 export const ZERO_PLUGIN_ID = '0x' + '0'.repeat(64);
@@ -66,6 +82,36 @@ const CCTP_METADATA: CctpRailMetadata = {
     137: 7,
     80002: 7,
   },
+};
+
+const AXELAR_DYNAMIC_ASSET_SUPPORT: DynamicAssetSupportMetadata = {
+  routeAssetKey: 'settlementAssetId',
+  destinationTokenIdEnvPrefixes: [
+    'AXELAR_TOKEN_ID',
+    'AXELAR_ASSET_ID',
+    'TOKEN_ID_AXELAR',
+  ],
+  expectedDestinationAssetId: 'keccak256(abi.encode(chainId,tokenAddress))',
+};
+
+const LAYERZERO_ROUTE_SUPPORT: LayerZeroRouteSupportMetadata = {
+  routeAssetKey: 'settlementAssetId',
+  oftAddressEnvPrefixes: [
+    'LAYERZERO_OFT',
+    'LZ_OFT',
+    'OFT_LAYERZERO',
+  ],
+  dstEidEnvPrefixes: [
+    'LAYERZERO_DST_EID',
+    'LZ_DST_EID',
+    'DST_EID_LAYERZERO',
+  ],
+  extraOptionsEnvPrefixes: [
+    'LAYERZERO_EXTRA_OPTIONS',
+    'LZ_EXTRA_OPTIONS',
+    'EXTRA_OPTIONS_LAYERZERO',
+  ],
+  expectedDestinationAssetId: 'keccak256(abi.encode(chainId,tokenAddress))',
 };
 
 export const RAIL_PROVIDERS: Record<Rail, RailProviderDefinition> = {
@@ -114,6 +160,7 @@ export const RAIL_PROVIDERS: Record<Rail, RailProviderDefinition> = {
     fallbackRails: [Rail.LAYERZERO, Rail.VIA_LABS, Rail.CCTP],
     refundCustodyLocation: RefundCustodyLocation.AXELAR_PROTOCOL,
     receiverCustodyLocation: RefundCustodyLocation.RECEIVER,
+    dynamicAssetSupport: AXELAR_DYNAMIC_ASSET_SUPPORT,
   },
   [Rail.LAYERZERO]: {
     rail: Rail.LAYERZERO,
@@ -137,6 +184,7 @@ export const RAIL_PROVIDERS: Record<Rail, RailProviderDefinition> = {
     fallbackRails: [Rail.AXELAR, Rail.VIA_LABS, Rail.CCTP],
     refundCustodyLocation: RefundCustodyLocation.LAYERZERO_PROTOCOL,
     receiverCustodyLocation: RefundCustodyLocation.RECEIVER,
+    layerZeroRouteSupport: LAYERZERO_ROUTE_SUPPORT,
   },
   [Rail.VIA_LABS]: {
     rail: Rail.VIA_LABS,
@@ -280,6 +328,95 @@ export function getCctpMetadata(): CctpRailMetadata {
   const cctp = getRailProvider(Rail.CCTP).cctp;
   if (!cctp) throw new Error('CCTP metadata not configured');
   return cctp;
+}
+
+export function getAxelarDynamicAssetSupport(): DynamicAssetSupportMetadata {
+  const dynamicAssetSupport = getRailProvider(Rail.AXELAR).dynamicAssetSupport;
+  if (!dynamicAssetSupport) throw new Error('Axelar dynamic asset support not configured');
+  return dynamicAssetSupport;
+}
+
+export function getLayerZeroRouteSupport(): LayerZeroRouteSupportMetadata {
+  const routeSupport = getRailProvider(Rail.LAYERZERO).layerZeroRouteSupport;
+  if (!routeSupport) throw new Error('LayerZero route support not configured');
+  return routeSupport;
+}
+
+function getCanonicalAssetAliases(canonicalAssetId: string): string[] {
+  const trimmed = canonicalAssetId.trim();
+  if (trimmed.length === 0) return [];
+
+  const rawSegment = trimmed.split(/[:/]/).filter(Boolean).pop() ?? trimmed;
+  const normalized = rawSegment.replace(/[^a-zA-Z0-9]+/g, '_').toUpperCase();
+  const aliases: string[] = [];
+
+  const push = (value: string) => {
+    if (value.length !== 0 && !aliases.includes(value)) aliases.push(value);
+  };
+
+  push(normalized);
+  if (normalized.startsWith('AXELAR_')) push(normalized.slice('AXELAR_'.length));
+  if (normalized.startsWith('AXL')) push(normalized.slice(3));
+  if (normalized.startsWith('W')) push(normalized.slice(1));
+
+  return aliases;
+}
+
+export function getAxelarAssetAliases(canonicalAssetId: string): string[] {
+  return getCanonicalAssetAliases(canonicalAssetId);
+}
+
+export function getAxelarDestinationTokenIdEnvKeys(
+  chainId: number,
+  canonicalAssetId: string,
+): string[] {
+  const assetAliases = getAxelarAssetAliases(canonicalAssetId);
+  return assetAliases.flatMap((alias) =>
+    getAxelarDynamicAssetSupport().destinationTokenIdEnvPrefixes.map(
+      (prefix) => `CHAIN_${chainId}_${prefix}_${alias}`,
+    ),
+  );
+}
+
+export function getLayerZeroAssetAliases(canonicalAssetId: string): string[] {
+  return getCanonicalAssetAliases(canonicalAssetId);
+}
+
+export function getLayerZeroOftAddressEnvKeys(
+  chainId: number,
+  canonicalAssetId: string,
+): string[] {
+  const assetAliases = getLayerZeroAssetAliases(canonicalAssetId);
+  return assetAliases.flatMap((alias) =>
+    getLayerZeroRouteSupport().oftAddressEnvPrefixes.map(
+      (prefix) => `CHAIN_${chainId}_${prefix}_${alias}`,
+    ),
+  );
+}
+
+export function getLayerZeroDestinationEidEnvKeys(chainId: number): string[] {
+  return getLayerZeroRouteSupport().dstEidEnvPrefixes.map(
+    (prefix) => `CHAIN_${chainId}_${prefix}`,
+  );
+}
+
+export function getLayerZeroExtraOptionsEnvKeys(
+  chainId: number,
+  canonicalAssetId: string,
+): string[] {
+  const routeSupport = getLayerZeroRouteSupport();
+  const assetAliases = getLayerZeroAssetAliases(canonicalAssetId);
+
+  return [
+    ...assetAliases.flatMap((alias) =>
+      routeSupport.extraOptionsEnvPrefixes.map(
+        (prefix) => `CHAIN_${chainId}_${prefix}_${alias}`,
+      ),
+    ),
+    ...routeSupport.extraOptionsEnvPrefixes.map(
+      (prefix) => `CHAIN_${chainId}_${prefix}`,
+    ),
+  ];
 }
 
 export function getCctpDomain(chainId: number): number | undefined {

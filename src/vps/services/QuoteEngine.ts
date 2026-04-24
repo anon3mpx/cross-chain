@@ -4,7 +4,7 @@
 // Results are cached 30s to minimise RPC calls.
 // ─────────────────────────────────────────────────────────
 
-import { AbiCoder, ZeroAddress, solidityPackedKeccak256 } from 'ethers';
+import { AbiCoder, ZeroAddress, getAddress, keccak256 } from 'ethers';
 import {
   OfferEconomics,
   OfferSet,
@@ -18,6 +18,7 @@ import {
   SettlementToken,
 } from '../types';
 import { RouteBuilder } from './RouterBuilder';
+import { AxelarAssetCatalog, ResolvedAxelarAsset } from './axelar/AxelarAssetCatalog';
 import { CHAIN_CONFIGS, getChainConfig } from '../config/chains';
 import { getSettlementTokenAddress, getSwapPluginIdForChain } from '../config/contracts';
 import { randomBytes } from 'crypto';
@@ -54,6 +55,7 @@ interface BuiltDirectQuote {
   realizedProviderFeeUSD: number;
   protocolFeeUSD: number;
   outboundFeeUSD?: number;
+  axelarDestinationTokenId?: string;
 }
 
 export interface OfferSelectionResult {
@@ -70,6 +72,7 @@ export class QuoteEngine {
   private readonly offerCache = new Map<string, { value: OfferSet; expiresAt: number }>();
   private readonly pendingOfferSets = new Map<string, Promise<OfferSet | null>>();
   private readonly dexQuoteFns = new Map<number, QuoteFn>();
+  private readonly axelarAssetCatalog = new AxelarAssetCatalog();
 
   constructor(cache: QuoteCache = new InMemoryQuoteCache()) {
     this.cache = cache;
@@ -189,6 +192,7 @@ export class QuoteEngine {
         swapDataSrc: legacyQuote.swapDataSrc,
         swapDataDst: legacyQuote.swapDataDst,
         nativeDstAddress: legacyQuote.nativeDstAddress,
+        axelarDestinationTokenId: builtQuote.axelarDestinationTokenId,
       },
     };
   }
@@ -203,7 +207,9 @@ export class QuoteEngine {
     const settlementToken = hop.settlementTokenOut;
     const srcSwapEnabled = route.routeType === RouteType.FULL_SWAP || route.routeType === RouteType.SRC_SWAP;
     const dstSwapEnabled = route.routeType === RouteType.FULL_SWAP || route.routeType === RouteType.DST_SWAP;
-    const settlementAddrSrc = getSettlementTokenAddress(req.srcChainId, settlementToken, hop.rail);
+    const axelarAsset = this._resolveAxelarAsset(req, hop.rail, settlementToken);
+    const settlementAddrSrc = axelarAsset?.sourceSettlementToken
+      ?? getSettlementTokenAddress(req.srcChainId, settlementToken, hop.rail);
     if (!settlementAddrSrc) return null;
 
     const railFeeUSD = route.totalFeeUSD;
@@ -250,7 +256,8 @@ export class QuoteEngine {
     }
 
     // Get dst swap quote: settlementToken → tokenOut
-    const settlementAddrDst = getSettlementTokenAddress(req.dstChainId, settlementToken, hop.rail);
+    const settlementAddrDst = axelarAsset?.expectedDstSettlementToken
+      ?? getSettlementTokenAddress(req.dstChainId, settlementToken, hop.rail);
     let dstSwapAmount: bigint;
     const dstSwapNeeded = dstSwapEnabled && !!settlementAddrDst && this._isAddress(req.tokenOut) &&
       req.tokenOut.toLowerCase() !== settlementAddrDst.toLowerCase();
@@ -279,10 +286,12 @@ export class QuoteEngine {
 
     const minAmountOut = (dstSwapAmount * (BPS_DENOMINATOR - BigInt(QUOTE_SLIPPAGE_BPS))) / BPS_DENOMINATOR;
     const minSettlementAmount = this._applySlippage(bridgeAmount, QUOTE_SLIPPAGE_BPS);
-    const settlementAssetId = this._settlementAssetId(req.srcChainId, settlementAddrSrc);
-    const expectedDstSettlementAssetId = settlementAddrDst
-      ? this._settlementAssetId(req.dstChainId, settlementAddrDst)
-      : this._zeroBytes32();
+    const settlementAssetId = axelarAsset?.sourceSettlementAssetId
+      ?? this._settlementAssetId(req.srcChainId, settlementAddrSrc);
+    const expectedDstSettlementAssetId = axelarAsset?.expectedDstSettlementAssetId
+      ?? (settlementAddrDst
+        ? this._settlementAssetId(req.dstChainId, settlementAddrDst)
+        : this._zeroBytes32());
 
     return {
       quote: {
@@ -317,6 +326,7 @@ export class QuoteEngine {
       realizedProviderFeeUSD: realizedRailFeeUSD,
       protocolFeeUSD,
       outboundFeeUSD,
+      axelarDestinationTokenId: axelarAsset?.destinationTokenId,
     };
   }
 
@@ -656,7 +666,25 @@ export class QuoteEngine {
   }
 
   private _settlementAssetId(chainId: number, tokenAddress: string): string {
-    return solidityPackedKeccak256(['uint256', 'address'], [BigInt(chainId), tokenAddress]);
+    return keccak256(abiCoder.encode(['uint256', 'address'], [BigInt(chainId), getAddress(tokenAddress)]));
+  }
+
+  private _resolveAxelarAsset(
+    req: QuoteRequest,
+    rail: Rail,
+    settlementToken: SettlementToken,
+  ): ResolvedAxelarAsset | null {
+    if (rail !== Rail.AXELAR) return null;
+    const canonicalAssetId = `${req.srcChainId}:${settlementToken}`;
+    try {
+      return this.axelarAssetCatalog.resolve({
+        srcChainId: req.srcChainId,
+        dstChainId: req.dstChainId,
+        canonicalAssetId,
+      });
+    } catch {
+      return null;
+    }
   }
 
   private _zeroBytes32(): string {

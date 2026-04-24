@@ -33,6 +33,8 @@ contract AxelarReceiverAdapter is Ownable2Step {
     error UnauthorizedInterchainTokenService(address caller);
     error UntrustedSource(bytes32 sourceKey);
     error UntrustedToken(bytes32 tokenId, address token, address expected);
+    error UnexpectedSettlementToken(address received, address expected);
+    error UnexpectedSettlementAsset(bytes32 received, bytes32 expected);
     error ZeroAddress(string field);
 
     constructor(address _interchainTokenService, address _receiver, address _owner) Ownable(_owner) {
@@ -65,8 +67,45 @@ contract AxelarReceiverAdapter is Ownable2Step {
             revert UntrustedToken(tokenId, token, expectedToken);
         }
 
+        bytes calldata receiverPayload = data;
+        if (receiverPayload.length >= 4 && bytes4(receiverPayload[0:4]) == bytes4(0)) {
+            receiverPayload = receiverPayload[4:];
+        }
+
+        (
+            bytes32 payloadIntentId,
+            address payloadUser,
+            address payloadTokenOut,
+            uint256 payloadMinAmountOut,
+            address expectedSettlementToken,
+            bytes32 expectedSettlementAssetId,
+            uint256 payloadMinSettlementAmount,
+            bytes memory payloadSwapData,
+            bytes32 payloadSwapPluginId
+        ) = abi.decode(
+            receiverPayload,
+            (bytes32, address, address, uint256, address, bytes32, uint256, bytes, bytes32)
+        );
+        payloadIntentId;
+        payloadUser;
+        payloadTokenOut;
+        payloadMinAmountOut;
+        payloadMinSettlementAmount;
+        payloadSwapData;
+        payloadSwapPluginId;
+
+        if (expectedSettlementToken == address(0)) revert ZeroAddress("expectedSettlementToken");
+        if (token != expectedSettlementToken) {
+            revert UnexpectedSettlementToken(token, expectedSettlementToken);
+        }
+
+        bytes32 receivedSettlementAssetId = keccak256(abi.encode(block.chainid, token));
+        if (receivedSettlementAssetId != expectedSettlementAssetId) {
+            revert UnexpectedSettlementAsset(receivedSettlementAssetId, expectedSettlementAssetId);
+        }
+
         IERC20(token).safeTransfer(receiver, amount);
-        IReceiverExecutorAxelar(receiver).execute(token, amount, data);
+        IReceiverExecutorAxelar(receiver).execute(token, amount, receiverPayload);
 
         emit AxelarMessageForwarded(commandId, sourceKey, tokenId, token, amount);
         return EXECUTE_SUCCESS;

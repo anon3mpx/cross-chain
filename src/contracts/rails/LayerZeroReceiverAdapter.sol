@@ -17,8 +17,15 @@ contract LayerZeroReceiverAdapter is Ownable2Step {
 
     // srcEid => trusted source composeFrom address bytes32.
     mapping(uint32 => bytes32) public trustedPeers;
+    // srcEid + expected destination settlement asset => expected compose sender (source OFT).
+    mapping(uint32 => mapping(bytes32 => address)) public expectedComposeSenders;
 
     event TrustedPeerSet(uint32 indexed srcEid, bytes32 indexed peer);
+    event ExpectedComposeSenderSet(
+        uint32 indexed srcEid,
+        bytes32 indexed expectedSettlementAssetId,
+        address indexed composeSender
+    );
     event LayerZeroMessageForwarded(
         uint32 indexed srcEid,
         bytes32 indexed composeFrom,
@@ -30,6 +37,8 @@ contract LayerZeroReceiverAdapter is Ownable2Step {
     error UnauthorizedEndpoint(address caller);
     error UnauthorizedComposeSender(address from, address expected);
     error UntrustedPeer(uint32 srcEid, bytes32 composeFrom, bytes32 expected);
+    error UnexpectedSettlementToken(address received, address expected);
+    error UnexpectedSettlementAsset(bytes32 received, bytes32 expected);
     error MalformedComposeMessage(uint256 length);
     error ZeroAddress(string field);
 
@@ -63,7 +72,6 @@ contract LayerZeroReceiverAdapter is Ownable2Step {
         _extraData;
 
         if (msg.sender != endpoint) revert UnauthorizedEndpoint(msg.sender);
-        if (_from != oft) revert UnauthorizedComposeSender(_from, oft);
         if (_message.length < OFTComposeMsgCodec.COMPOSE_MSG_OFFSET) {
             revert MalformedComposeMessage(_message.length);
         }
@@ -76,10 +84,46 @@ contract LayerZeroReceiverAdapter is Ownable2Step {
         }
 
         uint256 amount = OFTComposeMsgCodec.amountLD(_message);
-        bytes memory payload = OFTComposeMsgCodec.composeMsg(_message);
+        bytes calldata receiverPayload = OFTComposeMsgCodec.composeMsg(_message);
+
+        (
+            bytes32 payloadIntentId,
+            address payloadUser,
+            address payloadTokenOut,
+            uint256 payloadMinAmountOut,
+            address expectedSettlementToken,
+            bytes32 expectedSettlementAssetId,
+            uint256 payloadMinSettlementAmount,
+            bytes memory payloadSwapData,
+            bytes32 payloadSwapPluginId
+        ) = abi.decode(
+            receiverPayload,
+            (bytes32, address, address, uint256, address, bytes32, uint256, bytes, bytes32)
+        );
+        payloadIntentId;
+        payloadUser;
+        payloadTokenOut;
+        payloadMinAmountOut;
+        payloadMinSettlementAmount;
+        payloadSwapData;
+        payloadSwapPluginId;
+
+        if (expectedSettlementToken == address(0)) revert ZeroAddress("expectedSettlementToken");
+        address expectedOft = expectedComposeSenders[srcEid][expectedSettlementAssetId];
+        if (expectedOft == address(0)) expectedOft = oft;
+        if (_from != expectedOft) revert UnauthorizedComposeSender(_from, expectedOft);
+
+        if (settlementToken != expectedSettlementToken) {
+            revert UnexpectedSettlementToken(settlementToken, expectedSettlementToken);
+        }
+
+        bytes32 receivedSettlementAssetId = keccak256(abi.encode(block.chainid, settlementToken));
+        if (receivedSettlementAssetId != expectedSettlementAssetId) {
+            revert UnexpectedSettlementAsset(receivedSettlementAssetId, expectedSettlementAssetId);
+        }
 
         IERC20(settlementToken).safeTransfer(receiver, amount);
-        IReceiverExecutorLZ(receiver).execute(settlementToken, amount, payload);
+        IReceiverExecutorLZ(receiver).execute(settlementToken, amount, receiverPayload);
 
         emit LayerZeroMessageForwarded(srcEid, composeFrom, _guid, settlementToken, amount);
     }
@@ -93,6 +137,16 @@ contract LayerZeroReceiverAdapter is Ownable2Step {
         bytes32 peerBytes32 = OFTComposeMsgCodec.addressToBytes32(peer);
         trustedPeers[srcEid] = peerBytes32;
         emit TrustedPeerSet(srcEid, peerBytes32);
+    }
+
+    function setExpectedComposeSender(
+        uint32 srcEid,
+        bytes32 expectedSettlementAssetId,
+        address composeSender
+    ) external onlyOwner {
+        if (composeSender == address(0)) revert ZeroAddress("composeSender");
+        expectedComposeSenders[srcEid][expectedSettlementAssetId] = composeSender;
+        emit ExpectedComposeSenderSet(srcEid, expectedSettlementAssetId, composeSender);
     }
 
     function rescueTokens(address token, uint256 amount) external onlyOwner {
@@ -118,7 +172,7 @@ library OFTComposeMsgCodec {
         return bytes32(message[AMOUNT_LD_OFFSET:COMPOSE_MSG_OFFSET]);
     }
 
-    function composeMsg(bytes calldata message) internal pure returns (bytes memory) {
+    function composeMsg(bytes calldata message) internal pure returns (bytes calldata) {
         return message[COMPOSE_MSG_OFFSET:];
     }
 

@@ -10,8 +10,9 @@ import {
 } from "../../src/contracts/rails/AxelarRailPlugin.sol";
 import {IntentTypes} from "../../src/contracts/interfaces/IIntentTypes.sol";
 
-contract MockUSDCAxelar is ERC20, IAxelarInterchainToken {
+contract MockAxelarToken is ERC20, IAxelarInterchainToken {
     address public immutable its;
+    uint8 public immutable tokenDecimals;
 
     string public lastDestinationChain;
     bytes public lastDestinationAddress;
@@ -19,11 +20,14 @@ contract MockUSDCAxelar is ERC20, IAxelarInterchainToken {
     bytes public lastMetadata;
     uint256 public lastPaidNativeFee;
 
-    constructor(address _its) ERC20("Mock USDC", "mUSDC") {
+    constructor(address _its, string memory name_, string memory symbol_, uint8 _tokenDecimals)
+        ERC20(name_, symbol_)
+    {
         its = _its;
+        tokenDecimals = _tokenDecimals;
     }
 
-    function decimals() public pure override returns (uint8) { return 6; }
+    function decimals() public view override returns (uint8) { return tokenDecimals; }
     function mint(address to, uint256 amount) external { _mint(to, amount); }
 
     function interchainTokenService() external view returns (address interchainTokenServiceAddress) {
@@ -94,47 +98,37 @@ contract MockAxelarITS is IAxelarITS {
 }
 
 contract AxelarRailPluginTest {
-    MockUSDCAxelar private usdc;
+    MockAxelarToken private usdc;
+    MockAxelarToken private weth;
     MockAxelarGasService private gasService;
     MockAxelarITS private its;
     AxelarRailPlugin private plugin;
 
     uint32 private constant DST_CHAIN = 42161;
+    bytes32 private constant LEGACY_SETTLEMENT_ASSET_ID = bytes32(0);
+    bytes32 private constant DYNAMIC_SETTLEMENT_ASSET_ID = keccak256("BASE_AXELAR_WETH");
+    bytes32 private constant UNKNOWN_SETTLEMENT_ASSET_ID = keccak256("UNKNOWN_ASSET");
     bytes32 private constant DST_TOKEN_ID = keccak256("ARBITRUM_USDC");
+    bytes32 private constant DST_WETH_TOKEN_ID = keccak256("ARBITRUM_WETH");
     uint256 private constant GAS_FEE = 0.01 ether;
 
     function setUp() public {
         its = new MockAxelarITS();
-        usdc = new MockUSDCAxelar(address(its));
+        usdc = new MockAxelarToken(address(its), "Mock USDC", "mUSDC", 6);
+        weth = new MockAxelarToken(address(its), "Mock WETH", "mWETH", 18);
         gasService = new MockAxelarGasService(GAS_FEE);
         plugin = new AxelarRailPlugin(address(usdc), address(gasService), address(its), address(this));
 
         plugin.setRouteConfig(DST_CHAIN, "arbitrum", address(0xBEEF), DST_TOKEN_ID);
         usdc.mint(address(this), 1_000_000e6);
+        weth.mint(address(this), 1_000_000e18);
     }
 
     function testBridgeHappyPath() public {
         uint256 amount = 100e6;
         usdc.approve(address(plugin), amount);
-
-        IntentTypes.BridgeParams memory params = IntentTypes.BridgeParams({
-            intentId: keccak256("intent-1"),
-            settlementTokenAddr: address(usdc),
-            amount: amount,
-            settlementAssetId: bytes32(0),
-            expectedDstSettlementToken: address(0),
-            expectedDstSettlementAssetId: bytes32(0),
-            minSettlementAmount: 0,
-            dstChainId: DST_CHAIN,
-            railData: bytes(""),
-            dstReceiver: address(0xBEEF),
-            dstCalldata: hex"1234",
-            gasForDst: 200_000,
-            finalRecipient: address(0xABCD),
-            nativeDstAddress: bytes(""),
-            thorAssetIdentifier: "",
-            minThorOutput: 0
-        });
+        IntentTypes.BridgeParams memory params =
+            _bridgeParams(address(usdc), amount, LEGACY_SETTLEMENT_ASSET_ID, keccak256("intent-1"));
 
         bytes32 railTxId = plugin.bridge{value: GAS_FEE + 1 wei}(params);
 
@@ -150,6 +144,35 @@ contract AxelarRailPluginTest {
         );
     }
 
+    function testBridgeAcceptsDynamicAxelarToken() public {
+        uint256 amount = 2e18;
+        weth.approve(address(plugin), amount);
+        plugin.setSettlementTokenAddress(uint8(IntentTypes.SettlementToken.ETH), address(weth));
+        plugin.setRouteConfig(
+            DST_CHAIN,
+            DYNAMIC_SETTLEMENT_ASSET_ID,
+            "arbitrum",
+            address(0xBEEF),
+            DST_WETH_TOKEN_ID,
+            address(weth)
+        );
+
+        IntentTypes.BridgeParams memory params =
+            _bridgeParams(address(weth), amount, DYNAMIC_SETTLEMENT_ASSET_ID, keccak256("intent-weth"));
+
+        bytes32 railTxId = plugin.bridge{value: GAS_FEE}(params);
+
+        _assertTrue(railTxId != bytes32(0), "rail tx id is zero");
+        _assertEq(weth.lastAmount(), amount, "bridged amount mismatch");
+        _assertEq(
+            keccak256(bytes(weth.lastDestinationChain())),
+            keccak256(bytes("arbitrum")),
+            "dst chain mismatch"
+        );
+        _assertEq(weth.balanceOf(address(weth)), amount, "token contract did not take funds");
+        _assertEq(weth.lastPaidNativeFee(), GAS_FEE, "gas fee mismatch");
+    }
+
     function testEstimateFeeRevertsOnUnsupportedRoute() public {
         (bool ok, ) = address(plugin).call(
             abi.encodeWithSelector(plugin.estimateFee.selector, uint32(999999), uint256(1e6), uint8(0))
@@ -157,7 +180,47 @@ contract AxelarRailPluginTest {
         _assertTrue(!ok, "expected unsupported route revert");
     }
 
+    function testBridgeRevertsWhenDynamicAssetRouteMissing() public {
+        uint256 amount = 1e18;
+        weth.approve(address(plugin), amount);
+        plugin.setSettlementTokenAddress(uint8(IntentTypes.SettlementToken.ETH), address(weth));
+
+        IntentTypes.BridgeParams memory params =
+            _bridgeParams(address(weth), amount, UNKNOWN_SETTLEMENT_ASSET_ID, keccak256("intent-missing-route"));
+
+        (bool ok, ) = address(plugin).call{value: GAS_FEE}(
+            abi.encodeWithSelector(plugin.bridge.selector, params)
+        );
+        _assertTrue(!ok, "expected missing dynamic route revert");
+    }
+
     receive() external payable {}
+
+    function _bridgeParams(
+        address settlementToken,
+        uint256 amount,
+        bytes32 settlementAssetId,
+        bytes32 intentId
+    ) internal pure returns (IntentTypes.BridgeParams memory) {
+        return IntentTypes.BridgeParams({
+            intentId: intentId,
+            settlementTokenAddr: settlementToken,
+            amount: amount,
+            settlementAssetId: settlementAssetId,
+            expectedDstSettlementToken: address(0),
+            expectedDstSettlementAssetId: bytes32(0),
+            minSettlementAmount: 0,
+            dstChainId: DST_CHAIN,
+            railData: bytes(""),
+            dstReceiver: address(0xBEEF),
+            dstCalldata: hex"1234",
+            gasForDst: 200_000,
+            finalRecipient: address(0xABCD),
+            nativeDstAddress: bytes(""),
+            thorAssetIdentifier: "",
+            minThorOutput: 0
+        });
+    }
 
     function _assertEq(uint256 a, uint256 b, string memory err) internal pure {
         require(a == b, err);
