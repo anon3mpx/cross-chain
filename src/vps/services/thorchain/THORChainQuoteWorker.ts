@@ -3,6 +3,11 @@ import {
   THORChainSwapQuoteResponse,
 } from './THORChainClient';
 
+const DEFAULT_THORCHAIN_CANARY_ALLOWLIST = [
+  '8453:1:BASE.ETH:ETH.ETH',
+  '8453:0:BASE.ETH:BTC.BTC',
+];
+
 export interface THORChainQuoteRequest {
   amountIn: bigint;
   srcChainId: number;
@@ -30,14 +35,45 @@ export interface THORChainQuoteClient {
   quoteSwap(params: URLSearchParams): Promise<THORChainSwapQuoteResponse>;
 }
 
+export interface THORChainQuoteWorkerOptions {
+  enableCanaryGuardrails?: boolean;
+  canaryAllowlist?: Iterable<string>;
+}
+
 export class THORChainQuoteWorker {
   private readonly client: THORChainQuoteClient;
+  private readonly enableCanaryGuardrails: boolean;
+  private readonly canaryAllowlist: Set<string>;
 
-  constructor(client: THORChainQuoteClient = new THORChainClient()) {
+  constructor(
+    client: THORChainQuoteClient = new THORChainClient(),
+    options: THORChainQuoteWorkerOptions = {},
+  ) {
     this.client = client;
+    this.enableCanaryGuardrails = options.enableCanaryGuardrails
+      ?? this._readBoolEnv('ENABLE_THORCHAIN_CANARY', false);
+
+    const configuredAllowlist = options.canaryAllowlist
+      ? [...options.canaryAllowlist]
+      : this._readAllowlistFromEnv();
+    const normalizedAllowlist = configuredAllowlist
+      .map((entry) => this._normalizeAllowlistKey(entry))
+      .filter((entry) => entry.length > 0);
+
+    if (this.enableCanaryGuardrails && normalizedAllowlist.length === 0) {
+      this.canaryAllowlist = new Set(
+        DEFAULT_THORCHAIN_CANARY_ALLOWLIST.map((entry) => this._normalizeAllowlistKey(entry)),
+      );
+    } else {
+      this.canaryAllowlist = new Set(normalizedAllowlist);
+    }
   }
 
   async quote(input: THORChainQuoteRequest): Promise<THORChainQuoteResult | null> {
+    if (this.enableCanaryGuardrails && !this._isCanaryPairAllowed(input)) {
+      return null;
+    }
+
     const params = this._buildQuoteParams(input);
     const quote = await this.client.quoteSwap(params);
 
@@ -96,5 +132,45 @@ export class THORChainQuoteWorker {
     if (!raw) return undefined;
     const parsed = Number(raw);
     return Number.isFinite(parsed) ? parsed : undefined;
+  }
+
+  private _isCanaryPairAllowed(input: THORChainQuoteRequest): boolean {
+    if (this.canaryAllowlist.size === 0) return false;
+    const key = this._buildCanaryKey(input);
+    return this.canaryAllowlist.has(key);
+  }
+
+  private _buildCanaryKey(input: THORChainQuoteRequest): string {
+    const fromAsset = input.fromAsset ?? input.tokenIn;
+    const toAsset = input.toAsset ?? input.tokenOut;
+    return `${input.srcChainId}:${input.dstChainId}:${this._normalizeAsset(fromAsset)}:${this._normalizeAsset(toAsset)}`;
+  }
+
+  private _normalizeAllowlistKey(value: string): string {
+    const raw = value.trim();
+    if (!raw) return '';
+    const parts = raw.split(':');
+    if (parts.length !== 4) return raw.toUpperCase();
+    const [srcChainId, dstChainId, fromAsset, toAsset] = parts;
+    return `${srcChainId.trim()}:${dstChainId.trim()}:${this._normalizeAsset(fromAsset)}:${this._normalizeAsset(toAsset)}`;
+  }
+
+  private _normalizeAsset(asset: string): string {
+    return asset.trim().toUpperCase();
+  }
+
+  private _readAllowlistFromEnv(): string[] {
+    const raw = process.env.THORCHAIN_CANARY_ALLOWLIST;
+    if (!raw) return [];
+    return raw.split(',').map((entry) => entry.trim()).filter((entry) => entry.length > 0);
+  }
+
+  private _readBoolEnv(name: string, fallback: boolean): boolean {
+    const raw = process.env[name];
+    if (!raw) return fallback;
+    const normalized = raw.trim().toLowerCase();
+    if (['1', 'true', 'yes', 'on'].includes(normalized)) return true;
+    if (['0', 'false', 'no', 'off'].includes(normalized)) return false;
+    return fallback;
   }
 }

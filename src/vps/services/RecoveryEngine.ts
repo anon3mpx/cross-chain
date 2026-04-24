@@ -1,7 +1,7 @@
 // ─────────────────────────────────────────────────────────
 // EMPX-Cross-Chain VPS — Recovery Engine
-// Detects stuck intents and either retries on same rail
-// or falls over to the next best rail automatically.
+// Detects stuck intents and either retries recovery actions
+// or falls over to the next best rail when allowed.
 // Runs on a 30s polling interval — lightweight, no chain I/O.
 // ─────────────────────────────────────────────────────────
 
@@ -51,6 +51,18 @@ export class RecoveryEngine {
       actor: 'system',
       eventSource: 'recovery-engine',
     });
+
+    if (intent.quote.selectedByUser) {
+      await this.intentService.markFailed(
+        intent.intentId,
+        'Selected rail became unrecoverable; user must request a fresh quote',
+        {
+          actor: 'system',
+          eventSource: 'recovery-engine',
+        },
+      );
+      return;
+    }
 
     if (intent.retryCount >= MAX_RETRIES) {
       await this.intentService.markFailed(intent.intentId, `Max retries (${MAX_RETRIES}) exceeded`, {

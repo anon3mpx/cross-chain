@@ -89,10 +89,14 @@ export class QuoteEngine {
     deps: QuoteEngineDependencies = {},
   ) {
     this.cache = cache;
-    this.thorchainQuoteWorker = deps.thorchainQuoteWorker
-      ?? (this._readBoolEnv('ENABLE_THORCHAIN_QUOTE_WORKER', true)
-        ? new THORChainQuoteWorker()
-        : undefined);
+    const hasExplicitThorchainWorker = Object.prototype.hasOwnProperty.call(deps, 'thorchainQuoteWorker');
+    if (hasExplicitThorchainWorker) {
+      this.thorchainQuoteWorker = deps.thorchainQuoteWorker;
+      return;
+    }
+    this.thorchainQuoteWorker = this._readBoolEnv('ENABLE_THORCHAIN_QUOTE_WORKER', true)
+      ? new THORChainQuoteWorker()
+      : undefined;
   }
 
   async getOffers(req: QuoteRequest): Promise<OfferSet | null> {

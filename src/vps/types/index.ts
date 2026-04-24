@@ -169,6 +169,7 @@ export interface QuoteResult {
   thorAsset?:        string;    // e.g. "BTC.BTC", "SOL.SOL"
   minThorOutput?:    bigint;    // 8-decimal THORChain units
   nativeDstAddress?: string;    // User's BTC/SOL/DOGE address
+  selectedByUser?:   boolean;   // true when intent came from explicit offer selection
 }
 
 export interface ProviderAssetRef {

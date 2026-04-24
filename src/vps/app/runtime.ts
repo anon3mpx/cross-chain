@@ -10,6 +10,7 @@ import { QuoteEngine } from '../services/QuoteEngine';
 import { RailSelector } from '../services/RailSelector';
 import { RecoveryEngine } from '../services/RecoveryEngine';
 import { THORChainMonitorWorker } from '../services/thorchain/THORChainMonitorWorker';
+import { THORChainQuoteWorker } from '../services/thorchain/THORChainQuoteWorker';
 import { createQuoteCacheFromEnv, QuoteCache } from '../cache/QuoteCache';
 import { registerDexQuoteAdapters } from '../bootstrap/dexAdapters';
 import { RailExecutionHandle, RailExecutionManager } from '../rails/execution';
@@ -60,6 +61,9 @@ export async function buildRuntime(options: RuntimeOptions = {}): Promise<Runtim
   const enableCctpRelay = options.enableCctpRelay ?? envBool('ENABLE_CCTP_RELAY', false);
   const enableThorchainWorker =
     options.railExecution?.[Rail.THORCHAIN] ?? envBool('ENABLE_THORCHAIN_WORKER', true);
+  const enableThorchainQuoteWorker = envBool('ENABLE_THORCHAIN_QUOTE_WORKER', true);
+  const enableThorchainCanary = envBool('ENABLE_THORCHAIN_CANARY', false);
+  const thorchainCanaryAllowlist = parseCsv(process.env.THORCHAIN_CANARY_ALLOWLIST);
   const enablePartnerApi = options.enablePartnerApi ?? envBool('ENABLE_PARTNER_API', false);
   const enablePostgres = options.enablePostgres ?? shouldEnablePostgres();
 
@@ -67,7 +71,14 @@ export async function buildRuntime(options: RuntimeOptions = {}): Promise<Runtim
   const postgres = enablePostgres ? createPostgresIntentStore() : undefined;
   const intentService = new IntentService(intentEngine, postgres?.repo);
   const quoteCache: QuoteCache = await createQuoteCacheFromEnv(process.env);
-  const quoteEngine = new QuoteEngine(quoteCache);
+  const quoteEngine = new QuoteEngine(quoteCache, {
+    thorchainQuoteWorker: enableThorchainQuoteWorker
+      ? new THORChainQuoteWorker(undefined, {
+        enableCanaryGuardrails: enableThorchainCanary,
+        canaryAllowlist: thorchainCanaryAllowlist,
+      })
+      : undefined,
+  });
   registerDexQuoteAdapters(quoteEngine, process.env);
 
   const rails = new RailSelector();
@@ -159,4 +170,13 @@ export async function buildRuntime(options: RuntimeOptions = {}): Promise<Runtim
       }
     },
   };
+}
+
+function parseCsv(value: string | undefined): string[] | undefined {
+  if (!value) return undefined;
+  const parsed = value
+    .split(',')
+    .map((entry) => entry.trim())
+    .filter((entry) => entry.length > 0);
+  return parsed.length > 0 ? parsed : undefined;
 }

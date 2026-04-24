@@ -257,6 +257,7 @@ export class IntentService {
     return {
       ...(executionQuote as QuoteResult),
       intentId: this.makeIntentId(),
+      selectedByUser: true,
     };
   }
 
