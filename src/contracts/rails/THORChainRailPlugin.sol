@@ -113,6 +113,7 @@ contract THORChainRailPlugin is IRailPlugin, ERC165, Ownable2Step {
         external payable override returns (bytes32 railTxId)
     {
         address vault = _resolveVault(params.dstChainId);
+        uint256 bridgedAmount;
 
         // Build THORChain memo
         string memory memo = _buildMemo(
@@ -130,6 +131,7 @@ contract THORChainRailPlugin is IRailPlugin, ERC165, Ownable2Step {
             if (params.amount < MIN_USDC_AMOUNT) revert AmountBelowMinimum(params.amount, MIN_USDC_AMOUNT);
             IERC20(asset).safeTransferFrom(msg.sender, address(this), params.amount);
             IERC20(asset).forceApprove(thorRouter, params.amount);
+            bridgedAmount = params.amount;
 
             ITHORRouter(thorRouter).depositWithExpiry(
                 payable(vault),
@@ -141,6 +143,7 @@ contract THORChainRailPlugin is IRailPlugin, ERC165, Ownable2Step {
         } else {
             // Native ETH path
             if (msg.value < MIN_ETH_AMOUNT) revert AmountBelowMinimum(msg.value, MIN_ETH_AMOUNT);
+            bridgedAmount = msg.value;
             ITHORRouter(thorRouter).depositWithExpiry{value: msg.value}(
                 payable(vault),
                 address(0),
@@ -152,7 +155,7 @@ contract THORChainRailPlugin is IRailPlugin, ERC165, Ownable2Step {
 
         // Rail tx ID: keccak of intentId + block — VPS tracks via THORChain API with this memo
         railTxId = keccak256(abi.encodePacked(params.intentId, block.number));
-        emit THORSwapInitiated(params.intentId, asset, params.amount, memo, block.timestamp + 15 minutes);
+        emit THORSwapInitiated(params.intentId, asset, bridgedAmount, memo, block.timestamp + 15 minutes);
     }
 
     // ── Memo construction ──────────────────────────────────────────────────────

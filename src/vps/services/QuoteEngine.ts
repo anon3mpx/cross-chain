@@ -24,6 +24,11 @@ import { getSettlementTokenAddress, getSwapPluginIdForChain } from '../config/co
 import { randomBytes } from 'crypto';
 import { InMemoryQuoteCache, QuoteCache } from '../cache/QuoteCache';
 import {
+  THORChainQuoteWorker,
+  type THORChainQuoteRequest,
+  type THORChainQuoteResult,
+} from './thorchain/THORChainQuoteWorker';
+import {
   ZERO_PLUGIN_ID,
   getCctpDomain,
   getCctpMetadata,
@@ -66,6 +71,10 @@ export interface OfferSelectionResult {
 
 type QuoteFn = (tokenIn: string, tokenOut: string, amountIn: bigint) => Promise<bigint>;
 
+export interface QuoteEngineDependencies {
+  thorchainQuoteWorker?: Pick<THORChainQuoteWorker, 'quote'>;
+}
+
 export class QuoteEngine {
   private routeBuilder = new RouteBuilder();
   private readonly cache: QuoteCache;
@@ -73,9 +82,17 @@ export class QuoteEngine {
   private readonly pendingOfferSets = new Map<string, Promise<OfferSet | null>>();
   private readonly dexQuoteFns = new Map<number, QuoteFn>();
   private readonly axelarAssetCatalog = new AxelarAssetCatalog();
+  private readonly thorchainQuoteWorker?: Pick<THORChainQuoteWorker, 'quote'>;
 
-  constructor(cache: QuoteCache = new InMemoryQuoteCache()) {
+  constructor(
+    cache: QuoteCache = new InMemoryQuoteCache(),
+    deps: QuoteEngineDependencies = {},
+  ) {
     this.cache = cache;
+    this.thorchainQuoteWorker = deps.thorchainQuoteWorker
+      ?? (this._readBoolEnv('ENABLE_THORCHAIN_QUOTE_WORKER', true)
+        ? new THORChainQuoteWorker()
+        : undefined);
   }
 
   async getOffers(req: QuoteRequest): Promise<OfferSet | null> {
@@ -155,8 +172,7 @@ export class QuoteEngine {
     const { quote: legacyQuote } = builtQuote;
 
     const economics = this._buildOfferEconomics(route, builtQuote);
-
-    return {
+    const offer: RailOffer = {
       offerId: legacyQuote.intentId,
       rail: legacyQuote.rail,
       railType: legacyQuote.railType,
@@ -195,6 +211,8 @@ export class QuoteEngine {
         axelarDestinationTokenId: builtQuote.axelarDestinationTokenId,
       },
     };
+
+    return this._enrichThorchainOffer(req, route, offer);
   }
 
   private async _quoteForDirectRoute(
@@ -347,6 +365,100 @@ export class QuoteEngine {
     }
 
     return economics;
+  }
+
+  private async _enrichThorchainOffer(
+    req: QuoteRequest,
+    route: Route,
+    offer: RailOffer,
+  ): Promise<RailOffer | null> {
+    if (route.hops[0].rail !== Rail.THORCHAIN || !this.thorchainQuoteWorker) {
+      return offer;
+    }
+
+    try {
+      const thorQuote = await this.thorchainQuoteWorker.quote(
+        this._buildThorchainQuoteRequest(req, offer),
+      );
+      if (!thorQuote) return null;
+      return this._applyThorchainQuote(offer, thorQuote);
+    } catch {
+      // THOR quote enrichment is optional; fall back to base offer if unavailable.
+      return offer;
+    }
+  }
+
+  private _buildThorchainQuoteRequest(
+    req: QuoteRequest,
+    offer: RailOffer,
+  ): THORChainQuoteRequest {
+    const executionQuote = offer.execution.quote as QuoteResult | undefined;
+    const settlementInputAmount =
+      executionQuote?.minSettlementAmount && executionQuote.minSettlementAmount > 0n
+        ? executionQuote.minSettlementAmount
+        : offer.amountIn;
+    const sourceSettlementToken = offer.sourceSettlementAsset.tokenAddress;
+    const destinationSettlementToken = offer.destinationSettlementAsset.tokenAddress;
+    return {
+      amountIn: settlementInputAmount,
+      srcChainId: req.srcChainId,
+      dstChainId: req.dstChainId,
+      tokenIn: req.tokenIn,
+      tokenOut: req.tokenOut,
+      destinationAddress: req.nativeDstAddress ?? req.userAddress,
+      fromAsset: sourceSettlementToken ?? req.tokenIn,
+      toAsset: this._isAddress(req.tokenOut)
+        ? (destinationSettlementToken ?? req.tokenOut)
+        : req.tokenOut,
+    };
+  }
+
+  private _applyThorchainQuote(
+    offer: RailOffer,
+    thorQuote: THORChainQuoteResult,
+  ): RailOffer {
+    const economics: OfferEconomics = { ...offer.economics };
+    if (thorQuote.slippageBps !== undefined) economics.slippageBps = thorQuote.slippageBps;
+    if (thorQuote.outboundFeeUSD !== undefined) economics.outboundFeeUSD = thorQuote.outboundFeeUSD;
+    if (thorQuote.settlementTimeSeconds !== undefined) {
+      economics.settlementTimeSeconds = thorQuote.settlementTimeSeconds;
+    }
+    if (thorQuote.recommendedMinAmountIn) {
+      economics.minimumInput = thorQuote.recommendedMinAmountIn;
+    }
+
+    const executionQuote = offer.execution.quote as QuoteResult | undefined;
+    const minThorOutput = this._parseBigInt(
+      thorQuote.expectedAmountOut ?? thorQuote.quote.expected_amount_out,
+    );
+    const enrichedQuote: QuoteResult | undefined = executionQuote
+      ? {
+        ...executionQuote,
+        thorAsset: thorQuote.quote.to_asset ?? executionQuote.thorAsset,
+        minThorOutput: minThorOutput ?? executionQuote.minThorOutput,
+        estimatedOut: minThorOutput ?? executionQuote.estimatedOut,
+      }
+      : undefined;
+
+    return {
+      ...offer,
+      estimatedOut: minThorOutput ?? offer.estimatedOut,
+      minAmountOut: minThorOutput
+        ? this._applySlippage(minThorOutput, QUOTE_SLIPPAGE_BPS)
+        : offer.minAmountOut,
+      economics,
+      execution: {
+        ...offer.execution,
+        quote: enrichedQuote ?? offer.execution.quote,
+        thorQuote: thorQuote.quote,
+        thorAssetIdentifier: thorQuote.quote.to_asset,
+        minThorOutput: thorQuote.expectedAmountOut ?? thorQuote.quote.expected_amount_out,
+        router: thorQuote.quote.router,
+        inboundAddress: thorQuote.quote.inbound_address,
+        memo: thorQuote.quote.memo,
+        thorchainExpiry: thorQuote.quote.expiry,
+      },
+    };
   }
 
   private _toOfferSet(offers: RailOffer[]): OfferSet {
@@ -689,6 +801,13 @@ export class QuoteEngine {
 
   private _zeroBytes32(): string {
     return `0x${'0'.repeat(64)}`;
+  }
+
+  private _parseBigInt(value: unknown): bigint | undefined {
+    if (value === null || value === undefined) return undefined;
+    const raw = String(value).trim();
+    if (!/^\d+$/.test(raw)) return undefined;
+    return BigInt(raw);
   }
 
   private _readEnv(name: string): string | undefined {

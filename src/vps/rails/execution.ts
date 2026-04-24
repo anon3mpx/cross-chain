@@ -1,5 +1,7 @@
 import { IntentService } from '../services/IntentService';
 import { CctpAttestationWorker } from '../services/CctpAttestationWorker';
+import { THORChainClient } from '../services/thorchain/THORChainClient';
+import { THORChainMonitorWorker } from '../services/thorchain/THORChainMonitorWorker';
 import { Rail } from '../types';
 import { getRailVariantLabel, RailVariantLabel } from './registry';
 
@@ -82,13 +84,50 @@ class CctpRailExecutionAdapter implements RailExecutionAdapter<CctpAttestationWo
   }
 }
 
+class THORChainRailExecutionAdapter implements RailExecutionAdapter<THORChainMonitorWorker> {
+  readonly rail = Rail.THORCHAIN;
+
+  async start(
+    context: RailExecutionContext,
+    options: RailExecutionOptions,
+  ): Promise<RailExecutionHandle<THORChainMonitorWorker>> {
+    const enabled = options.enabled?.[Rail.THORCHAIN] ?? readBool('ENABLE_THORCHAIN_WORKER', true);
+    if (!enabled) {
+      return {
+        rail: this.rail,
+        mode: 'disabled',
+        label: 'thorchain-monitor',
+        visualLabels: ['THORCHAIN'],
+        async stop() {
+          return;
+        },
+      };
+    }
+
+    const client = new THORChainClient();
+    const worker = new THORChainMonitorWorker(context.intentService, client);
+    await worker.start();
+
+    return {
+      rail: this.rail,
+      mode: 'worker',
+      label: 'thorchain-monitor',
+      visualLabels: ['THORCHAIN'],
+      instance: worker,
+      async stop() {
+        worker.stop();
+      },
+    };
+  }
+}
+
 const DEFAULT_ADAPTERS: RailExecutionAdapter[] = [
   new CctpRailExecutionAdapter(),
+  new THORChainRailExecutionAdapter(),
   new PassiveRailExecutionAdapter(Rail.AXELAR, 'event-monitor'),
   new PassiveRailExecutionAdapter(Rail.LAYERZERO, 'event-monitor'),
   new PassiveRailExecutionAdapter(Rail.VIA_LABS, 'event-monitor'),
   new PassiveRailExecutionAdapter(Rail.WORMHOLE, 'event-monitor'),
-  new PassiveRailExecutionAdapter(Rail.THORCHAIN, 'event-monitor'),
 ];
 
 export class RailExecutionManager {
