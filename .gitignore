@@ -21,6 +21,7 @@ Thumbs.db
 
 # Codex local configuration
 .codex/
+.worktrees/
 
 # Claude Flow runtime data
 .claude-flow
