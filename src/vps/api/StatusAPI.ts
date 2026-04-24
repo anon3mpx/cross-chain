@@ -12,7 +12,7 @@ import { IntentService, IntentLifecycleError } from '../services/IntentService';
 import { QuoteEngine } from '../services/QuoteEngine';
 import { buildRouterIntegration } from '../services/IntentCalldataBuilder';
 import { Intent, IntentStatus } from '../types';
-import { parseQuoteRequest, serializeQuote } from './quoteCodec';
+import { parseOfferSelection, parseQuoteRequest, serializeOfferSet, serializeQuote } from './quoteCodec';
 import { buildIntentActionMessage, IntentAction, SIGNATURE_WINDOW_MS } from '../utils/intentActionAuth';
 import { getRailVariantLabel } from '../rails/registry';
 
@@ -218,7 +218,7 @@ export function buildStatusAPI(
   }, readIntEnv('VPS_RATE_LIMIT_PRUNE_MS', 60_000)).unref?.();
 
   // ── GET /quote ─────────────────────────────────────────────────────────────
-  // Returns a full quote with intentId. Frontend uses this to build the tx.
+  // Returns an offer set. Client selects one offer, then requests integration.
   app.post('/quote', quoteRateLimit, async (req: Request, res: Response) => {
     try {
       const quoteReq = parseQuoteRequest(req.body, 'normal');
@@ -228,13 +228,47 @@ export function buildStatusAPI(
       if (!Number.isFinite(quoteReq.srcChainId) || !Number.isFinite(quoteReq.dstChainId)) {
         return res.status(400).json({ error: 'srcChainId and dstChainId are required' });
       }
-      const quote = await quoteEngine.getQuote(quoteReq);
-      if (!quote) return res.status(400).json({ error: 'No route available for this pair' });
+      const offerSet = await quoteEngine.getOffers(quoteReq);
+      if (!offerSet) return res.status(400).json({ error: 'No route available for this pair' });
 
-      // Pre-create intent in QUOTED state
-      const intent = await intentService.createQuotedIntent(quote, quoteReq.userAddress);
-      const integration = await buildRouterIntegration(intent.intentId, quote, quoteReq.userAddress);
-      res.json({ quote: serializeQuote(quote), intentId: intent.intentId, integration });
+      const quote = await quoteEngine.getQuote(quoteReq);
+      res.json({
+        offerSet: serializeOfferSet(offerSet),
+        ...(quote ? { quote: serializeQuote(quote) } : {}),
+      });
+    } catch (err) {
+      const msg = String(err);
+      const code = msg.toLowerCase().includes('calldata') || msg.toLowerCase().includes('routerv1') ? 503 : 400;
+      res.status(code).json({ error: msg });
+    }
+  });
+
+  app.post('/quote/select', async (req: Request, res: Response) => {
+    try {
+      const { offerSetId, offerId } = parseOfferSelection(req.body);
+      const userAddress = typeof req.body?.userAddress === 'string' ? req.body.userAddress.trim() : '';
+      if (!userAddress) {
+        return res.status(400).json({ error: 'userAddress is required' });
+      }
+
+      const selection = await quoteEngine.selectOffer(offerSetId, offerId);
+      if (!selection.offer) {
+        if (selection.fallbackOfferSet) {
+          return res.status(409).json({
+            error: 'OFFER_UNAVAILABLE',
+            message: 'Selected offer is unavailable. Please select a fallback offer.',
+            fallbackOfferSet: serializeOfferSet(selection.fallbackOfferSet),
+          });
+        }
+        return res.status(404).json({
+          error: selection.reason ?? 'OFFER_NOT_FOUND',
+          message: 'Offer selection is unavailable or expired.',
+        });
+      }
+
+      const intent = await intentService.createQuotedIntentFromOffer(selection.offer, userAddress);
+      const integration = await buildRouterIntegration(intent.intentId, intent.quote, userAddress);
+      res.json({ quote: serializeQuote(intent.quote), intentId: intent.intentId, integration });
     } catch (err) {
       const msg = String(err);
       const code = msg.toLowerCase().includes('calldata') || msg.toLowerCase().includes('routerv1') ? 503 : 400;

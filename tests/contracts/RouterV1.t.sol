@@ -26,6 +26,11 @@ contract MockRailPlugin is ERC165, IRailPlugin {
     IERC20 public immutable settlementToken;
     bytes32 public lastIntentId;
     uint256 public lastAmount;
+    bytes32 public lastSettlementAssetId;
+    address public lastExpectedDstSettlementToken;
+    bytes32 public lastExpectedDstSettlementAssetId;
+    uint256 public lastMinSettlementAmount;
+    bytes public lastDstCalldata;
 
     constructor(address settlementToken_) {
         settlementToken = IERC20(settlementToken_);
@@ -55,6 +60,11 @@ contract MockRailPlugin is ERC165, IRailPlugin {
         settlementToken.transferFrom(msg.sender, address(this), params.amount);
         lastIntentId = params.intentId;
         lastAmount = params.amount;
+        lastSettlementAssetId = params.settlementAssetId;
+        lastExpectedDstSettlementToken = params.expectedDstSettlementToken;
+        lastExpectedDstSettlementAssetId = params.expectedDstSettlementAssetId;
+        lastMinSettlementAmount = params.minSettlementAmount;
+        lastDstCalldata = params.dstCalldata;
         return keccak256(abi.encodePacked(params.intentId, params.amount));
     }
 
@@ -103,6 +113,59 @@ contract RouterV1Test {
 
         _assertEq(railPlugin.lastIntentId(), intent.intentId, "intent id mismatch");
         _assertEq(railPlugin.lastAmount(), intent.amountIn - intent.feeAmount, "bridged amount mismatch");
+        _assertEq(railPlugin.lastSettlementAssetId(), intent.settlementAssetId, "settlement asset id mismatch");
+        _assertEq(
+            railPlugin.lastExpectedDstSettlementToken(),
+            intent.expectedDstSettlementToken,
+            "expected dst settlement token mismatch"
+        );
+        _assertEq(
+            railPlugin.lastExpectedDstSettlementAssetId(),
+            intent.expectedDstSettlementAssetId,
+            "expected dst settlement asset id mismatch"
+        );
+        _assertEq(
+            railPlugin.lastMinSettlementAmount(),
+            intent.minSettlementAmount,
+            "min settlement amount mismatch"
+        );
+
+        (
+            bytes32 payloadIntentId,
+            address payloadUser,
+            address payloadTokenOut,
+            uint256 payloadMinAmountOut,
+            address payloadExpectedDstSettlementToken,
+            bytes32 payloadExpectedDstSettlementAssetId,
+            uint256 payloadMinSettlementAmount,
+            bytes memory payloadSwapData,
+            bytes32 payloadSwapPluginId
+        ) = abi.decode(
+            railPlugin.lastDstCalldata(),
+            (bytes32, address, address, uint256, address, bytes32, uint256, bytes, bytes32)
+        );
+
+        _assertEq(payloadIntentId, intent.intentId, "payload intent id mismatch");
+        _assertEq(payloadUser, intent.user, "payload user mismatch");
+        _assertEq(payloadTokenOut, intent.tokenOut, "payload token out mismatch");
+        _assertEq(payloadMinAmountOut, intent.minAmountOut, "payload min amount out mismatch");
+        _assertEq(
+            payloadExpectedDstSettlementToken,
+            intent.expectedDstSettlementToken,
+            "payload expected settlement token mismatch"
+        );
+        _assertEq(
+            payloadExpectedDstSettlementAssetId,
+            intent.expectedDstSettlementAssetId,
+            "payload expected settlement asset id mismatch"
+        );
+        _assertEq(
+            payloadMinSettlementAmount,
+            intent.minSettlementAmount,
+            "payload min settlement amount mismatch"
+        );
+        _assertEq(payloadSwapData, intent.swapDataDst, "payload swap data mismatch");
+        _assertEq(payloadSwapPluginId, intent.dstSwapPluginId, "payload swap plugin mismatch");
         _assertTrue(router.executedIntents(intent.intentId), "intent not marked executed");
     }
 
@@ -136,6 +199,10 @@ contract RouterV1Test {
         intent.rail = uint8(IntentTypes.Rail.CCTP);
         intent.settlementToken = uint8(IntentTypes.SettlementToken.USDC);
         intent.feeAmount = 1e6;
+        intent.settlementAssetId = keccak256("USDC.BASE");
+        intent.expectedDstSettlementToken = address(usdc);
+        intent.expectedDstSettlementAssetId = keccak256("USDC.ARB");
+        intent.minSettlementAmount = 99e6;
         intent.swapDataSrc = bytes("");
         intent.swapDataDst = bytes("");
         intent.swapPluginIdSrc = bytes32(0);
@@ -162,6 +229,14 @@ contract RouterV1Test {
 
     function _assertEq(bytes32 a, bytes32 b, string memory err) internal pure {
         require(a == b, err);
+    }
+
+    function _assertEq(address a, address b, string memory err) internal pure {
+        require(a == b, err);
+    }
+
+    function _assertEq(bytes memory a, bytes memory b, string memory err) internal pure {
+        require(keccak256(a) == keccak256(b), err);
     }
 
     function _assertTrue(bool ok, string memory err) internal pure {

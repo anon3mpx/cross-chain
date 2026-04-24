@@ -1,10 +1,12 @@
 import { IntentRepository, IntentTransitionOptions, RefundCaseUpsert } from '../db/IntentRepository';
+import { randomBytes } from 'crypto';
 import {
   Intent,
   IntentRefundCase,
   IntentStatus,
   QuoteResult,
   Rail,
+  RailOffer,
   RefundCaseStatus,
 } from '../types';
 import { IntentEngine } from './IntentEngine';
@@ -62,6 +64,11 @@ export class IntentService {
 
     this.intentEngine.upsert(intent, true);
     return intent;
+  }
+
+  async createQuotedIntentFromOffer(offer: RailOffer, userAddress: string, partnerApiKey?: string): Promise<Intent> {
+    const quote = this.materializeSelectedOfferQuote(offer);
+    return this.createQuotedIntent(quote, userAddress, partnerApiKey);
   }
 
   async getIntent(intentId: string): Promise<Intent | null> {
@@ -236,6 +243,25 @@ export class IntentService {
 
   canRequestRefund(status: IntentStatus): boolean {
     return ![IntentStatus.CREATED, IntentStatus.QUOTED, IntentStatus.CANCELLED, IntentStatus.SETTLED].includes(status);
+  }
+
+  private materializeSelectedOfferQuote(offer: RailOffer): QuoteResult {
+    const executionQuote = offer.execution?.quote;
+    if (!executionQuote || typeof executionQuote !== 'object') {
+      throw new IntentLifecycleError(
+        'INVALID_OFFER_SELECTION',
+        `Selected offer ${offer.offerId} is missing its execution quote payload.`,
+      );
+    }
+
+    return {
+      ...(executionQuote as QuoteResult),
+      intentId: this.makeIntentId(),
+    };
+  }
+
+  private makeIntentId(): string {
+    return `0x${randomBytes(32).toString('hex')}`;
   }
 
   private async transition(

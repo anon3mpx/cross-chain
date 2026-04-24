@@ -26,7 +26,7 @@ contract RouterV1 is EIP712, ReentrancyGuard, Pausable, Ownable2Step {
         "IntentExecution(bytes swapDataSrc,bytes swapDataDst,bytes32 swapPluginIdSrc,bytes32 dstSwapPluginId,bytes32 railPluginId,bytes railData,address dstReceiver,bytes nativeDstAddress,string thorAssetIdentifier,uint256 minThorOutput,bytes32 intentId,uint256 deadline)"
     );
     bytes32 private constant SWAP_INTENT_TYPEHASH = keccak256(
-        "SwapIntent(address user,address tokenIn,address tokenOut,uint256 amountIn,uint256 minAmountOut,uint256 minSrcSwapOut,uint32 dstChainId,uint8 rail,uint8 settlementToken,uint256 feeAmount,IntentExecution execution)IntentExecution(bytes swapDataSrc,bytes swapDataDst,bytes32 swapPluginIdSrc,bytes32 dstSwapPluginId,bytes32 railPluginId,bytes railData,address dstReceiver,bytes nativeDstAddress,string thorAssetIdentifier,uint256 minThorOutput,bytes32 intentId,uint256 deadline)"
+        "SwapIntent(address user,address tokenIn,address tokenOut,uint256 amountIn,uint256 minAmountOut,uint256 minSrcSwapOut,uint32 dstChainId,uint8 rail,uint8 settlementToken,bytes32 settlementAssetId,address expectedDstSettlementToken,bytes32 expectedDstSettlementAssetId,uint256 minSettlementAmount,uint256 feeAmount,IntentExecution execution)IntentExecution(bytes swapDataSrc,bytes swapDataDst,bytes32 swapPluginIdSrc,bytes32 dstSwapPluginId,bytes32 railPluginId,bytes railData,address dstReceiver,bytes nativeDstAddress,string thorAssetIdentifier,uint256 minThorOutput,bytes32 intentId,uint256 deadline)"
     );
 
     PluginRegistry public immutable registry;
@@ -59,6 +59,7 @@ contract RouterV1 is EIP712, ReentrancyGuard, Pausable, Ownable2Step {
     error IntentAlreadyExecuted(bytes32 intentId);
     error InvalidIntentSignature();
     error FeeTooHigh(uint256 feeAmount, uint256 maxAllowed);
+    error SettlementAmountTooLow(bytes32 intentId, uint256 got, uint256 min);
     error ZeroAmount();
     error AmountBelowMinimum(uint256 amount, uint256 minimum);
     error ZeroAddress(string field);
@@ -150,14 +151,30 @@ contract RouterV1 is EIP712, ReentrancyGuard, Pausable, Ownable2Step {
             intent.user,
             intent.tokenOut,
             intent.minAmountOut,
+            intent.expectedDstSettlementToken,
+            intent.expectedDstSettlementAssetId,
+            intent.minSettlementAmount,
             intent.swapDataDst,
             intent.dstSwapPluginId  // [SECURITY] plugin selection locked inside intent, not external param
         );
+
+        if (intent.dstReceiver != address(0)) {
+            if (intent.expectedDstSettlementToken == address(0)) {
+                revert ZeroAddress("expectedDstSettlementToken");
+            }
+            if (settlementAmount < intent.minSettlementAmount) {
+                revert SettlementAmountTooLow(intent.intentId, settlementAmount, intent.minSettlementAmount);
+            }
+        }
 
         IntentTypes.BridgeParams memory bridgeParams = IntentTypes.BridgeParams({
             intentId:            intent.intentId,
             settlementTokenAddr: settlementAddr,
             amount:              settlementAmount,
+            settlementAssetId:   intent.settlementAssetId,
+            expectedDstSettlementToken: intent.expectedDstSettlementToken,
+            expectedDstSettlementAssetId: intent.expectedDstSettlementAssetId,
+            minSettlementAmount: intent.minSettlementAmount,
             dstChainId:          intent.dstChainId,
             railData:            intent.railData,
             dstReceiver:         intent.dstReceiver,   // [FIX] was address(0) — now required in intent
@@ -230,6 +247,10 @@ contract RouterV1 is EIP712, ReentrancyGuard, Pausable, Ownable2Step {
                 materialized.dstChainId,
                 materialized.rail,
                 materialized.settlementToken,
+                materialized.settlementAssetId,
+                materialized.expectedDstSettlementToken,
+                materialized.expectedDstSettlementAssetId,
+                materialized.minSettlementAmount,
                 materialized.feeAmount,
                 _hashExecution(materialized)
             )

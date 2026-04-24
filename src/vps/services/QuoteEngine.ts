@@ -4,10 +4,21 @@
 // Results are cached 30s to minimise RPC calls.
 // ─────────────────────────────────────────────────────────
 
-import { AbiCoder } from 'ethers';
-import { QuoteRequest, QuoteResult, Rail, Route, RouteType } from '../types';
+import { AbiCoder, ZeroAddress, solidityPackedKeccak256 } from 'ethers';
+import {
+  OfferEconomics,
+  OfferSet,
+  ProviderAssetRef,
+  QuoteRequest,
+  QuoteResult,
+  Rail,
+  RailOffer,
+  Route,
+  RouteType,
+  SettlementToken,
+} from '../types';
 import { RouteBuilder } from './RouterBuilder';
-import { getChainConfig } from '../config/chains';
+import { CHAIN_CONFIGS, getChainConfig } from '../config/chains';
 import { getSettlementTokenAddress, getSwapPluginIdForChain } from '../config/contracts';
 import { randomBytes } from 'crypto';
 import { InMemoryQuoteCache, QuoteCache } from '../cache/QuoteCache';
@@ -22,6 +33,8 @@ import {
 const CACHE_TTL_MS = 30_000;
 const LOWER_HEX_ADDR_RE = /^0x[0-9a-f]{40}$/;
 const ROUTER_MAX_FEE_BPS = 100; // RouterV1.MAX_FEE_BPS
+const QUOTE_SLIPPAGE_BPS = 50; // 0.5%
+const BPS_DENOMINATOR = 10_000n;
 const USDC_MICRO_UNITS = 1_000_000n;
 const abiCoder = AbiCoder.defaultAbiCoder();
 
@@ -36,18 +49,83 @@ interface CctpPlan {
   circleFeeToken: bigint;
 }
 
-// DEX quote sources per chain (extend as you add aggregators)
+interface BuiltDirectQuote {
+  quote: QuoteResult;
+  realizedProviderFeeUSD: number;
+  protocolFeeUSD: number;
+  outboundFeeUSD?: number;
+}
+
+export interface OfferSelectionResult {
+  offer: RailOffer | null;
+  fallbackOfferSet: OfferSet | null;
+  reason?: 'OFFER_SET_NOT_FOUND' | 'OFFER_SET_EXPIRED' | 'OFFER_UNAVAILABLE';
+}
+
 type QuoteFn = (tokenIn: string, tokenOut: string, amountIn: bigint) => Promise<bigint>;
-const DEX_QUOTE_FNS: Record<number, QuoteFn> = {
-  // Populated at startup by DexAdapters — left as stubs here
-};
 
 export class QuoteEngine {
   private routeBuilder = new RouteBuilder();
   private readonly cache: QuoteCache;
+  private readonly offerCache = new Map<string, { value: OfferSet; expiresAt: number }>();
+  private readonly pendingOfferSets = new Map<string, Promise<OfferSet | null>>();
+  private readonly dexQuoteFns = new Map<number, QuoteFn>();
 
   constructor(cache: QuoteCache = new InMemoryQuoteCache()) {
     this.cache = cache;
+  }
+
+  async getOffers(req: QuoteRequest): Promise<OfferSet | null> {
+    return this._getCachedOfferSet(req);
+  }
+
+  async selectOffer(offerSetId: string, offerId: string): Promise<OfferSelectionResult> {
+    const now = Date.now();
+    const nowSeconds = Math.floor(now / 1000);
+
+    let matchedSet: OfferSet | null = null;
+    for (const [cacheKey, cached] of this.offerCache.entries()) {
+      if (cached.expiresAt <= now) {
+        this.offerCache.delete(cacheKey);
+        continue;
+      }
+      if (cached.value.offerSetId !== offerSetId) continue;
+      matchedSet = cached.value;
+      break;
+    }
+    if (!matchedSet) {
+      return { offer: null, fallbackOfferSet: null, reason: 'OFFER_SET_NOT_FOUND' };
+    }
+    if (matchedSet.expiresAt <= nowSeconds) {
+      return { offer: null, fallbackOfferSet: null, reason: 'OFFER_SET_EXPIRED' };
+    }
+
+    const validOffers = matchedSet.offers.filter((candidate) => candidate.expiresAt > nowSeconds);
+    const selected = validOffers.find((candidate) => candidate.offerId === offerId) ?? null;
+    if (selected) {
+      return { offer: selected, fallbackOfferSet: null };
+    }
+
+    const fallbackOffers = validOffers.filter((candidate) => candidate.offerId !== offerId);
+    if (fallbackOffers.length === 0) {
+      return { offer: null, fallbackOfferSet: null, reason: 'OFFER_UNAVAILABLE' };
+    }
+
+    return {
+      offer: null,
+      fallbackOfferSet: {
+        offerSetId: matchedSet.offerSetId,
+        expiresAt: fallbackOffers.reduce((min, candidate) => Math.min(min, candidate.expiresAt), fallbackOffers[0].expiresAt),
+        offers: fallbackOffers,
+        bestOfferId: fallbackOffers[0].offerId,
+      },
+      reason: 'OFFER_UNAVAILABLE',
+    };
+  }
+
+  async getOfferBySelection(offerSetId: string, offerId: string): Promise<RailOffer | null> {
+    const selection = await this.selectOffer(offerSetId, offerId);
+    return selection.offer;
   }
 
   async getQuote(req: QuoteRequest): Promise<QuoteResult | null> {
@@ -55,45 +133,71 @@ export class QuoteEngine {
     const cached = await this.cache.get(cacheKey);
     if (cached) return cached;
 
-    const result = await this._buildQuote(req);
-    if (!result) return null;
+    const offerSet = await this.getOffers(req);
+    if (!offerSet || offerSet.offers.length === 0) return null;
 
-    await this.cache.set(cacheKey, result, CACHE_TTL_MS);
-    return result;
+    const quote = this._materializeLegacyQuote(offerSet.offers[0]);
+    await this.cache.set(cacheKey, quote, CACHE_TTL_MS);
+    return quote;
   }
 
-  private async _buildQuote(req: QuoteRequest): Promise<QuoteResult | null> {
-    // Resolve destination chain config (would come from a chain registry in production)
-    const dstChain = getChainConfig(req.dstChainId);
-    if (!dstChain) return null;
+  private async _buildOffer(
+    req: QuoteRequest,
+    route: Route,
+    amountUSD: number,
+  ): Promise<RailOffer | null> {
+    const builtQuote = await this._quoteForDirectRoute(req, route, amountUSD);
+    if (!builtQuote) return null;
 
-    // Build candidate routes. Multi-hop routes are excluded because calldata
-    // currently supports only single-hop execution.
-    const amountUSD = await this._estimateUSD(req.tokenIn, req.srcChainId, req.amountIn);
-    const candidateRoutes = this.routeBuilder
-      .buildRoutes(req.srcChainId, req.dstChainId, amountUSD, req.urgency ?? 'normal')
-      .filter(r => r.viable && r.hops.length === 1);
-    if (candidateRoutes.length === 0) return null;
+    const { quote: legacyQuote } = builtQuote;
 
-    const candidates = (await Promise.all(
-      candidateRoutes.map(route => this._quoteForDirectRoute(req, route, amountUSD)),
-    )).filter((quote): quote is QuoteResult => quote !== null);
-    if (candidates.length === 0) return null;
+    const economics = this._buildOfferEconomics(route, builtQuote);
 
-    return candidates.sort((a, b) => {
-      if (a.minAmountOut !== b.minAmountOut) return a.minAmountOut > b.minAmountOut ? -1 : 1;
-      if (a.estimatedOut !== b.estimatedOut) return a.estimatedOut > b.estimatedOut ? -1 : 1;
-      if (a.feeAmountUSD !== b.feeAmountUSD) return a.feeAmountUSD - b.feeAmountUSD;
-      if (a.etaSeconds !== b.etaSeconds) return a.etaSeconds - b.etaSeconds;
-      return 0;
-    })[0];
+    return {
+      offerId: legacyQuote.intentId,
+      rail: legacyQuote.rail,
+      railType: legacyQuote.railType,
+      srcChainId: legacyQuote.srcChainId,
+      dstChainId: legacyQuote.dstChainId,
+      tokenIn: legacyQuote.tokenIn,
+      tokenOut: legacyQuote.tokenOut,
+      amountIn: legacyQuote.amountIn,
+      estimatedOut: legacyQuote.estimatedOut,
+      minAmountOut: legacyQuote.minAmountOut,
+      expiresAt: legacyQuote.expiresAt,
+      sourceSettlementAsset: this._toProviderAssetRef(
+        legacyQuote.srcChainId,
+        legacyQuote.settlementToken,
+        legacyQuote.rail,
+      ),
+      destinationSettlementAsset: this._toProviderAssetRef(
+        legacyQuote.dstChainId,
+        legacyQuote.settlementToken,
+        legacyQuote.rail,
+      ),
+      economics,
+      execution: {
+        quote: legacyQuote,
+        feeAmountToken: legacyQuote.feeAmountToken,
+        minSrcSwapOut: legacyQuote.minSrcSwapOut,
+        providerFeeUSD: builtQuote.realizedProviderFeeUSD,
+        protocolFeeUSD: builtQuote.protocolFeeUSD,
+        railPluginId: legacyQuote.railPluginId,
+        railData: legacyQuote.railData,
+        swapPluginIdSrc: legacyQuote.swapPluginIdSrc,
+        swapPluginIdDst: legacyQuote.swapPluginIdDst,
+        swapDataSrc: legacyQuote.swapDataSrc,
+        swapDataDst: legacyQuote.swapDataDst,
+        nativeDstAddress: legacyQuote.nativeDstAddress,
+      },
+    };
   }
 
   private async _quoteForDirectRoute(
     req: QuoteRequest,
     route: Route,
     amountUSD: number,
-  ): Promise<QuoteResult | null> {
+  ): Promise<BuiltDirectQuote | null> {
     const hop = route.hops[0];
     const config = getRailConfig(hop.rail);
     const settlementToken = hop.settlementTokenOut;
@@ -107,7 +211,7 @@ export class QuoteEngine {
     const totalFeeUSD = railFeeUSD + protocolFeeUSD;
     const feeBpsUncapped = Math.max(0, Math.round((totalFeeUSD / Math.max(amountUSD, 1)) * 10_000));
     const feeRatioBps = BigInt(Math.min(feeBpsUncapped, ROUTER_MAX_FEE_BPS));
-    const feeAmountToken = (req.amountIn * feeRatioBps) / 10_000n;
+    const feeAmountToken = (req.amountIn * feeRatioBps) / BPS_DENOMINATOR;
     if (feeAmountToken >= req.amountIn) return null;
     const amountAfterFee = req.amountIn - feeAmountToken;
 
@@ -133,11 +237,15 @@ export class QuoteEngine {
     let railPluginId = config.pluginId;
     let railData = '0x';
     let bridgeAmount = srcSwapAmount;
+    let realizedRailFeeUSD = railFeeUSD;
+    let outboundFeeUSD: number | undefined;
     if (hop.rail === Rail.CCTP) {
       const cctpPlan = await this._selectCctpPlan(req, srcSwapAmount, config.pluginId);
       railPluginId = cctpPlan.railPluginId;
       railData = cctpPlan.railData;
       if (cctpPlan.circleFeeToken >= srcSwapAmount) return null;
+      outboundFeeUSD = this._settlementTokenToUSD(settlementToken, cctpPlan.circleFeeToken);
+      realizedRailFeeUSD += outboundFeeUSD;
       bridgeAmount = srcSwapAmount - cctpPlan.circleFeeToken;
     }
 
@@ -169,41 +277,172 @@ export class QuoteEngine {
       : ZERO_PLUGIN_ID;
     if (dstSwapNeeded && dstSwapPluginId === ZERO_PLUGIN_ID) return null;
 
-    // Apply slippage tolerance (0.5%)
-    // const minAmountOut = (dstSwapAmount * 995n) / 1000n;
-    const minAmountOut = dstSwapAmount;
+    const minAmountOut = (dstSwapAmount * (BPS_DENOMINATOR - BigInt(QUOTE_SLIPPAGE_BPS))) / BPS_DENOMINATOR;
+    const minSettlementAmount = this._applySlippage(bridgeAmount, QUOTE_SLIPPAGE_BPS);
+    const settlementAssetId = this._settlementAssetId(req.srcChainId, settlementAddrSrc);
+    const expectedDstSettlementAssetId = settlementAddrDst
+      ? this._settlementAssetId(req.dstChainId, settlementAddrDst)
+      : this._zeroBytes32();
 
     return {
-      intentId:        this._makeIntentId(),
-      srcChainId:      req.srcChainId,
-      dstChainId:      req.dstChainId,
-      tokenIn:         req.tokenIn,
-      tokenOut:        req.tokenOut,
-      amountIn:        req.amountIn,
-      estimatedOut:    dstSwapAmount,
-      minAmountOut,
-      minSrcSwapOut,
-      feeAmountUSD:    totalFeeUSD,
-      feeAmountToken,
-      rail:            hop.rail,
-      railType:        config.railType,
-      settlementToken,
-      etaSeconds:      isCctpFastPluginId(railPluginId) ? Math.min(route.totalEtaSeconds, 8) : route.totalEtaSeconds,
-      expiresAt:       Math.floor(Date.now() / 1000) + 120,
-      railPluginId,
-      railData,
-      swapPluginIdSrc: srcSwapPluginId,
-      swapPluginIdDst: dstSwapPluginId,
-      swapDataSrc:     '0x',
-      swapDataDst:     '0x',
-      nativeDstAddress: req.nativeDstAddress,
+      quote: {
+        intentId:        this._makeIntentId(),
+        srcChainId:      req.srcChainId,
+        dstChainId:      req.dstChainId,
+        tokenIn:         req.tokenIn,
+        tokenOut:        req.tokenOut,
+        amountIn:        req.amountIn,
+        estimatedOut:    dstSwapAmount,
+        minAmountOut,
+        minSrcSwapOut,
+        feeAmountUSD:    totalFeeUSD,
+        feeAmountToken,
+        rail:            hop.rail,
+        railType:        config.railType,
+        settlementToken,
+        settlementAssetId,
+        expectedDstSettlementToken: settlementAddrDst ?? ZeroAddress,
+        expectedDstSettlementAssetId,
+        minSettlementAmount,
+        etaSeconds:      isCctpFastPluginId(railPluginId) ? Math.min(route.totalEtaSeconds, 8) : route.totalEtaSeconds,
+        expiresAt:       Math.floor(Date.now() / 1000) + 120,
+        railPluginId,
+        railData,
+        swapPluginIdSrc: srcSwapPluginId,
+        swapPluginIdDst: dstSwapPluginId,
+        swapDataSrc:     '0x',
+        swapDataDst:     '0x',
+        nativeDstAddress: req.nativeDstAddress,
+      },
+      realizedProviderFeeUSD: realizedRailFeeUSD,
+      protocolFeeUSD,
+      outboundFeeUSD,
     };
+  }
+
+  private _buildOfferEconomics(
+    route: Route,
+    builtQuote: BuiltDirectQuote,
+  ): OfferEconomics {
+    const rail = route.hops[0].rail;
+    const economics: OfferEconomics = {
+      providerFeeUSD: builtQuote.realizedProviderFeeUSD,
+      protocolFeeUSD: builtQuote.protocolFeeUSD,
+      sourceGasUSD: 0,
+      settlementTimeSeconds: builtQuote.quote.etaSeconds,
+    };
+
+    if (rail === Rail.CCTP && builtQuote.outboundFeeUSD !== undefined) {
+      economics.outboundFeeUSD = builtQuote.outboundFeeUSD;
+    }
+
+    return economics;
+  }
+
+  private _toOfferSet(offers: RailOffer[]): OfferSet {
+    return {
+      offerSetId: this._makeIntentId(),
+      expiresAt: offers.reduce((min, offer) => Math.min(min, offer.expiresAt), offers[0].expiresAt),
+      offers,
+      bestOfferId: offers[0]?.offerId,
+    };
+  }
+
+  private _materializeLegacyQuote(offer: RailOffer): QuoteResult {
+    const executionQuote = offer.execution.quote;
+    if (executionQuote && typeof executionQuote === 'object') {
+      return executionQuote as QuoteResult;
+    }
+
+    throw new Error(`offer ${offer.offerId} missing compatibility quote payload`);
+  }
+
+  private async _getCachedOfferSet(req: QuoteRequest): Promise<OfferSet | null> {
+    const cacheKey = this._cacheKey(req);
+    const cached = this.offerCache.get(cacheKey);
+    if (cached) {
+      if (Date.now() < cached.expiresAt) return cached.value;
+      this.offerCache.delete(cacheKey);
+    }
+
+    const pending = this.pendingOfferSets.get(cacheKey);
+    if (pending) return pending;
+
+    const buildPromise = this._computeOfferSet(req).finally(() => {
+      this.pendingOfferSets.delete(cacheKey);
+    });
+    this.pendingOfferSets.set(cacheKey, buildPromise);
+    return buildPromise;
+  }
+
+  private async _computeOfferSet(req: QuoteRequest): Promise<OfferSet | null> {
+    const dstChain = getChainConfig(req.dstChainId);
+    if (!dstChain) return null;
+
+    const amountUSD = await this._estimateUSD(req.tokenIn, req.srcChainId, req.amountIn);
+    const candidateRoutes = this.routeBuilder
+      .buildRoutes(req.srcChainId, req.dstChainId, amountUSD, req.urgency ?? 'normal')
+      .filter((route) => route.viable && route.hops.length === 1);
+    if (candidateRoutes.length === 0) return null;
+
+    const offers = (await Promise.all(
+      candidateRoutes.map((route) => this._buildOffer(req, route, amountUSD)),
+    )).filter((offer): offer is RailOffer => offer !== null);
+    if (offers.length === 0) return null;
+
+    const offerSet = this._toOfferSet(offers);
+    this.offerCache.set(this._cacheKey(req), {
+      value: offerSet,
+      expiresAt: Date.now() + CACHE_TTL_MS,
+    });
+    return offerSet;
+  }
+
+  private _toProviderAssetRef(
+    chainId: number,
+    settlementToken: SettlementToken,
+    rail: Rail,
+  ): ProviderAssetRef {
+    const tokenAddress = getSettlementTokenAddress(chainId, settlementToken, rail);
+    return {
+      canonicalAssetId: `${chainId}:${settlementToken}`,
+      providerAssetId: `${rail}:${chainId}:${settlementToken}`,
+      tokenAddress,
+      decimals: this._settlementTokenDecimals(settlementToken),
+      assetKind: this._settlementAssetKind(settlementToken),
+    };
+  }
+
+  private _settlementTokenDecimals(token: SettlementToken): number {
+    switch (token) {
+      case SettlementToken.USDC:
+      case SettlementToken.USDT:
+        return 6;
+      case SettlementToken.SOL:
+        return 9;
+      case SettlementToken.BTC:
+        return 8;
+      case SettlementToken.ETH:
+      default:
+        return 18;
+    }
+  }
+
+  private _settlementAssetKind(token: SettlementToken): ProviderAssetRef['assetKind'] {
+    switch (token) {
+      case SettlementToken.BTC:
+        return 'btc';
+      case SettlementToken.SOL:
+        return 'sol';
+      default:
+        return 'erc20';
+    }
   }
 
   private async _getSwapQuote(
     chainId: number, tokenIn: string, tokenOut: string, amountIn: bigint
   ): Promise<bigint | null> {
-    const quoteFn = DEX_QUOTE_FNS[chainId];
+    const quoteFn = this.dexQuoteFns.get(chainId);
     if (!quoteFn) return null;
     try {
       return await quoteFn(tokenIn, tokenOut, amountIn);
@@ -321,11 +560,14 @@ export class QuoteEngine {
     return (value + denominator - 1n) / denominator;
   }
 
-  private async _estimateUSD(token: string, _chainId: number, amount: bigint): Promise<number> {
+  private async _estimateUSD(token: string, chainId: number, amount: bigint): Promise<number> {
     // Stub: use a price oracle or coingecko in production.
-    // Heuristic decimals only for rough route scoring.
-    const decimals = this._isStableLike(token) ? 6 : 18;
-    return this._bigintToDecimal(amount, decimals);
+    const stableToken = this._resolveStableSettlementToken(token, chainId);
+    if (stableToken === SettlementToken.USDC || stableToken === SettlementToken.USDT) {
+      return this._bigintToDecimal(amount, 6);
+    }
+    const fallbackDecimals = this._isStableLike(token) ? 6 : 18;
+    return this._bigintToDecimal(amount, fallbackDecimals);
   }
 
   private _cacheKey(req: QuoteRequest): string {
@@ -342,7 +584,11 @@ export class QuoteEngine {
   }
 
   registerDexQuoteFn(chainId: number, fn: QuoteFn): void {
-    DEX_QUOTE_FNS[chainId] = fn;
+    this.dexQuoteFns.set(chainId, fn);
+  }
+
+  resetDexQuoteFns(): void {
+    this.dexQuoteFns.clear();
   }
 
   private _makeIntentId(): string {
@@ -358,6 +604,32 @@ export class QuoteEngine {
     return t.includes('usdc') || t.includes('usdt');
   }
 
+  private _resolveStableSettlementToken(token: string, chainId: number): SettlementToken | null {
+    const normalized = token.toLowerCase();
+    if (!this._isAddress(normalized)) return null;
+
+    const currentChainMatch = this._matchStableSettlementToken(normalized, [chainId]);
+    if (currentChainMatch) return currentChainMatch;
+
+    return this._matchStableSettlementToken(normalized, Object.keys(CHAIN_CONFIGS).map(Number));
+  }
+
+  private _matchStableSettlementToken(token: string, chainIds: number[]): SettlementToken | null {
+    for (const settlementToken of [SettlementToken.USDC, SettlementToken.USDT] as const) {
+      for (const candidateChainId of chainIds) {
+        const defaultAddr = getSettlementTokenAddress(candidateChainId, settlementToken);
+        if (defaultAddr && defaultAddr.toLowerCase() === token) return settlementToken;
+
+        for (const rail of Object.values(Rail)) {
+          const railAddr = getSettlementTokenAddress(candidateChainId, settlementToken, rail);
+          if (railAddr && railAddr.toLowerCase() === token) return settlementToken;
+        }
+      }
+    }
+
+    return null;
+  }
+
   private _bigintToDecimal(amount: bigint, decimals: number): number {
     const base = 10n ** BigInt(decimals);
     const whole = amount / base;
@@ -366,6 +638,29 @@ export class QuoteEngine {
       ? Number.MAX_SAFE_INTEGER
       : Number(whole);
     return clampedWhole + Number(frac) / 10 ** decimals;
+  }
+
+  private _settlementTokenToUSD(token: SettlementToken, amount: bigint): number {
+    switch (token) {
+      case SettlementToken.USDC:
+      case SettlementToken.USDT:
+        return this._bigintToDecimal(amount, 6);
+      default:
+        return 0;
+    }
+  }
+
+  private _applySlippage(amount: bigint, bps: number): bigint {
+    const bpsBigInt = BigInt(Math.max(0, Math.min(10_000, Math.floor(bps))));
+    return (amount * (BPS_DENOMINATOR - bpsBigInt)) / BPS_DENOMINATOR;
+  }
+
+  private _settlementAssetId(chainId: number, tokenAddress: string): string {
+    return solidityPackedKeccak256(['uint256', 'address'], [BigInt(chainId), tokenAddress]);
+  }
+
+  private _zeroBytes32(): string {
+    return `0x${'0'.repeat(64)}`;
   }
 
   private _readEnv(name: string): string | undefined {

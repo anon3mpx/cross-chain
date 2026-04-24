@@ -153,6 +153,10 @@ export interface QuoteResult {
   rail:              Rail;
   railType:          'messaging' | 'liquidity';
   settlementToken:   SettlementToken;
+  settlementAssetId: string;    // bytes32-like provider/canonical asset id for source settlement
+  expectedDstSettlementToken: string; // destination settlement token expected by ReceiverV1
+  expectedDstSettlementAssetId: string; // bytes32-like expected destination settlement asset id
+  minSettlementAmount: bigint;  // min settlement amount required before destination execution
   etaSeconds:        number;
   expiresAt:         number;
   railPluginId:      string;
@@ -165,6 +169,51 @@ export interface QuoteResult {
   thorAsset?:        string;    // e.g. "BTC.BTC", "SOL.SOL"
   minThorOutput?:    bigint;    // 8-decimal THORChain units
   nativeDstAddress?: string;    // User's BTC/SOL/DOGE address
+}
+
+export interface ProviderAssetRef {
+  canonicalAssetId: string;
+  providerAssetId: string;
+  tokenAddress?: string;
+  decimals: number;
+  assetKind: 'erc20' | 'native' | 'btc' | 'sol' | 'doge';
+}
+
+export interface OfferEconomics {
+  providerFeeUSD: number;
+  protocolFeeUSD: number;
+  sourceGasUSD: number;
+  destinationGasUSD?: number;
+  outboundFeeUSD?: number;
+  slippageBps?: number;
+  priceImpactPct?: number;
+  settlementTimeSeconds: number;
+  minimumInput?: string;
+}
+
+export interface RailOffer {
+  offerId: string;
+  rail: Rail;
+  railType: 'messaging' | 'liquidity';
+  srcChainId: number;
+  dstChainId: number;
+  tokenIn: string;
+  tokenOut: string;
+  amountIn: bigint;
+  estimatedOut: bigint;
+  minAmountOut: bigint;
+  expiresAt: number;
+  sourceSettlementAsset: ProviderAssetRef;
+  destinationSettlementAsset: ProviderAssetRef;
+  economics: OfferEconomics;
+  execution: Record<string, unknown>;
+}
+
+export interface OfferSet {
+  offerSetId: string;
+  expiresAt: number;
+  offers: RailOffer[];
+  bestOfferId?: string;
 }
 
 export interface Intent {

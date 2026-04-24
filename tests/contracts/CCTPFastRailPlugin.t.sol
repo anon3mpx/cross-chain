@@ -96,6 +96,10 @@ contract CCTPFastRailPluginTest {
             intentId: keccak256("intent-fast-1"),
             settlementTokenAddr: address(usdc),
             amount: amount,
+            settlementAssetId: bytes32(0),
+            expectedDstSettlementToken: address(0),
+            expectedDstSettlementAssetId: bytes32(0),
+            minSettlementAmount: 0,
             dstChainId: DST_CHAIN,
             railData: abi.encode(uint32(1000), maxFee),
             dstReceiver: address(0xBEEF),
@@ -126,6 +130,10 @@ contract CCTPFastRailPluginTest {
             intentId: keccak256("intent-fast-2"),
             settlementTokenAddr: address(usdc),
             amount: 10e6,
+            settlementAssetId: bytes32(0),
+            expectedDstSettlementToken: address(0),
+            expectedDstSettlementAssetId: bytes32(0),
+            minSettlementAmount: 0,
             dstChainId: DST_CHAIN,
             railData: bytes(""),
             dstReceiver: address(0xBEEF),
@@ -150,6 +158,10 @@ contract CCTPFastRailPluginTest {
             intentId: keccak256("intent-fast-3"),
             settlementTokenAddr: address(usdc),
             amount: amount,
+            settlementAssetId: bytes32(0),
+            expectedDstSettlementToken: address(0),
+            expectedDstSettlementAssetId: bytes32(0),
+            minSettlementAmount: 0,
             dstChainId: DST_CHAIN,
             railData: abi.encode(uint32(1000), tooHighMaxFee),
             dstReceiver: address(0xBEEF),
@@ -177,4 +189,3 @@ contract CCTPFastRailPluginTest {
         require(ok, err);
     }
 }
-

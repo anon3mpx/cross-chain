@@ -73,8 +73,12 @@ export function reviveQuote(raw: any): QuoteResult {
     estimatedOut: toBigIntOrZero(q.estimatedOut),
     minAmountOut: toBigIntOrZero(q.minAmountOut),
     minSrcSwapOut: toBigIntOrZero(q.minSrcSwapOut),
+    minSettlementAmount: toBigIntOrZero(q.minSettlementAmount),
     feeAmountToken: toBigIntOrZero(q.feeAmountToken),
     minThorOutput: toOptionalBigInt(q.minThorOutput),
+    settlementAssetId: parseOptionalString(q.settlementAssetId) ?? `0x${'0'.repeat(64)}`,
+    expectedDstSettlementToken: parseOptionalString(q.expectedDstSettlementToken) ?? '0x0000000000000000000000000000000000000000',
+    expectedDstSettlementAssetId: parseOptionalString(q.expectedDstSettlementAssetId) ?? `0x${'0'.repeat(64)}`,
   };
 }
 

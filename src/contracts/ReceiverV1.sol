@@ -27,6 +27,9 @@ contract ReceiverV1 is ReentrancyGuard, Pausable, Ownable2Step {
 
     error UnauthorizedCaller(address caller);
     error IntentAlreadySettled(bytes32 intentId);
+    error UnexpectedSettlementToken(address received, address expected);
+    error UnexpectedSettlementAsset(bytes32 received, bytes32 expected);
+    error SettlementOutputTooLow(bytes32 intentId, uint256 got, uint256 min);
     error SwapOutputTooLow(bytes32 intentId, uint256 got, uint256 min);
     error ZeroAmount();
     error ZeroAddress(string field);
@@ -58,12 +61,28 @@ contract ReceiverV1 is ReentrancyGuard, Pausable, Ownable2Step {
             address user,
             address tokenOut,
             uint256 minAmountOut,
+            address expectedSettlementToken,
+            bytes32 expectedSettlementAssetId,
+            uint256 minSettlementAmount,
             bytes memory swapData,
             bytes32 swapPluginId
-        ) = abi.decode(payload, (bytes32, address, address, uint256, bytes, bytes32));
+        ) = abi.decode(payload, (bytes32, address, address, uint256, address, bytes32, uint256, bytes, bytes32));
 
         if (user == address(0)) revert ZeroAddress("user");
+        if (expectedSettlementToken == address(0)) revert ZeroAddress("expectedSettlementToken");
         if (settledIntents[intentId]) revert IntentAlreadySettled(intentId);
+
+        if (settlementToken != expectedSettlementToken) {
+            revert UnexpectedSettlementToken(settlementToken, expectedSettlementToken);
+        }
+        bytes32 receivedSettlementAssetId = keccak256(abi.encode(block.chainid, settlementToken));
+        if (receivedSettlementAssetId != expectedSettlementAssetId) {
+            revert UnexpectedSettlementAsset(receivedSettlementAssetId, expectedSettlementAssetId);
+        }
+        if (amount < minSettlementAmount) {
+            revert SettlementOutputTooLow(intentId, amount, minSettlementAmount);
+        }
+
         settledIntents[intentId] = true;
 
         // ── Case 1: Direct delivery — no aggregator on this chain or same token ─

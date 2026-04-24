@@ -55,8 +55,12 @@ export class RailSelector {
       };
     });
 
-    // Sort descending by score
-    return scores.sort((a, b) => b.score - a.score);
+    // Sort descending for display/routing order while preserving every viable rail.
+    return scores.sort((a, b) => {
+      if (a.score !== b.score) return b.score - a.score;
+      if (a.config.etaSeconds !== b.config.etaSeconds) return a.config.etaSeconds - b.config.etaSeconds;
+      return a.config.fee - b.config.fee;
+    });
   }
 
   /// @notice Pick the most appropriate settlement token for a given rail + destination.

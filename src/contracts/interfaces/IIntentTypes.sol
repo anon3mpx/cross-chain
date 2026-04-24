@@ -21,6 +21,10 @@ library IntentTypes {
         uint32  dstChainId;         // Destination chain (EVM chain ID)
         uint8   rail;               // Rail enum value (selected off-chain)
         uint8   settlementToken;    // SettlementToken enum value
+        bytes32 settlementAssetId;  // Provider/canonical settlement asset selected for the route
+        address expectedDstSettlementToken; // Destination settlement token expected from the rail
+        bytes32 expectedDstSettlementAssetId; // Destination settlement asset identifier expected from the rail
+        uint256 minSettlementAmount; // Minimum settlement amount that must arrive before dst swap/direct delivery
         uint256 feeAmount;          // Pre-quoted fee in tokenIn terms (capped at 1% on-chain)
         bytes   swapDataSrc;        // Encoded swap params for source aggregator
         bytes   swapDataDst;        // Encoded swap params for destination aggregator
@@ -41,6 +45,10 @@ library IntentTypes {
         bytes32 intentId;
         address settlementTokenAddr; // Resolved ERC-20 address on source chain (address(0) = native ETH)
         uint256 amount;              // Amount of settlement token to bridge
+        bytes32 settlementAssetId;   // Settlement asset identifier attached to the bridge request
+        address expectedDstSettlementToken; // Destination settlement token expected from the rail
+        bytes32 expectedDstSettlementAssetId; // Destination settlement asset identifier expected from the rail
+        uint256 minSettlementAmount; // Minimum destination settlement amount expected from the rail
         uint32  dstChainId;
         bytes   railData;            // Rail-specific params forwarded from signed intent
         // ── Messaging rails (CCTP, Axelar, LZ, Via Labs) ──────────────────────

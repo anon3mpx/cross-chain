@@ -7,6 +7,7 @@ const BIGINT_FIELDS = new Set([
   'minAmountOut',
   'minSrcSwapOut',
   'feeAmountToken',
+  'minSettlementAmount',
   'minThorOutput',
 ]);
 
@@ -93,13 +94,35 @@ function decodeQuote(raw: string): QuoteResult {
     if (typeof v === 'string' && /^-?\d+$/.test(v)) return BigInt(v);
     if (typeof v === 'number' && Number.isFinite(v)) return BigInt(Math.trunc(v));
     return 0n;
-  }) as QuoteResult & { railData?: string; minSrcSwapOut?: bigint };
+  }) as QuoteResult & {
+    railData?: string;
+    minSrcSwapOut?: bigint;
+    settlementAssetId?: string;
+    expectedDstSettlementToken?: string;
+    expectedDstSettlementAssetId?: string;
+    minSettlementAmount?: bigint;
+  };
 
   if (typeof parsed.railData !== 'string') {
     parsed.railData = '0x';
   }
   if (typeof parsed.minSrcSwapOut !== 'bigint') {
     parsed.minSrcSwapOut = 0n;
+  }
+  if (typeof parsed.settlementAssetId !== 'string' || !/^0x[0-9a-fA-F]{64}$/.test(parsed.settlementAssetId)) {
+    parsed.settlementAssetId = '0x' + '0'.repeat(64);
+  }
+  if (typeof parsed.expectedDstSettlementToken !== 'string' || !/^0x[0-9a-fA-F]{40}$/.test(parsed.expectedDstSettlementToken)) {
+    parsed.expectedDstSettlementToken = '0x0000000000000000000000000000000000000000';
+  }
+  if (
+    typeof parsed.expectedDstSettlementAssetId !== 'string' ||
+    !/^0x[0-9a-fA-F]{64}$/.test(parsed.expectedDstSettlementAssetId)
+  ) {
+    parsed.expectedDstSettlementAssetId = '0x' + '0'.repeat(64);
+  }
+  if (typeof parsed.minSettlementAmount !== 'bigint') {
+    parsed.minSettlementAmount = 0n;
   }
   return parsed as QuoteResult;
 }

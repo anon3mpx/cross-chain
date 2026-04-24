@@ -22,16 +22,14 @@
 //  All messaging-rail routes are evaluated in parallel with THORChain routes.
 // ─────────────────────────────────────────────────────────
 
-import {
-  Rail, SettlementToken, Route, RouteType, Hop,
-} from '../types';
+import { SettlementToken, Route, RouteType, Hop } from '../types';
 import { RailSelector } from './RailSelector';
 import { getChainConfig, hasAggregator, HUB_CHAIN_IDS } from '../config/chains';
 import { getChainRails, getRailConfig } from '../rails/registry';
 
 // ── Route scoring ──────────────────────────────────────────────────────────────
-// Composite score for the full route (all hops combined).
-// Multi-hop routes are penalised for added complexity and latency.
+// Composite score for route ordering only. Lower layers now materialize every
+// viable direct route into an offer instead of collapsing to a single winner.
 function scoreRoute(
   totalFeeUSD: number,
   totalEtaSeconds: number,
@@ -104,42 +102,26 @@ export class RouteBuilder {
     amountUSD: number,
     urgency: 'fast' | 'normal',
   ): Route[] {
-    const srcRails = new Set(getChainRails(srcChainId));
-    const dstRails = new Set(getChainRails(dstChainId));
-    const shared   = [...srcRails].filter(r => dstRails.has(r));
-
-    if (shared.length === 0) return [];
-
     const dstChain = getChainConfig(dstChainId);
     const srcHasAgg = hasAggregator(srcChainId);
     const dstHasAgg = hasAggregator(dstChainId);
     const routeType = this._classifyRouteType(srcHasAgg, dstHasAgg);
+    const dstCfg = dstChain ?? { chainId: dstChainId, nativeStable: SettlementToken.USDC } as any;
+    const rankedRails = this.selector.selectRail(srcChainId, dstChainId, dstCfg, amountUSD, urgency);
+    if (rankedRails.length === 0) return [];
 
-    return shared.map(rail => {
-      const config    = getRailConfig(rail);
-      const dstCfg    = dstChain ?? { chainId: dstChainId, nativeStable: SettlementToken.USDC } as any;
-      const railScore = this.selector.selectRail(srcChainId, dstChainId, dstCfg, amountUSD, urgency)
-                            .find(s => s.rail === rail);
-
-      const settlementToken = railScore?.settlementToken ?? SettlementToken.USDC;
+    return rankedRails.map((railScore) => {
+      const config = railScore.config;
+      const settlementToken = railScore.settlementToken;
 
       const hop: Hop = {
-        rail,
+        rail: railScore.rail,
         srcChainId,
         dstChainId,
         settlementTokenIn:  settlementToken,
         settlementTokenOut: settlementToken,
         hubSwapNeeded:      false,
       };
-
-      const score = scoreRoute(
-        config.fee,
-        config.etaSeconds,
-        config.reliabilityScore,
-        1,
-        urgency,
-        amountUSD,
-      );
 
       return {
         hops: [hop],
@@ -148,7 +130,7 @@ export class RouteBuilder {
         dstSwap: dstHasAgg,
         totalFeeUSD:     config.fee,
         totalEtaSeconds: config.etaSeconds,
-        score,
+        score: railScore.score,
         viable: true,
       } satisfies Route;
     });
