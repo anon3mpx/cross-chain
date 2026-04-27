@@ -96,7 +96,7 @@ class THORChainRailExecutionAdapter implements RailExecutionAdapter<THORChainMon
       return {
         rail: this.rail,
         mode: 'disabled',
-        label: 'thorchain-monitor',
+        label: 'thorchain-api-direct-monitor',
         visualLabels: ['THORCHAIN'],
         async stop() {
           return;
@@ -111,7 +111,7 @@ class THORChainRailExecutionAdapter implements RailExecutionAdapter<THORChainMon
     return {
       rail: this.rail,
       mode: 'worker',
-      label: 'thorchain-monitor',
+      label: 'thorchain-api-direct-monitor',
       visualLabels: ['THORCHAIN'],
       instance: worker,
       async stop() {

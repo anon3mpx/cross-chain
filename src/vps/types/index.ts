@@ -176,9 +176,33 @@ export interface ProviderAssetRef {
   canonicalAssetId: string;
   providerAssetId: string;
   tokenAddress?: string;
+  srcTokenAddress?: string;
+  dstTokenAddress?: string;
   decimals: number;
-  assetKind: 'erc20' | 'native' | 'btc' | 'sol' | 'doge';
+  assetKind: 'erc20' | 'native' | 'btc' | 'sol' | 'doge' | 'cosmos';
+  assetStandard?: 'erc20' | 'native' | 'oft' | 'oft_adapter' | 'stargate_pool' | 'stargate_oft' | 'thor_native';
 }
+
+export type RailOfferType =
+  | 'cctp_standard'
+  | 'cctp_fast'
+  | 'axelar_direct'
+  | 'axelar_dst_swap'
+  | 'lz_oft'
+  | 'lz_oft_adapter'
+  | 'lz_stargate_pool'
+  | 'lz_stargate_oft'
+  | 'thor_api_direct';
+
+export type DeliveryShape =
+  | 'direct'
+  | 'src_swap_required'
+  | 'dst_swap_required'
+  | 'src_and_dst_swap_required';
+
+export type ExecutionMode = 'router_intent' | 'provider_direct';
+
+export type RouteAssetRef = ProviderAssetRef;
 
 export interface OfferEconomics {
   providerFeeUSD: number;
@@ -195,6 +219,7 @@ export interface OfferEconomics {
 export interface RailOffer {
   offerId: string;
   rail: Rail;
+  offerType?: RailOfferType;
   railType: 'messaging' | 'liquidity';
   srcChainId: number;
   dstChainId: number;
@@ -204,6 +229,9 @@ export interface RailOffer {
   estimatedOut: bigint;
   minAmountOut: bigint;
   expiresAt: number;
+  deliveryShape?: DeliveryShape;
+  executionMode?: ExecutionMode;
+  routeAsset?: RouteAssetRef;
   sourceSettlementAsset: ProviderAssetRef;
   destinationSettlementAsset: ProviderAssetRef;
   economics: OfferEconomics;

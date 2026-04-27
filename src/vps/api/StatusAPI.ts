@@ -10,7 +10,7 @@ import { ethers, getAddress, verifyMessage } from 'ethers';
 import { CHAIN_CONFIGS } from '../config/chains';
 import { IntentService, IntentLifecycleError } from '../services/IntentService';
 import { QuoteEngine } from '../services/QuoteEngine';
-import { buildRouterIntegration } from '../services/IntentCalldataBuilder';
+import { buildSelectedOfferIntegration } from '../services/DirectRailIntegrationBuilder';
 import { Intent, IntentStatus } from '../types';
 import { parseOfferSelection, parseQuoteRequest, serializeOfferSet, serializeQuote } from './quoteCodec';
 import { buildIntentActionMessage, IntentAction, SIGNATURE_WINDOW_MS } from '../utils/intentActionAuth';
@@ -267,7 +267,7 @@ export function buildStatusAPI(
       }
 
       const intent = await intentService.createQuotedIntentFromOffer(selection.offer, userAddress);
-      const integration = await buildRouterIntegration(intent.intentId, intent.quote, userAddress);
+      const integration = await buildSelectedOfferIntegration(intent.intentId, selection.offer, userAddress);
       res.json({ quote: serializeQuote(intent.quote), intentId: intent.intentId, integration });
     } catch (err) {
       const msg = String(err);

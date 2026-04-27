@@ -6,12 +6,15 @@
 
 import { AbiCoder, ZeroAddress, getAddress, keccak256 } from 'ethers';
 import {
+  DeliveryShape,
+  ExecutionMode,
   OfferEconomics,
   OfferSet,
   ProviderAssetRef,
   QuoteRequest,
   QuoteResult,
   Rail,
+  RailOfferType,
   RailOffer,
   Route,
   RouteType,
@@ -173,45 +176,51 @@ export class QuoteEngine {
     const builtQuote = await this._quoteForDirectRoute(req, route, amountUSD);
     if (!builtQuote) return null;
 
-    const { quote: legacyQuote } = builtQuote;
+    const { quote: executionQuote } = builtQuote;
 
     const economics = this._buildOfferEconomics(route, builtQuote);
+    const sourceSettlementAsset = this._toProviderAssetRef(
+      executionQuote.srcChainId,
+      executionQuote.settlementToken,
+      executionQuote.rail,
+    );
+    const destinationSettlementAsset = this._toProviderAssetRef(
+      executionQuote.dstChainId,
+      executionQuote.settlementToken,
+      executionQuote.rail,
+    );
     const offer: RailOffer = {
-      offerId: legacyQuote.intentId,
-      rail: legacyQuote.rail,
-      railType: legacyQuote.railType,
-      srcChainId: legacyQuote.srcChainId,
-      dstChainId: legacyQuote.dstChainId,
-      tokenIn: legacyQuote.tokenIn,
-      tokenOut: legacyQuote.tokenOut,
-      amountIn: legacyQuote.amountIn,
-      estimatedOut: legacyQuote.estimatedOut,
-      minAmountOut: legacyQuote.minAmountOut,
-      expiresAt: legacyQuote.expiresAt,
-      sourceSettlementAsset: this._toProviderAssetRef(
-        legacyQuote.srcChainId,
-        legacyQuote.settlementToken,
-        legacyQuote.rail,
-      ),
-      destinationSettlementAsset: this._toProviderAssetRef(
-        legacyQuote.dstChainId,
-        legacyQuote.settlementToken,
-        legacyQuote.rail,
-      ),
+      offerId: executionQuote.intentId,
+      rail: executionQuote.rail,
+      offerType: this._offerTypeFor(executionQuote.rail, executionQuote),
+      railType: executionQuote.railType,
+      srcChainId: executionQuote.srcChainId,
+      dstChainId: executionQuote.dstChainId,
+      tokenIn: executionQuote.tokenIn,
+      tokenOut: executionQuote.tokenOut,
+      amountIn: executionQuote.amountIn,
+      estimatedOut: executionQuote.estimatedOut,
+      minAmountOut: executionQuote.minAmountOut,
+      expiresAt: executionQuote.expiresAt,
+      deliveryShape: this._deliveryShapeFor(executionQuote),
+      executionMode: this._executionModeFor(executionQuote.rail),
+      routeAsset: sourceSettlementAsset,
+      sourceSettlementAsset,
+      destinationSettlementAsset,
       economics,
       execution: {
-        quote: legacyQuote,
-        feeAmountToken: legacyQuote.feeAmountToken,
-        minSrcSwapOut: legacyQuote.minSrcSwapOut,
+        quote: executionQuote,
+        feeAmountToken: executionQuote.feeAmountToken,
+        minSrcSwapOut: executionQuote.minSrcSwapOut,
         providerFeeUSD: builtQuote.realizedProviderFeeUSD,
         protocolFeeUSD: builtQuote.protocolFeeUSD,
-        railPluginId: legacyQuote.railPluginId,
-        railData: legacyQuote.railData,
-        swapPluginIdSrc: legacyQuote.swapPluginIdSrc,
-        swapPluginIdDst: legacyQuote.swapPluginIdDst,
-        swapDataSrc: legacyQuote.swapDataSrc,
-        swapDataDst: legacyQuote.swapDataDst,
-        nativeDstAddress: legacyQuote.nativeDstAddress,
+        railPluginId: executionQuote.railPluginId,
+        railData: executionQuote.railData,
+        swapPluginIdSrc: executionQuote.swapPluginIdSrc,
+        swapPluginIdDst: executionQuote.swapPluginIdDst,
+        swapDataSrc: executionQuote.swapDataSrc,
+        swapDataDst: executionQuote.swapDataDst,
+        nativeDstAddress: executionQuote.nativeDstAddress,
         axelarDestinationTokenId: builtQuote.axelarDestinationTokenId,
       },
     };
@@ -534,8 +543,11 @@ export class QuoteEngine {
       canonicalAssetId: `${chainId}:${settlementToken}`,
       providerAssetId: `${rail}:${chainId}:${settlementToken}`,
       tokenAddress,
+      srcTokenAddress: tokenAddress,
+      dstTokenAddress: tokenAddress,
       decimals: this._settlementTokenDecimals(settlementToken),
       assetKind: this._settlementAssetKind(settlementToken),
+      assetStandard: this._assetStandardFor(rail, settlementToken),
     };
   }
 
@@ -563,6 +575,48 @@ export class QuoteEngine {
       default:
         return 'erc20';
     }
+  }
+
+  private _assetStandardFor(
+    rail: Rail,
+    token: SettlementToken,
+  ): ProviderAssetRef['assetStandard'] {
+    if (rail === Rail.THORCHAIN) return token === SettlementToken.BTC || token === SettlementToken.SOL ? 'thor_native' : 'erc20';
+    if (rail === Rail.LAYERZERO) {
+      return token === SettlementToken.USDC ? 'stargate_pool' : 'oft';
+    }
+    return 'erc20';
+  }
+
+  private _executionModeFor(rail: Rail): ExecutionMode {
+    return rail === Rail.THORCHAIN ? 'provider_direct' : 'router_intent';
+  }
+
+  private _offerTypeFor(
+    rail: Rail,
+    quote: QuoteResult,
+  ): RailOfferType {
+    switch (rail) {
+      case Rail.CCTP:
+        return isCctpFastPluginId(quote.railPluginId) ? 'cctp_fast' : 'cctp_standard';
+      case Rail.AXELAR:
+        return quote.swapPluginIdDst !== ZERO_PLUGIN_ID ? 'axelar_dst_swap' : 'axelar_direct';
+      case Rail.LAYERZERO:
+        return quote.settlementToken === SettlementToken.USDC ? 'lz_stargate_pool' : 'lz_oft';
+      case Rail.THORCHAIN:
+        return 'thor_api_direct';
+      default:
+        return 'cctp_standard';
+    }
+  }
+
+  private _deliveryShapeFor(quote: QuoteResult): DeliveryShape {
+    const srcSwapRequired = quote.swapPluginIdSrc !== ZERO_PLUGIN_ID;
+    const dstSwapRequired = quote.swapPluginIdDst !== ZERO_PLUGIN_ID;
+    if (srcSwapRequired && dstSwapRequired) return 'src_and_dst_swap_required';
+    if (srcSwapRequired) return 'src_swap_required';
+    if (dstSwapRequired) return 'dst_swap_required';
+    return 'direct';
   }
 
   private async _getSwapQuote(

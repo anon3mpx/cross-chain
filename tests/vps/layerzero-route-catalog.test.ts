@@ -13,9 +13,13 @@ const abiCoder = AbiCoder.defaultAbiCoder();
 
 const BASE_USDC = '0x0000000000000000000000000000000000001001';
 const BASE_ETH = '0x0000000000000000000000000000000000001003';
+const BASE_USDT = '0x0000000000000000000000000000000000001002';
 const ARB_USDC = '0x0000000000000000000000000000000000002001';
 const ARB_ETH = '0x0000000000000000000000000000000000002003';
+const ARB_USDT = '0x0000000000000000000000000000000000002002';
 const BASE_OFT_ETH = '0x0000000000000000000000000000000000003003';
+const BASE_OFT_USDC = '0x0000000000000000000000000000000000003001';
+const BASE_OFT_USDT = '0x0000000000000000000000000000000000003002';
 
 function withPatchedEnv(extraEnv: Record<string, string>, fn: () => void | Promise<void>) {
   const previous = new Map<string, string | undefined>();
@@ -134,4 +138,35 @@ test('LayerZero registry helpers produce expected env key priority lists', () =>
     'CHAIN_42161_LZ_EXTRA_OPTIONS',
     'CHAIN_42161_EXTRA_OPTIONS_LAYERZERO',
   ]);
+});
+
+test('LayerZeroRouteCatalog lists OFT, OFTAdapter, and Stargate families separately', async () => {
+  await withPatchedEnv({
+    CHAIN_8453_TOKEN_LAYERZERO_ETH: BASE_ETH,
+    CHAIN_42161_TOKEN_LAYERZERO_ETH: ARB_ETH,
+    CHAIN_8453_LZ_OFT_ETH: BASE_OFT_ETH,
+    CHAIN_8453_TOKEN_LAYERZERO_USDC: BASE_USDC,
+    CHAIN_42161_TOKEN_LAYERZERO_USDC: ARB_USDC,
+    CHAIN_8453_LZ_OFT_USDC: BASE_OFT_USDC,
+    CHAIN_8453_TOKEN_LAYERZERO_USDT: BASE_USDT,
+    CHAIN_42161_TOKEN_LAYERZERO_USDT: ARB_USDT,
+    CHAIN_8453_LZ_OFT_USDT: BASE_OFT_USDT,
+    CHAIN_42161_DST_EID_LAYERZERO: '30110',
+  }, () => {
+    const catalog = new LayerZeroRouteCatalog({
+      defaultCanonicalAssetIds: ['WETH', 'USDT', 'USDC'],
+      routeFamilyOverrides: {
+        WETH: 'lz_oft',
+        USDT: 'lz_oft_adapter',
+        USDC: 'lz_stargate_pool',
+      },
+    });
+
+    const routes = catalog.listRoutes({ srcChainId: 8453, dstChainId: 42161 });
+    assert.deepEqual(routes.map((route) => route.offerType), [
+      'lz_oft',
+      'lz_oft_adapter',
+      'lz_stargate_pool',
+    ]);
+  });
 });

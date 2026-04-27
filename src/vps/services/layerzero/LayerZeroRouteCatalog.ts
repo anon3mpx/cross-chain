@@ -7,7 +7,7 @@ import {
   getLayerZeroExtraOptionsEnvKeys,
   getLayerZeroOftAddressEnvKeys,
 } from '../../rails/registry';
-import { Rail, SettlementToken } from '../../types';
+import { Rail, RailOfferType, RouteAssetRef, SettlementToken } from '../../types';
 
 export interface ResolveLayerZeroRouteInput {
   srcChainId: number;
@@ -26,10 +26,81 @@ export interface ResolvedLayerZeroRoute {
   extraOptions: string;
 }
 
+export interface LayerZeroRouteOption {
+  offerType: Extract<RailOfferType, 'lz_oft' | 'lz_oft_adapter' | 'lz_stargate_pool' | 'lz_stargate_oft'>;
+  routeAsset: RouteAssetRef;
+  oftAddress: string;
+  expectedDstToken: string;
+  expectedDstAssetId: string;
+  dstEid: number;
+  extraOptions: string;
+}
+
+export interface LayerZeroRouteCatalogOptions {
+  env?: Record<string, string | undefined>;
+  defaultCanonicalAssetIds?: string[];
+  routeFamilyOverrides?: Partial<Record<string, LayerZeroRouteOption['offerType']>>;
+}
+
 export class LayerZeroRouteCatalog {
   private readonly abiCoder = AbiCoder.defaultAbiCoder();
+  private readonly env: Record<string, string | undefined>;
+  private readonly defaultCanonicalAssetIds: string[];
+  private readonly routeFamilyOverrides: Partial<Record<string, LayerZeroRouteOption['offerType']>>;
 
-  constructor(private readonly env: Record<string, string | undefined> = process.env) {}
+  constructor(options: LayerZeroRouteCatalogOptions | Record<string, string | undefined> = process.env) {
+    if ('env' in options || 'defaultCanonicalAssetIds' in options || 'routeFamilyOverrides' in options) {
+      const typed = options as LayerZeroRouteCatalogOptions;
+      this.env = typed.env ?? process.env;
+      this.defaultCanonicalAssetIds = typed.defaultCanonicalAssetIds ?? [];
+      this.routeFamilyOverrides = Object.fromEntries(
+        Object.entries(typed.routeFamilyOverrides ?? {}).map(([key, value]) => [key.trim().toUpperCase(), value]),
+      );
+      return;
+    }
+
+    this.env = options;
+    this.defaultCanonicalAssetIds = [];
+    this.routeFamilyOverrides = {};
+  }
+
+  listRoutes(input: { srcChainId: number; dstChainId: number; canonicalAssetIds?: string[] }): LayerZeroRouteOption[] {
+    const canonicalAssetIds = input.canonicalAssetIds ?? this.defaultCanonicalAssetIds;
+    const routes: LayerZeroRouteOption[] = [];
+
+    for (const canonicalAssetId of canonicalAssetIds) {
+      try {
+        const resolved = this.resolve({
+          srcChainId: input.srcChainId,
+          dstChainId: input.dstChainId,
+          canonicalAssetId,
+        });
+        const normalized = canonicalAssetId.trim().toUpperCase();
+        routes.push({
+          offerType: this.routeFamilyOverrides[normalized] ?? 'lz_oft',
+          routeAsset: {
+            canonicalAssetId,
+            providerAssetId: `layerzero:${normalized.toLowerCase()}`,
+            tokenAddress: resolved.sourceSettlementToken,
+            srcTokenAddress: resolved.sourceSettlementToken,
+            dstTokenAddress: resolved.expectedDstSettlementToken,
+            decimals: resolved.settlementToken === SettlementToken.USDC || resolved.settlementToken === SettlementToken.USDT ? 6 : 18,
+            assetKind: 'erc20',
+            assetStandard: this._assetStandardFor(normalized),
+          },
+          oftAddress: resolved.oftAddress,
+          expectedDstToken: resolved.expectedDstSettlementToken,
+          expectedDstAssetId: resolved.expectedDstSettlementAssetId,
+          dstEid: resolved.dstEid,
+          extraOptions: resolved.extraOptions,
+        });
+      } catch {
+        continue;
+      }
+    }
+
+    return routes;
+  }
 
   resolve(input: ResolveLayerZeroRouteInput): ResolvedLayerZeroRoute {
     if (!getChainConfig(input.srcChainId)) {
@@ -170,5 +241,21 @@ export class LayerZeroRouteCatalog {
         [BigInt(chainId), getAddress(tokenAddress)],
       ),
     );
+  }
+
+  private _assetStandardFor(
+    canonicalAssetId: string,
+  ): RouteAssetRef['assetStandard'] {
+    const override = this.routeFamilyOverrides[canonicalAssetId];
+    switch (override) {
+      case 'lz_oft_adapter':
+        return 'oft_adapter';
+      case 'lz_stargate_pool':
+        return 'stargate_pool';
+      case 'lz_stargate_oft':
+        return 'stargate_oft';
+      default:
+        return 'oft';
+    }
   }
 }

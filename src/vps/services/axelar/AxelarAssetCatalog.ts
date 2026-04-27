@@ -5,7 +5,7 @@ import {
   getAxelarAssetAliases,
   getAxelarDestinationTokenIdEnvKeys,
 } from '../../rails/registry';
-import { Rail, SettlementToken } from '../../types';
+import { Rail, RouteAssetRef, SettlementToken } from '../../types';
 
 export interface ResolveAxelarAssetInput {
   srcChainId: number;
@@ -22,10 +22,77 @@ export interface ResolvedAxelarAsset {
   expectedDstSettlementAssetId: string;
 }
 
+export interface AxelarRouteOption {
+  offerType: 'axelar_direct' | 'axelar_dst_swap';
+  routeAsset: RouteAssetRef;
+  expectedDstToken: string;
+  expectedDstAssetId: string;
+  destinationTokenId: string;
+}
+
+export interface AxelarAssetCatalogOptions {
+  env?: Record<string, string | undefined>;
+  defaultCanonicalAssetIds?: string[];
+  directCanonicalAssetIds?: string[];
+}
+
 export class AxelarAssetCatalog {
   private readonly abiCoder = AbiCoder.defaultAbiCoder();
+  private readonly env: Record<string, string | undefined>;
+  private readonly defaultCanonicalAssetIds: string[];
+  private readonly directCanonicalAssetIds: Set<string>;
 
-  constructor(private readonly env: Record<string, string | undefined> = process.env) {}
+  constructor(options: AxelarAssetCatalogOptions | Record<string, string | undefined> = process.env) {
+    if ('env' in options || 'defaultCanonicalAssetIds' in options || 'directCanonicalAssetIds' in options) {
+      const typed = options as AxelarAssetCatalogOptions;
+      this.env = typed.env ?? process.env;
+      this.defaultCanonicalAssetIds = typed.defaultCanonicalAssetIds ?? [];
+      this.directCanonicalAssetIds = new Set(
+        (typed.directCanonicalAssetIds ?? []).map((value) => value.trim().toUpperCase()),
+      );
+      return;
+    }
+
+    this.env = options;
+    this.defaultCanonicalAssetIds = [];
+    this.directCanonicalAssetIds = new Set();
+  }
+
+  listRoutes(input: { srcChainId: number; dstChainId: number; canonicalAssetIds?: string[] }): AxelarRouteOption[] {
+    const canonicalAssetIds = input.canonicalAssetIds ?? this.defaultCanonicalAssetIds;
+    const routes: AxelarRouteOption[] = [];
+
+    for (const canonicalAssetId of canonicalAssetIds) {
+      try {
+        const resolved = this.resolve({
+          srcChainId: input.srcChainId,
+          dstChainId: input.dstChainId,
+          canonicalAssetId,
+        });
+        const normalized = canonicalAssetId.trim().toUpperCase();
+        routes.push({
+          offerType: this.directCanonicalAssetIds.has(normalized) ? 'axelar_direct' : 'axelar_dst_swap',
+          routeAsset: {
+            canonicalAssetId,
+            providerAssetId: `axelar:${normalized.toLowerCase()}`,
+            tokenAddress: resolved.sourceSettlementToken,
+            srcTokenAddress: resolved.sourceSettlementToken,
+            dstTokenAddress: resolved.expectedDstSettlementToken,
+            decimals: resolved.settlementToken === SettlementToken.USDC || resolved.settlementToken === SettlementToken.USDT ? 6 : 18,
+            assetKind: 'erc20',
+            assetStandard: 'erc20',
+          },
+          expectedDstToken: resolved.expectedDstSettlementToken,
+          expectedDstAssetId: resolved.expectedDstSettlementAssetId,
+          destinationTokenId: resolved.destinationTokenId,
+        });
+      } catch {
+        continue;
+      }
+    }
+
+    return routes;
+  }
 
   resolve(input: ResolveAxelarAssetInput): ResolvedAxelarAsset {
     if (!getChainConfig(input.srcChainId)) {
