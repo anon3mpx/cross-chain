@@ -23,10 +23,13 @@ contract RouterV1 is EIP712, ReentrancyGuard, Pausable, Ownable2Step {
     string private constant SIGNING_DOMAIN = "EMPX-Cross-Chain Router";
     string private constant SIGNATURE_VERSION = "1";
     bytes32 private constant INTENT_EXECUTION_TYPEHASH = keccak256(
-        "IntentExecution(bytes swapDataSrc,bytes swapDataDst,bytes32 swapPluginIdSrc,bytes32 dstSwapPluginId,bytes32 railPluginId,bytes railData,address dstReceiver,bytes nativeDstAddress,string thorAssetIdentifier,uint256 minThorOutput,bytes32 intentId,uint256 deadline)"
+        "IntentExecution(bytes swapDataSrc,bytes swapDataDst,bytes32 swapPluginIdSrc,bytes32 dstSwapPluginId,bytes32 railPluginId,bytes railData,uint256 dstGasLimit,address dstReceiver,bytes nativeDstAddress,string thorAssetIdentifier,uint256 minThorOutput,bytes32 intentId,uint256 deadline)"
+    );
+    bytes32 private constant INTENT_ROUTE_TYPEHASH = keccak256(
+        "IntentRoute(address routeToken,bytes32 routeAssetId,address expectedDstRouteToken,bytes32 expectedDstRouteAssetId,uint256 minRouteAmount)"
     );
     bytes32 private constant SWAP_INTENT_TYPEHASH = keccak256(
-        "SwapIntent(address user,address tokenIn,address tokenOut,uint256 amountIn,uint256 minAmountOut,uint256 minSrcSwapOut,uint32 dstChainId,uint8 rail,uint8 settlementToken,bytes32 settlementAssetId,address expectedDstSettlementToken,bytes32 expectedDstSettlementAssetId,uint256 minSettlementAmount,uint256 feeAmount,IntentExecution execution)IntentExecution(bytes swapDataSrc,bytes swapDataDst,bytes32 swapPluginIdSrc,bytes32 dstSwapPluginId,bytes32 railPluginId,bytes railData,address dstReceiver,bytes nativeDstAddress,string thorAssetIdentifier,uint256 minThorOutput,bytes32 intentId,uint256 deadline)"
+        "SwapIntent(address user,address tokenIn,address tokenOut,uint256 amountIn,uint256 minAmountOut,uint256 minSrcSwapOut,uint32 dstChainId,uint8 rail,IntentRoute route,uint256 feeAmount,IntentExecution execution)IntentExecution(bytes swapDataSrc,bytes swapDataDst,bytes32 swapPluginIdSrc,bytes32 dstSwapPluginId,bytes32 railPluginId,bytes railData,uint256 dstGasLimit,address dstReceiver,bytes nativeDstAddress,string thorAssetIdentifier,uint256 minThorOutput,bytes32 intentId,uint256 deadline)IntentRoute(address routeToken,bytes32 routeAssetId,address expectedDstRouteToken,bytes32 expectedDstRouteAssetId,uint256 minRouteAmount)"
     );
 
     PluginRegistry public immutable registry;
@@ -59,10 +62,11 @@ contract RouterV1 is EIP712, ReentrancyGuard, Pausable, Ownable2Step {
     error IntentAlreadyExecuted(bytes32 intentId);
     error InvalidIntentSignature();
     error FeeTooHigh(uint256 feeAmount, uint256 maxAllowed);
-    error SettlementAmountTooLow(bytes32 intentId, uint256 got, uint256 min);
+    error RouteAmountTooLow(bytes32 intentId, uint256 got, uint256 min);
     error ZeroAmount();
     error AmountBelowMinimum(uint256 amount, uint256 minimum);
     error ZeroAddress(string field);
+    error InvalidDstGasLimit(uint256 gasLimit);
     error SrcSwapSlippage(uint256 got, uint256 min);
 
     constructor(address _registry, address _feeRecipient, address _weth, address _intentSigner, address _owner)
@@ -87,13 +91,7 @@ contract RouterV1 is EIP712, ReentrancyGuard, Pausable, Ownable2Step {
         IntentTypes.SwapIntent calldata intent,
         bytes calldata signature
     ) external payable nonReentrant whenNotPaused {
-        // ── Structural validation ──────────────────────────────────────────────
-        if (intent.amountIn == 0) revert ZeroAmount();
-        if (intent.amountIn < MIN_AMOUNT) revert AmountBelowMinimum(intent.amountIn, MIN_AMOUNT);
-        if (intent.tokenIn  == address(0)) revert ZeroAddress("tokenIn");
-        if (intent.user     == address(0)) revert ZeroAddress("user");
-        if (intent.deadline < block.timestamp) revert IntentExpired(intent.intentId);
-        if (intent.deadline > block.timestamp + MAX_DEADLINE_DELTA) revert IntentDeadlineTooFar(intent.intentId);
+        _validateIntent(intent);
         _verifyIntentSignature(intent, signature);
 
         // ── Fee cap — VPS cannot charge more than MAX_FEE_BPS ─────────────────
@@ -108,85 +106,11 @@ contract RouterV1 is EIP712, ReentrancyGuard, Pausable, Ownable2Step {
         IERC20(intent.tokenIn).safeTransferFrom(msg.sender, address(this), intent.amountIn);
 
         // ── Collect protocol fee ───────────────────────────────────────────────
-        uint256 amountAfterFee = _collectFee(
+        uint256 routeAmount = _collectFee(
             intent.intentId, intent.tokenIn, intent.amountIn, intent.feeAmount
         );
-
-        // ── Resolve plugins from registry (reverts if inactive or not found) ───
-        IRailPlugin railPlugin = registry.getRailPlugin(intent.railPluginId);
-        address settlementAddr  = railPlugin.settlementTokenAddress(intent.settlementToken);
-        uint256 settlementAmount;
-
-        if (intent.tokenIn == settlementAddr) {
-            settlementAmount = amountAfterFee;
-        } else {
-            // ── Swap tokenIn → settlement token ─────────────────────────────────
-            // minSrcSwapOut is encoded in swapDataSrc by the VPS — prevents sandwich attacks.
-            // The swap plugin MUST enforce this internally; we verify the result here too.
-            ISwapPlugin swapPlugin = registry.getSwapPlugin(intent.swapPluginIdSrc);
-            IERC20(intent.tokenIn).forceApprove(address(swapPlugin), amountAfterFee);
-
-            uint256 before = IERC20(settlementAddr).balanceOf(address(this));
-            swapPlugin.swap(
-                IntentTypes.SwapParams({
-                    tokenIn:      intent.tokenIn,
-                    tokenOut:     settlementAddr,
-                    amountIn:     amountAfterFee,
-                    minAmountOut: intent.minSrcSwapOut,  // [SECURITY] enforce slippage on src swap
-                    data:         intent.swapDataSrc
-                })
-            );
-            settlementAmount = IERC20(settlementAddr).balanceOf(address(this)) - before;
-            // [SECURITY] Double-check: balance delta must match stated minimum
-            if (settlementAmount < intent.minSrcSwapOut) {
-                revert SrcSwapSlippage(settlementAmount, intent.minSrcSwapOut);
-            }
-        }
-
-        // ── Hand off to rail plugin ────────────────────────────────────────────
-        IERC20(settlementAddr).forceApprove(address(railPlugin), settlementAmount);
-
-        bytes memory dstCalldata = abi.encode(
-            intent.intentId,
-            intent.user,
-            intent.tokenOut,
-            intent.minAmountOut,
-            intent.expectedDstSettlementToken,
-            intent.expectedDstSettlementAssetId,
-            intent.minSettlementAmount,
-            intent.swapDataDst,
-            intent.dstSwapPluginId  // [SECURITY] plugin selection locked inside intent, not external param
-        );
-
-        if (intent.dstReceiver != address(0)) {
-            if (intent.expectedDstSettlementToken == address(0)) {
-                revert ZeroAddress("expectedDstSettlementToken");
-            }
-            if (settlementAmount < intent.minSettlementAmount) {
-                revert SettlementAmountTooLow(intent.intentId, settlementAmount, intent.minSettlementAmount);
-            }
-        }
-
-        IntentTypes.BridgeParams memory bridgeParams = IntentTypes.BridgeParams({
-            intentId:            intent.intentId,
-            settlementTokenAddr: settlementAddr,
-            amount:              settlementAmount,
-            settlementAssetId:   intent.settlementAssetId,
-            expectedDstSettlementToken: intent.expectedDstSettlementToken,
-            expectedDstSettlementAssetId: intent.expectedDstSettlementAssetId,
-            minSettlementAmount: intent.minSettlementAmount,
-            dstChainId:          intent.dstChainId,
-            railData:            intent.railData,
-            dstReceiver:         intent.dstReceiver,   // [FIX] was address(0) — now required in intent
-            finalRecipient:      intent.user,
-            dstCalldata:         dstCalldata,
-            gasForDst:           200_000,
-            nativeDstAddress:    intent.nativeDstAddress,
-            thorAssetIdentifier: intent.thorAssetIdentifier,
-            minThorOutput:       intent.minThorOutput
-        });
-
-        bytes32 railTxId = railPlugin.bridge{value: msg.value}(bridgeParams);
+        (address routeToken, uint256 bridgedRouteAmount) = _resolveRouteAmount(intent, routeAmount);
+        bytes32 railTxId = _bridgeIntent(intent, routeToken, bridgedRouteAmount, msg.value);
 
         emit IntentInitiated(
             intent.intentId, intent.user, intent.tokenIn,
@@ -234,30 +158,40 @@ contract RouterV1 is EIP712, ReentrancyGuard, Pausable, Ownable2Step {
     }
 
     function _hashIntentStruct(IntentTypes.SwapIntent calldata intent) internal pure returns (bytes32) {
-        IntentTypes.SwapIntent memory materialized = intent;
         return keccak256(
-            abi.encode(
-                SWAP_INTENT_TYPEHASH,
-                materialized.user,
-                materialized.tokenIn,
-                materialized.tokenOut,
-                materialized.amountIn,
-                materialized.minAmountOut,
-                materialized.minSrcSwapOut,
-                materialized.dstChainId,
-                materialized.rail,
-                materialized.settlementToken,
-                materialized.settlementAssetId,
-                materialized.expectedDstSettlementToken,
-                materialized.expectedDstSettlementAssetId,
-                materialized.minSettlementAmount,
-                materialized.feeAmount,
-                _hashExecution(materialized)
+            bytes.concat(
+                abi.encode(
+                    SWAP_INTENT_TYPEHASH,
+                    intent.user,
+                    intent.tokenIn,
+                    intent.tokenOut,
+                    intent.amountIn,
+                    intent.minAmountOut,
+                    intent.minSrcSwapOut,
+                    intent.dstChainId,
+                    intent.rail,
+                    _hashRoute(intent),
+                    intent.feeAmount,
+                    _hashExecution(intent)
+                )
             )
         );
     }
 
-    function _hashExecution(IntentTypes.SwapIntent memory intent) internal pure returns (bytes32) {
+    function _hashRoute(IntentTypes.SwapIntent calldata intent) internal pure returns (bytes32) {
+        return keccak256(
+            abi.encode(
+                INTENT_ROUTE_TYPEHASH,
+                intent.routeToken,
+                intent.routeAssetId,
+                intent.expectedDstRouteToken,
+                intent.expectedDstRouteAssetId,
+                intent.minRouteAmount
+            )
+        );
+    }
+
+    function _hashExecution(IntentTypes.SwapIntent calldata intent) internal pure returns (bytes32) {
         return keccak256(
             abi.encode(
                 INTENT_EXECUTION_TYPEHASH,
@@ -267,6 +201,7 @@ contract RouterV1 is EIP712, ReentrancyGuard, Pausable, Ownable2Step {
                 intent.dstSwapPluginId,
                 intent.railPluginId,
                 keccak256(intent.railData),
+                intent.dstGasLimit,
                 intent.dstReceiver,
                 keccak256(intent.nativeDstAddress),
                 keccak256(bytes(intent.thorAssetIdentifier)),
@@ -275,6 +210,128 @@ contract RouterV1 is EIP712, ReentrancyGuard, Pausable, Ownable2Step {
                 intent.deadline
             )
         );
+    }
+
+    function _validateIntent(IntentTypes.SwapIntent calldata intent) internal view {
+        if (intent.amountIn == 0) revert ZeroAmount();
+        if (intent.amountIn < MIN_AMOUNT) revert AmountBelowMinimum(intent.amountIn, MIN_AMOUNT);
+        if (intent.tokenIn == address(0)) revert ZeroAddress("tokenIn");
+        if (intent.user == address(0)) revert ZeroAddress("user");
+        if (intent.deadline < block.timestamp) revert IntentExpired(intent.intentId);
+        if (intent.deadline > block.timestamp + MAX_DEADLINE_DELTA) revert IntentDeadlineTooFar(intent.intentId);
+    }
+
+    function _swapToRouteToken(
+        IntentTypes.SwapIntent calldata intent,
+        address routeToken,
+        uint256 amountAfterFee
+    ) internal returns (uint256 routeAmount) {
+        ISwapPlugin swapPlugin = registry.getSwapPlugin(intent.swapPluginIdSrc);
+        IERC20(intent.tokenIn).forceApprove(address(swapPlugin), amountAfterFee);
+
+        uint256 before = IERC20(routeToken).balanceOf(address(this));
+        swapPlugin.swap(
+            IntentTypes.SwapParams({
+                tokenIn: intent.tokenIn,
+                tokenOut: routeToken,
+                amountIn: amountAfterFee,
+                minAmountOut: intent.minSrcSwapOut,
+                data: intent.swapDataSrc
+            })
+        );
+        routeAmount = IERC20(routeToken).balanceOf(address(this)) - before;
+        if (routeAmount < intent.minSrcSwapOut) {
+            revert SrcSwapSlippage(routeAmount, intent.minSrcSwapOut);
+        }
+    }
+
+    function _resolveRouteAmount(
+        IntentTypes.SwapIntent calldata intent,
+        uint256 amountAfterFee
+    ) internal returns (address routeToken, uint256 routeAmount) {
+        routeToken = intent.routeToken;
+        if (routeToken == address(0)) revert ZeroAddress("routeToken");
+
+        routeAmount = amountAfterFee;
+        if (intent.tokenIn != routeToken) {
+            routeAmount = _swapToRouteToken(intent, routeToken, amountAfterFee);
+        }
+    }
+
+    function _bridgeIntent(
+        IntentTypes.SwapIntent calldata intent,
+        address routeToken,
+        uint256 routeAmount,
+        uint256 msgValue
+    ) internal returns (bytes32 railTxId) {
+        IRailPlugin railPlugin = registry.getRailPlugin(intent.railPluginId);
+        IERC20(routeToken).forceApprove(address(railPlugin), routeAmount);
+
+        bytes memory dstCalldata = _buildDstCalldata(intent);
+        _enforceMessagingRouteExpectations(intent, routeAmount);
+
+        IntentTypes.BridgeParams memory bridgeParams = _buildBridgeParams(
+            intent,
+            routeToken,
+            routeAmount,
+            dstCalldata
+        );
+
+        railTxId = railPlugin.bridge{value: msgValue}(bridgeParams);
+    }
+
+    function _enforceMessagingRouteExpectations(
+        IntentTypes.SwapIntent calldata intent,
+        uint256 routeAmount
+    ) internal pure {
+        if (intent.dstReceiver == address(0)) return;
+        if (intent.dstGasLimit == 0) revert InvalidDstGasLimit(intent.dstGasLimit);
+        if (intent.expectedDstRouteToken == address(0)) {
+            revert ZeroAddress("expectedDstRouteToken");
+        }
+        if (routeAmount < intent.minRouteAmount) {
+            revert RouteAmountTooLow(intent.intentId, routeAmount, intent.minRouteAmount);
+        }
+    }
+
+    function _buildDstCalldata(IntentTypes.SwapIntent calldata intent) internal pure returns (bytes memory) {
+        return abi.encode(
+            intent.intentId,
+            intent.user,
+            intent.tokenOut,
+            intent.minAmountOut,
+            intent.expectedDstRouteToken,
+            intent.expectedDstRouteAssetId,
+            intent.minRouteAmount,
+            intent.swapDataDst,
+            intent.dstSwapPluginId
+        );
+    }
+
+    function _buildBridgeParams(
+        IntentTypes.SwapIntent calldata intent,
+        address routeToken,
+        uint256 routeAmount,
+        bytes memory dstCalldata
+    ) internal pure returns (IntentTypes.BridgeParams memory) {
+        return IntentTypes.BridgeParams({
+            intentId:            intent.intentId,
+            routeTokenAddr:      routeToken,
+            amount:              routeAmount,
+            routeAssetId:        intent.routeAssetId,
+            expectedDstRouteToken: intent.expectedDstRouteToken,
+            expectedDstRouteAssetId: intent.expectedDstRouteAssetId,
+            minRouteAmount:      intent.minRouteAmount,
+            dstChainId:          intent.dstChainId,
+            railData:            intent.railData,
+            dstReceiver:         intent.dstReceiver,
+            finalRecipient:      intent.user,
+            dstCalldata:         dstCalldata,
+            gasForDst:           intent.dstGasLimit,
+            nativeDstAddress:    intent.nativeDstAddress,
+            thorAssetIdentifier: intent.thorAssetIdentifier,
+            minThorOutput:       intent.minThorOutput
+        });
     }
 
     receive() external payable {}

@@ -23,6 +23,15 @@ function materializeSelectedOfferQuote(offer: RailOffer): QuoteResult {
   return executionQuote as QuoteResult;
 }
 
+function isThorchainProviderDirectOffer(offer: RailOffer): boolean {
+  const provider = typeof offer.execution?.provider === 'string'
+    ? offer.execution.provider.toLowerCase()
+    : '';
+  if (provider === 'thorchain' || provider === 'thorchain_api') return true;
+  if (offer.rail === 'THORCHAIN') return true;
+  return offer.offerType === 'thor_api_direct';
+}
+
 export async function buildSelectedOfferIntegration(
   intentId: string,
   offer: RailOffer,
@@ -36,7 +45,7 @@ export async function buildSelectedOfferIntegration(
     };
   }
 
-  if (offer.execution.provider === 'thorchain') {
+  if (isThorchainProviderDirectOffer(offer)) {
     const quote = offer.execution.quote as Record<string, unknown>;
     return {
       mode: 'provider_direct',

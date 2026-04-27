@@ -7,7 +7,7 @@ import { ApiKeyManager, PartnerTier } from '../services/ApiKeyManager';
 import { IntentEngine } from '../services/IntentEngine';
 import { IntentService } from '../services/IntentService';
 import { QuoteEngine } from '../services/QuoteEngine';
-import { buildRouterIntegration } from '../services/IntentCalldataBuilder';
+import { buildSelectedOfferIntegration } from '../services/DirectRailIntegrationBuilder';
 import { Intent } from '../types';
 import { parseOfferSelection, parseQuoteRequest, serializeOfferSet, serializeQuote } from './quoteCodec';
 import { getRailVariantLabel } from '../rails/registry';
@@ -142,7 +142,10 @@ export function buildPartnerAPI(
 
       const intent = await intentService.createQuotedIntentFromOffer(selection.offer, userAddress, apiKey);
       const { partnerRebate } = keyManager.splitFee(intent.quote.feeAmountToken, check.partner);
-      const integration = await buildRouterIntegration(intent.intentId, intent.quote, userAddress);
+      const selectedIntegration = await buildSelectedOfferIntegration(intent.intentId, selection.offer, userAddress);
+      const integration = selectedIntegration.mode === 'router_intent'
+        ? selectedIntegration.integration
+        : selectedIntegration;
 
       res.json({
         intentId: intent.intentId,

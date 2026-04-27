@@ -86,17 +86,17 @@ contract LayerZeroRailPluginTest {
     uint32 private constant DST_EID = 30111;
     uint256 private constant LZ_NATIVE_FEE = 0.005 ether;
     bytes32 private constant LEGACY_SETTLEMENT_ASSET_ID = bytes32(0);
-    bytes4 private constant UNSUPPORTED_ROUTE_SELECTOR =
-        bytes4(keccak256("UnsupportedRoute(uint32)"));
+    bytes4 private constant ROUTE_ASSET_NOT_CONFIGURED_SELECTOR =
+        bytes4(keccak256("RouteAssetNotConfigured(uint32,bytes32)"));
 
     function setUp() public {
         usdc = new MockLayerZeroToken("Mock USDC", "mUSDC", 6);
         weth = new MockLayerZeroToken("Mock WETH", "mWETH", 18);
         oft = new MockLayerZeroOFT(address(usdc), LZ_NATIVE_FEE);
         wethOft = new MockLayerZeroOFT(address(weth), LZ_NATIVE_FEE);
-        plugin = new LayerZeroRailPlugin(address(usdc), address(0x9999), address(oft), address(this));
+        plugin = new LayerZeroRailPlugin(address(0x9999), address(this));
 
-        plugin.setRouteConfig(DST_CHAIN, DST_EID, address(0xBEEF), hex"01020304");
+        plugin.setRouteConfig(DST_CHAIN, LEGACY_SETTLEMENT_ASSET_ID, DST_EID, address(0xBEEF), hex"01020304", address(oft), address(usdc));
         usdc.mint(address(this), 1_000_000e6);
         weth.mint(address(this), 1_000_000e18);
     }
@@ -141,7 +141,6 @@ contract LayerZeroRailPluginTest {
             keccak256("intent-lz-weth")
         );
 
-        plugin.setSettlementTokenAddress(uint8(IntentTypes.SettlementToken.ETH), address(weth));
         plugin.setRouteConfig(
             DST_CHAIN,
             settlementAssetId,
@@ -193,19 +192,19 @@ contract LayerZeroRailPluginTest {
     }
 
     function testEstimateFeeRevertsWhenRouteMissingForRequestedSettlementToken() public {
-        plugin.setSettlementTokenAddress(uint8(IntentTypes.SettlementToken.ETH), address(weth));
-
         (bool ok, bytes memory data) = address(plugin).call(
             abi.encodeWithSelector(
                 plugin.estimateFee.selector,
                 DST_CHAIN,
                 uint256(1e18),
-                uint8(IntentTypes.SettlementToken.ETH)
+                address(weth),
+                _settlementAssetId(address(weth)),
+                uint256(200_000)
             )
         );
 
         _assertTrue(!ok, "expected estimate fee to revert");
-        _assertEqBytes4(_errorSelector(data), UNSUPPORTED_ROUTE_SELECTOR, "wrong revert selector");
+        _assertEqBytes4(_errorSelector(data), ROUTE_ASSET_NOT_CONFIGURED_SELECTOR, "wrong revert selector");
     }
 
     receive() external payable {}
@@ -219,12 +218,12 @@ contract LayerZeroRailPluginTest {
     ) internal pure returns (IntentTypes.BridgeParams memory) {
         return IntentTypes.BridgeParams({
             intentId: intentId,
-            settlementTokenAddr: settlementToken,
+            routeTokenAddr: settlementToken,
             amount: amount,
-            settlementAssetId: settlementAssetId,
-            expectedDstSettlementToken: address(0),
-            expectedDstSettlementAssetId: bytes32(0),
-            minSettlementAmount: 0,
+            routeAssetId: settlementAssetId,
+            expectedDstRouteToken: address(0),
+            expectedDstRouteAssetId: bytes32(0),
+            minRouteAmount: 0,
             dstChainId: DST_CHAIN,
             railData: bytes(""),
             dstReceiver: address(0xBEEF),

@@ -10,11 +10,12 @@ import {
   type TypedDataField,
 } from 'ethers';
 import { getChainConfig } from '../config/chains';
+import { getSettlementTokenAddress } from '../config/contracts';
 import { QuoteResult, Rail, SettlementToken } from '../types';
 import { getRailEnumValue } from '../rails/registry';
 
 const ROUTER_V1_IFACE = new Interface([
-  'function initiateSwap((address user,address tokenIn,address tokenOut,uint256 amountIn,uint256 minAmountOut,uint256 minSrcSwapOut,uint32 dstChainId,uint8 rail,uint8 settlementToken,bytes32 settlementAssetId,address expectedDstSettlementToken,bytes32 expectedDstSettlementAssetId,uint256 minSettlementAmount,uint256 feeAmount,bytes swapDataSrc,bytes swapDataDst,bytes32 swapPluginIdSrc,bytes32 dstSwapPluginId,bytes32 railPluginId,bytes railData,address dstReceiver,bytes nativeDstAddress,string thorAssetIdentifier,uint256 minThorOutput,bytes32 intentId,uint256 deadline) intent,bytes signature)',
+  'function initiateSwap((address user,address tokenIn,address tokenOut,uint256 amountIn,uint256 minAmountOut,uint256 minSrcSwapOut,uint32 dstChainId,uint8 rail,address routeToken,bytes32 routeAssetId,address expectedDstRouteToken,bytes32 expectedDstRouteAssetId,uint256 minRouteAmount,uint256 feeAmount,bytes swapDataSrc,bytes swapDataDst,bytes32 swapPluginIdSrc,bytes32 dstSwapPluginId,bytes32 railPluginId,bytes railData,uint256 dstGasLimit,address dstReceiver,bytes nativeDstAddress,string thorAssetIdentifier,uint256 minThorOutput,bytes32 intentId,uint256 deadline) intent,bytes signature)',
 ]);
 
 const ROUTER_V1_LEGACY_IFACE = new Interface([
@@ -30,14 +31,8 @@ const PLUGIN_REGISTRY_ABI = [
 ];
 
 const RAIL_FEE_ABI = [
-  'function estimateFee(uint32 dstChainId,uint256 amount,uint8 settlementToken) view returns (uint256 fee,uint256 eta)',
+  'function estimateFee(uint32 dstChainId,uint256 amount,address routeToken,bytes32 routeAssetId,uint256 dstGasLimit) view returns (uint256 fee,uint256 eta)',
 ];
-
-const SETTLEMENT_ENUM_VALUE: Partial<Record<SettlementToken, number>> = {
-  [SettlementToken.USDC]: 0,
-  [SettlementToken.USDT]: 1,
-  [SettlementToken.ETH]: 2,
-};
 
 const ROUTER_SIGNING_TYPES: Record<string, TypedDataField[]> = {
   SwapIntent: [
@@ -49,13 +44,16 @@ const ROUTER_SIGNING_TYPES: Record<string, TypedDataField[]> = {
     { name: 'minSrcSwapOut', type: 'uint256' },
     { name: 'dstChainId', type: 'uint32' },
     { name: 'rail', type: 'uint8' },
-    { name: 'settlementToken', type: 'uint8' },
-    { name: 'settlementAssetId', type: 'bytes32' },
-    { name: 'expectedDstSettlementToken', type: 'address' },
-    { name: 'expectedDstSettlementAssetId', type: 'bytes32' },
-    { name: 'minSettlementAmount', type: 'uint256' },
+    { name: 'route', type: 'IntentRoute' },
     { name: 'feeAmount', type: 'uint256' },
     { name: 'execution', type: 'IntentExecution' },
+  ],
+  IntentRoute: [
+    { name: 'routeToken', type: 'address' },
+    { name: 'routeAssetId', type: 'bytes32' },
+    { name: 'expectedDstRouteToken', type: 'address' },
+    { name: 'expectedDstRouteAssetId', type: 'bytes32' },
+    { name: 'minRouteAmount', type: 'uint256' },
   ],
   IntentExecution: [
     { name: 'swapDataSrc', type: 'bytes' },
@@ -64,6 +62,7 @@ const ROUTER_SIGNING_TYPES: Record<string, TypedDataField[]> = {
     { name: 'dstSwapPluginId', type: 'bytes32' },
     { name: 'railPluginId', type: 'bytes32' },
     { name: 'railData', type: 'bytes' },
+    { name: 'dstGasLimit', type: 'uint256' },
     { name: 'dstReceiver', type: 'address' },
     { name: 'nativeDstAddress', type: 'bytes' },
     { name: 'thorAssetIdentifier', type: 'string' },
@@ -123,30 +122,26 @@ export async function buildRouterCalldata(
   const railValue = getRailEnumValue(quote.rail);
   if (railValue === undefined) throw new Error(`calldata: unsupported rail ${quote.rail}`);
 
-  const settlementValue = SETTLEMENT_ENUM_VALUE[quote.settlementToken];
-  if (settlementValue === undefined) {
-    throw new Error(`calldata: unsupported settlement token ${quote.settlementToken}`);
-  }
-
   const dstReceiver = (quote.railType === 'messaging')
     ? normalizeAddress(dstCfg.receiverV1, 'destination receiverV1')
     : ZeroAddress;
   const settlementQuote = quote as QuoteResult & QuoteSettlementFields;
-  const expectedDstSettlementToken = normalizeAddress(
+  const routeToken = normalizeAddress(resolveRouteTokenAddress(quote), 'routeToken');
+  const expectedDstRouteToken = normalizeAddress(
     settlementQuote.expectedDstSettlementToken,
-    'expectedDstSettlementToken',
+    'expectedDstRouteToken',
   );
-  const expectedDstSettlementAssetId = normalizeBytes32(
+  const expectedDstRouteAssetId = normalizeBytes32(
     settlementQuote.expectedDstSettlementAssetId,
-    'expectedDstSettlementAssetId',
+    'expectedDstRouteAssetId',
   );
-  const minSettlementAmount = toBigIntStrict(settlementQuote.minSettlementAmount, 'minSettlementAmount');
+  const minRouteAmount = toBigIntStrict(settlementQuote.minSettlementAmount, 'minRouteAmount');
 
-  if (quote.railType === 'messaging' && expectedDstSettlementToken === ZeroAddress) {
-    throw new Error('calldata: expectedDstSettlementToken cannot be zero for messaging rails');
+  if (quote.railType === 'messaging' && expectedDstRouteToken === ZeroAddress) {
+    throw new Error('calldata: expectedDstRouteToken cannot be zero for messaging rails');
   }
-  if (quote.railType === 'messaging' && expectedDstSettlementAssetId === `0x${'0'.repeat(64)}`) {
-    throw new Error('calldata: expectedDstSettlementAssetId cannot be zero for messaging rails');
+  if (quote.railType === 'messaging' && expectedDstRouteAssetId === `0x${'0'.repeat(64)}`) {
+    throw new Error('calldata: expectedDstRouteAssetId cannot be zero for messaging rails');
   }
 
   const payload = {
@@ -158,11 +153,11 @@ export async function buildRouterCalldata(
     minSrcSwapOut: toBigIntDefault(quote.minSrcSwapOut, 0n),
     dstChainId: quote.dstChainId,
     rail: railValue,
-    settlementToken: settlementValue,
-    settlementAssetId: normalizeBytes32(settlementQuote.settlementAssetId, 'settlementAssetId'),
-    expectedDstSettlementToken,
-    expectedDstSettlementAssetId,
-    minSettlementAmount,
+    routeToken,
+    routeAssetId: normalizeBytes32(settlementQuote.settlementAssetId, 'routeAssetId'),
+    expectedDstRouteToken,
+    expectedDstRouteAssetId,
+    minRouteAmount,
     feeAmount: toBigIntStrict(quote.feeAmountToken, 'feeAmountToken'),
     swapDataSrc: normalizeBytes(quote.swapDataSrc ?? '0x', 'swapDataSrc'),
     swapDataDst: normalizeBytes(quote.swapDataDst ?? '0x', 'swapDataDst'),
@@ -170,6 +165,7 @@ export async function buildRouterCalldata(
     dstSwapPluginId: normalizeBytes32(quote.swapPluginIdDst, 'swapPluginIdDst'),
     railPluginId: normalizeBytes32(quote.railPluginId, 'railPluginId'),
     railData: normalizeBytes(quote.railData ?? '0x', 'railData'),
+    dstGasLimit: toBigIntStrict(quote.dstGasLimit, 'dstGasLimit'),
     dstReceiver,
     nativeDstAddress: quote.nativeDstAddress ? toUtf8Bytes(String(quote.nativeDstAddress)) : '0x',
     thorAssetIdentifier: String(quote.thorAsset ?? ''),
@@ -207,11 +203,6 @@ async function estimateNativeGas(quote: QuoteResult): Promise<string> {
     throw new Error(`calldata: RouterV1 missing for source chain ${quote.srcChainId}`);
   }
 
-  const settlementValue = SETTLEMENT_ENUM_VALUE[quote.settlementToken];
-  if (settlementValue === undefined) {
-    throw new Error(`calldata: unsupported settlement token ${quote.settlementToken}`);
-  }
-
   const provider = new JsonRpcProvider(rpcUrl);
   const router = new Contract(routerAddress, ROUTER_REGISTRY_ABI, provider);
   const registryAddress = await router.registry();
@@ -227,7 +218,15 @@ async function estimateNativeGas(quote: QuoteResult): Promise<string> {
 
   const railPlugin = new Contract(railPluginAddress, RAIL_FEE_ABI, provider);
   const bridgeAmount = estimateBridgeAmount(quote);
-  const [fee] = await railPlugin.estimateFee(quote.dstChainId, bridgeAmount, settlementValue);
+  const routeToken = normalizeAddress(resolveRouteTokenAddress(quote), 'routeToken');
+  const routeAssetId = normalizeBytes32(quote.settlementAssetId, 'routeAssetId');
+  const [fee] = await railPlugin.estimateFee(
+    quote.dstChainId,
+    bridgeAmount,
+    routeToken,
+    routeAssetId,
+    toBigIntStrict(quote.dstGasLimit, 'dstGasLimit'),
+  );
   return fee.toString();
 }
 
@@ -245,6 +244,25 @@ function estimateBridgeAmount(quote: QuoteResult): bigint {
   }
 
   return amountAfterFee;
+}
+
+function resolveRouteTokenAddress(quote: QuoteResult): string {
+  const routeAsset = (quote as QuoteResult & { routeAsset?: { srcTokenAddress?: unknown; tokenAddress?: unknown } }).routeAsset;
+  if (typeof routeAsset?.srcTokenAddress === 'string') {
+    return routeAsset.srcTokenAddress;
+  }
+  if (typeof routeAsset?.tokenAddress === 'string') {
+    return routeAsset.tokenAddress;
+  }
+
+  const configured = getSettlementTokenAddress(quote.srcChainId, quote.settlementToken, quote.rail)
+    ?? getSettlementTokenAddress(quote.srcChainId, quote.settlementToken);
+  if (!configured) {
+    throw new Error(
+      `calldata: missing route token address for source chain ${quote.srcChainId}, rail ${quote.rail}, token ${quote.settlementToken}`,
+    );
+  }
+  return configured;
 }
 
 function normalizeAddress(value: unknown, field: string): string {
@@ -305,11 +323,13 @@ function toTypedDataValue(payload: Record<string, unknown>) {
     minSrcSwapOut: payload.minSrcSwapOut,
     dstChainId: payload.dstChainId,
     rail: payload.rail,
-    settlementToken: payload.settlementToken,
-    settlementAssetId: payload.settlementAssetId,
-    expectedDstSettlementToken: payload.expectedDstSettlementToken,
-    expectedDstSettlementAssetId: payload.expectedDstSettlementAssetId,
-    minSettlementAmount: payload.minSettlementAmount,
+    route: {
+      routeToken: payload.routeToken,
+      routeAssetId: payload.routeAssetId,
+      expectedDstRouteToken: payload.expectedDstRouteToken,
+      expectedDstRouteAssetId: payload.expectedDstRouteAssetId,
+      minRouteAmount: payload.minRouteAmount,
+    },
     feeAmount: payload.feeAmount,
     execution: {
       swapDataSrc: payload.swapDataSrc,
@@ -318,6 +338,7 @@ function toTypedDataValue(payload: Record<string, unknown>) {
       dstSwapPluginId: payload.dstSwapPluginId,
       railPluginId: payload.railPluginId,
       railData: payload.railData,
+      dstGasLimit: payload.dstGasLimit,
       dstReceiver: payload.dstReceiver,
       nativeDstAddress: payload.nativeDstAddress,
       thorAssetIdentifier: payload.thorAssetIdentifier,

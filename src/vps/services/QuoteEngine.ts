@@ -21,8 +21,9 @@ import {
   SettlementToken,
 } from '../types';
 import { RouteBuilder } from './RouterBuilder';
-import { AxelarAssetCatalog, ResolvedAxelarAsset } from './axelar/AxelarAssetCatalog';
+import { AxelarAssetCatalog, type AxelarRouteOption } from './axelar/AxelarAssetCatalog';
 import { CHAIN_CONFIGS, getChainConfig } from '../config/chains';
+import { ROUTE_ASSET_ALLOWLISTS } from '../config/routeExecution';
 import { getSettlementTokenAddress, getSwapPluginIdForChain } from '../config/contracts';
 import { randomBytes } from 'crypto';
 import { InMemoryQuoteCache, QuoteCache } from '../cache/QuoteCache';
@@ -31,6 +32,10 @@ import {
   type THORChainQuoteRequest,
   type THORChainQuoteResult,
 } from './thorchain/THORChainQuoteWorker';
+import { StaticRouteAssetPolicy, type RouteAssetPolicy } from './RouteAssetPolicy';
+import { StaticDestinationGasPolicy, type DestinationGasPolicy } from './DestinationGasPolicy';
+import { LayerZeroRouteCatalog, type LayerZeroRouteOption } from './layerzero/LayerZeroRouteCatalog';
+import { RailSelector } from './RailSelector';
 import {
   ZERO_PLUGIN_ID,
   getCctpDomain,
@@ -60,9 +65,26 @@ interface CctpPlan {
 
 interface BuiltDirectQuote {
   quote: QuoteResult;
+  offerType: RailOfferType;
+  routeAsset: ProviderAssetRef;
+  sourceSettlementAsset: ProviderAssetRef;
+  destinationSettlementAsset: ProviderAssetRef;
   realizedProviderFeeUSD: number;
   protocolFeeUSD: number;
   outboundFeeUSD?: number;
+  axelarDestinationTokenId?: string;
+}
+
+interface ResolvedRouteExecutionAsset {
+  settlementToken: SettlementToken;
+  offerType: RailOfferType;
+  routeAsset: ProviderAssetRef;
+  sourceSettlementAsset: ProviderAssetRef;
+  destinationSettlementAsset: ProviderAssetRef;
+  sourceRouteToken: string;
+  destinationRouteToken: string;
+  sourceRouteAssetId: string;
+  destinationRouteAssetId: string;
   axelarDestinationTokenId?: string;
 }
 
@@ -76,22 +98,41 @@ type QuoteFn = (tokenIn: string, tokenOut: string, amountIn: bigint) => Promise<
 
 export interface QuoteEngineDependencies {
   thorchainQuoteWorker?: Pick<THORChainQuoteWorker, 'quote'>;
+  routeAssetPolicy?: RouteAssetPolicy;
+  destinationGasPolicy?: DestinationGasPolicy;
+  routeBuilder?: RouteBuilder;
+  axelarAssetCatalog?: Pick<AxelarAssetCatalog, 'listRoutes'>;
+  layerZeroRouteCatalog?: Pick<LayerZeroRouteCatalog, 'listRoutes'>;
 }
 
 export class QuoteEngine {
-  private routeBuilder = new RouteBuilder();
+  private readonly routeBuilder: RouteBuilder;
   private readonly cache: QuoteCache;
   private readonly offerCache = new Map<string, { value: OfferSet; expiresAt: number }>();
   private readonly pendingOfferSets = new Map<string, Promise<OfferSet | null>>();
   private readonly dexQuoteFns = new Map<number, QuoteFn>();
-  private readonly axelarAssetCatalog = new AxelarAssetCatalog();
+  private readonly axelarAssetCatalog: Pick<AxelarAssetCatalog, 'listRoutes'>;
+  private readonly layerZeroRouteCatalog: Pick<LayerZeroRouteCatalog, 'listRoutes'>;
   private readonly thorchainQuoteWorker?: Pick<THORChainQuoteWorker, 'quote'>;
+  private readonly routeAssetPolicy: RouteAssetPolicy;
+  private readonly destinationGasPolicy: DestinationGasPolicy;
 
   constructor(
     cache: QuoteCache = new InMemoryQuoteCache(),
     deps: QuoteEngineDependencies = {},
   ) {
     this.cache = cache;
+    this.routeAssetPolicy = deps.routeAssetPolicy ?? new StaticRouteAssetPolicy(ROUTE_ASSET_ALLOWLISTS);
+    this.destinationGasPolicy = deps.destinationGasPolicy ?? new StaticDestinationGasPolicy();
+    this.routeBuilder = deps.routeBuilder ?? new RouteBuilder(new RailSelector(this.routeAssetPolicy));
+    this.axelarAssetCatalog = deps.axelarAssetCatalog ?? new AxelarAssetCatalog({
+      defaultCanonicalAssetIds: this.routeAssetPolicy.allowedAssets(Rail.AXELAR),
+      directCanonicalAssetIds: this._defaultAxelarDirectCanonicalAssetIds(),
+    });
+    this.layerZeroRouteCatalog = deps.layerZeroRouteCatalog ?? new LayerZeroRouteCatalog({
+      defaultCanonicalAssetIds: this.routeAssetPolicy.allowedAssets(Rail.LAYERZERO),
+      routeFamilyOverrides: this._defaultLayerZeroRouteFamilies(),
+    });
     const hasExplicitThorchainWorker = Object.prototype.hasOwnProperty.call(deps, 'thorchainQuoteWorker');
     if (hasExplicitThorchainWorker) {
       this.thorchainQuoteWorker = deps.thorchainQuoteWorker;
@@ -179,20 +220,10 @@ export class QuoteEngine {
     const { quote: executionQuote } = builtQuote;
 
     const economics = this._buildOfferEconomics(route, builtQuote);
-    const sourceSettlementAsset = this._toProviderAssetRef(
-      executionQuote.srcChainId,
-      executionQuote.settlementToken,
-      executionQuote.rail,
-    );
-    const destinationSettlementAsset = this._toProviderAssetRef(
-      executionQuote.dstChainId,
-      executionQuote.settlementToken,
-      executionQuote.rail,
-    );
     const offer: RailOffer = {
       offerId: executionQuote.intentId,
       rail: executionQuote.rail,
-      offerType: this._offerTypeFor(executionQuote.rail, executionQuote),
+      offerType: builtQuote.offerType,
       railType: executionQuote.railType,
       srcChainId: executionQuote.srcChainId,
       dstChainId: executionQuote.dstChainId,
@@ -204,9 +235,9 @@ export class QuoteEngine {
       expiresAt: executionQuote.expiresAt,
       deliveryShape: this._deliveryShapeFor(executionQuote),
       executionMode: this._executionModeFor(executionQuote.rail),
-      routeAsset: sourceSettlementAsset,
-      sourceSettlementAsset,
-      destinationSettlementAsset,
+      routeAsset: builtQuote.routeAsset,
+      sourceSettlementAsset: builtQuote.sourceSettlementAsset,
+      destinationSettlementAsset: builtQuote.destinationSettlementAsset,
       economics,
       execution: {
         quote: executionQuote,
@@ -235,12 +266,15 @@ export class QuoteEngine {
   ): Promise<BuiltDirectQuote | null> {
     const hop = route.hops[0];
     const config = getRailConfig(hop.rail);
-    const settlementToken = hop.settlementTokenOut;
+    const routeAssetAlias = hop.routeAssetAlias;
+    if (!this.routeAssetPolicy.isAllowed(hop.rail, routeAssetAlias)) return null;
+    const settlementToken = this._settlementTokenFromRouteAssetAlias(routeAssetAlias);
+    if (!settlementToken) return null;
     const srcSwapEnabled = route.routeType === RouteType.FULL_SWAP || route.routeType === RouteType.SRC_SWAP;
     const dstSwapEnabled = route.routeType === RouteType.FULL_SWAP || route.routeType === RouteType.DST_SWAP;
-    const axelarAsset = this._resolveAxelarAsset(req, hop.rail, settlementToken);
-    const settlementAddrSrc = axelarAsset?.sourceSettlementToken
-      ?? getSettlementTokenAddress(req.srcChainId, settlementToken, hop.rail);
+    const routeAsset = this._resolveRouteExecutionAsset(req, hop.rail, routeAssetAlias, false);
+    if (!routeAsset) return null;
+    const settlementAddrSrc = routeAsset.sourceRouteToken;
     if (!settlementAddrSrc) return null;
 
     const railFeeUSD = route.totalFeeUSD;
@@ -287,8 +321,7 @@ export class QuoteEngine {
     }
 
     // Get dst swap quote: settlementToken → tokenOut
-    const settlementAddrDst = axelarAsset?.expectedDstSettlementToken
-      ?? getSettlementTokenAddress(req.dstChainId, settlementToken, hop.rail);
+    const settlementAddrDst = routeAsset.destinationRouteToken;
     let dstSwapAmount: bigint;
     const dstSwapNeeded = dstSwapEnabled && !!settlementAddrDst && this._isAddress(req.tokenOut) &&
       req.tokenOut.toLowerCase() !== settlementAddrDst.toLowerCase();
@@ -317,12 +350,12 @@ export class QuoteEngine {
 
     const minAmountOut = (dstSwapAmount * (BPS_DENOMINATOR - BigInt(QUOTE_SLIPPAGE_BPS))) / BPS_DENOMINATOR;
     const minSettlementAmount = this._applySlippage(bridgeAmount, QUOTE_SLIPPAGE_BPS);
-    const settlementAssetId = axelarAsset?.sourceSettlementAssetId
-      ?? this._settlementAssetId(req.srcChainId, settlementAddrSrc);
-    const expectedDstSettlementAssetId = axelarAsset?.expectedDstSettlementAssetId
-      ?? (settlementAddrDst
-        ? this._settlementAssetId(req.dstChainId, settlementAddrDst)
-        : this._zeroBytes32());
+    const offerType = routeAsset.offerType === 'cctp_fast' || routeAsset.offerType === 'cctp_standard'
+      ? (isCctpFastPluginId(railPluginId) ? 'cctp_fast' : 'cctp_standard')
+      : (hop.rail === Rail.AXELAR
+        ? (dstSwapPluginId !== ZERO_PLUGIN_ID ? 'axelar_dst_swap' : 'axelar_direct')
+        : routeAsset.offerType);
+    const dstGasLimit = this.destinationGasPolicy.gasLimit(hop.rail, offerType);
 
     return {
       quote: {
@@ -340,10 +373,11 @@ export class QuoteEngine {
         rail:            hop.rail,
         railType:        config.railType,
         settlementToken,
-        settlementAssetId,
+        settlementAssetId: routeAsset.sourceRouteAssetId,
         expectedDstSettlementToken: settlementAddrDst ?? ZeroAddress,
-        expectedDstSettlementAssetId,
+        expectedDstSettlementAssetId: routeAsset.destinationRouteAssetId,
         minSettlementAmount,
+        dstGasLimit,
         etaSeconds:      isCctpFastPluginId(railPluginId) ? Math.min(route.totalEtaSeconds, 8) : route.totalEtaSeconds,
         expiresAt:       Math.floor(Date.now() / 1000) + 120,
         railPluginId,
@@ -353,11 +387,16 @@ export class QuoteEngine {
         swapDataSrc:     '0x',
         swapDataDst:     '0x',
         nativeDstAddress: req.nativeDstAddress,
+        routeAsset: routeAsset.routeAsset,
       },
+      offerType,
+      routeAsset: routeAsset.routeAsset,
+      sourceSettlementAsset: routeAsset.sourceSettlementAsset,
+      destinationSettlementAsset: routeAsset.destinationSettlementAsset,
       realizedProviderFeeUSD: realizedRailFeeUSD,
       protocolFeeUSD,
       outboundFeeUSD,
-      axelarDestinationTokenId: axelarAsset?.destinationTokenId,
+      axelarDestinationTokenId: routeAsset.axelarDestinationTokenId,
     };
   }
 
@@ -385,8 +424,12 @@ export class QuoteEngine {
     route: Route,
     offer: RailOffer,
   ): Promise<RailOffer | null> {
-    if (route.hops[0].rail !== Rail.THORCHAIN || !this.thorchainQuoteWorker) {
+    if (route.hops[0].rail !== Rail.THORCHAIN) {
       return offer;
+    }
+
+    if (!this.thorchainQuoteWorker) {
+      return null;
     }
 
     try {
@@ -396,8 +439,9 @@ export class QuoteEngine {
       if (!thorQuote) return null;
       return this._applyThorchainQuote(offer, thorQuote);
     } catch {
-      // THOR quote enrichment is optional; fall back to base offer if unavailable.
-      return offer;
+      // Provider-direct THOR offers are only valid when the provider returned
+      // executable deposit instructions.
+      return null;
     }
   }
 
@@ -535,20 +579,47 @@ export class QuoteEngine {
 
   private _toProviderAssetRef(
     chainId: number,
+    canonicalAssetId: string,
     settlementToken: SettlementToken,
     rail: Rail,
+    tokenAddress?: string,
+    destinationTokenAddress?: string,
+    assetStandard?: ProviderAssetRef['assetStandard'],
   ): ProviderAssetRef {
-    const tokenAddress = getSettlementTokenAddress(chainId, settlementToken, rail);
+    const resolvedTokenAddress = tokenAddress ?? getSettlementTokenAddress(chainId, settlementToken, rail);
     return {
-      canonicalAssetId: `${chainId}:${settlementToken}`,
-      providerAssetId: `${rail}:${chainId}:${settlementToken}`,
-      tokenAddress,
-      srcTokenAddress: tokenAddress,
-      dstTokenAddress: tokenAddress,
+      canonicalAssetId,
+      providerAssetId: `${rail}:${chainId}:${canonicalAssetId.toLowerCase()}`,
+      tokenAddress: resolvedTokenAddress,
+      srcTokenAddress: resolvedTokenAddress,
+      dstTokenAddress: destinationTokenAddress ?? resolvedTokenAddress,
       decimals: this._settlementTokenDecimals(settlementToken),
       assetKind: this._settlementAssetKind(settlementToken),
-      assetStandard: this._assetStandardFor(rail, settlementToken),
+      assetStandard: assetStandard ?? this._assetStandardFor(rail, settlementToken),
     };
+  }
+
+  private _settlementTokenFromRouteAssetAlias(routeAssetAlias: string): SettlementToken | null {
+    switch (routeAssetAlias.trim().toUpperCase()) {
+      case 'USDC':
+        return SettlementToken.USDC;
+      case 'USDT':
+        return SettlementToken.USDT;
+      case 'ETH':
+      case 'WETH':
+      case 'ETH.ETH':
+      case 'DOGE':
+      case 'DOGE.DOGE':
+        return SettlementToken.ETH;
+      case 'BTC':
+      case 'BTC.BTC':
+        return SettlementToken.BTC;
+      case 'SOL':
+      case 'SOL.SOL':
+        return SettlementToken.SOL;
+      default:
+        return null;
+    }
   }
 
   private _settlementTokenDecimals(token: SettlementToken): number {
@@ -592,24 +663,6 @@ export class QuoteEngine {
     return rail === Rail.THORCHAIN ? 'provider_direct' : 'router_intent';
   }
 
-  private _offerTypeFor(
-    rail: Rail,
-    quote: QuoteResult,
-  ): RailOfferType {
-    switch (rail) {
-      case Rail.CCTP:
-        return isCctpFastPluginId(quote.railPluginId) ? 'cctp_fast' : 'cctp_standard';
-      case Rail.AXELAR:
-        return quote.swapPluginIdDst !== ZERO_PLUGIN_ID ? 'axelar_dst_swap' : 'axelar_direct';
-      case Rail.LAYERZERO:
-        return quote.settlementToken === SettlementToken.USDC ? 'lz_stargate_pool' : 'lz_oft';
-      case Rail.THORCHAIN:
-        return 'thor_api_direct';
-      default:
-        return 'cctp_standard';
-    }
-  }
-
   private _deliveryShapeFor(quote: QuoteResult): DeliveryShape {
     const srcSwapRequired = quote.swapPluginIdSrc !== ZERO_PLUGIN_ID;
     const dstSwapRequired = quote.swapPluginIdDst !== ZERO_PLUGIN_ID;
@@ -629,6 +682,107 @@ export class QuoteEngine {
     } catch {
       return null;
     }
+  }
+
+  private _resolveRouteExecutionAsset(
+    req: QuoteRequest,
+    rail: Rail,
+    routeAssetAlias: string,
+    _dstSwapExpected: boolean,
+  ): ResolvedRouteExecutionAsset | null {
+    const canonicalAssetId = routeAssetAlias.trim().toUpperCase();
+    const settlementToken = this._settlementTokenFromRouteAssetAlias(canonicalAssetId);
+    if (!settlementToken) return null;
+
+    if (rail === Rail.AXELAR) {
+      const option = this.axelarAssetCatalog
+        .listRoutes({ srcChainId: req.srcChainId, dstChainId: req.dstChainId, canonicalAssetIds: [canonicalAssetId] })[0];
+      if (!option) return null;
+      return {
+        settlementToken,
+        offerType: option.offerType,
+        routeAsset: option.routeAsset,
+        sourceSettlementAsset: option.routeAsset,
+        destinationSettlementAsset: {
+          ...option.routeAsset,
+          tokenAddress: option.expectedDstToken,
+          srcTokenAddress: option.routeAsset.srcTokenAddress,
+          dstTokenAddress: option.expectedDstToken,
+        },
+        sourceRouteToken: option.routeAsset.srcTokenAddress ?? option.routeAsset.tokenAddress ?? '',
+        destinationRouteToken: option.expectedDstToken,
+        sourceRouteAssetId: this._settlementAssetId(
+          req.srcChainId,
+          option.routeAsset.srcTokenAddress ?? option.routeAsset.tokenAddress ?? '',
+        ),
+        destinationRouteAssetId: option.expectedDstAssetId,
+        axelarDestinationTokenId: option.destinationTokenId,
+      };
+    }
+
+    if (rail === Rail.LAYERZERO) {
+      const option = this.layerZeroRouteCatalog
+        .listRoutes({ srcChainId: req.srcChainId, dstChainId: req.dstChainId, canonicalAssetIds: [canonicalAssetId] })[0];
+      if (!option) return null;
+      return {
+        settlementToken,
+        offerType: option.offerType,
+        routeAsset: option.routeAsset,
+        sourceSettlementAsset: option.routeAsset,
+        destinationSettlementAsset: {
+          ...option.routeAsset,
+          tokenAddress: option.expectedDstToken,
+          srcTokenAddress: option.routeAsset.srcTokenAddress,
+          dstTokenAddress: option.expectedDstToken,
+        },
+        sourceRouteToken: option.routeAsset.srcTokenAddress ?? option.routeAsset.tokenAddress ?? '',
+        destinationRouteToken: option.expectedDstToken,
+        sourceRouteAssetId: this._settlementAssetId(
+          req.srcChainId,
+          option.routeAsset.srcTokenAddress ?? option.routeAsset.tokenAddress ?? '',
+        ),
+        destinationRouteAssetId: option.expectedDstAssetId,
+      };
+    }
+
+    const sourceRouteToken = getSettlementTokenAddress(req.srcChainId, settlementToken, rail);
+    const destinationRouteToken = getSettlementTokenAddress(req.dstChainId, settlementToken, rail);
+    if (!sourceRouteToken || !destinationRouteToken) return null;
+
+    const assetStandard = rail === Rail.THORCHAIN && (settlementToken === SettlementToken.BTC || settlementToken === SettlementToken.SOL)
+      ? 'thor_native'
+      : this._assetStandardFor(rail, settlementToken);
+    const routeAsset = this._toProviderAssetRef(
+      req.srcChainId,
+      canonicalAssetId,
+      settlementToken,
+      rail,
+      sourceRouteToken,
+      destinationRouteToken,
+      assetStandard,
+    );
+
+    return {
+      settlementToken,
+      offerType: rail === Rail.THORCHAIN
+        ? 'thor_api_direct'
+        : rail === Rail.CCTP
+          ? 'cctp_standard'
+          : rail === Rail.VIA_LABS
+            ? 'cctp_standard'
+            : 'axelar_direct',
+      routeAsset,
+      sourceSettlementAsset: routeAsset,
+      destinationSettlementAsset: {
+        ...routeAsset,
+        tokenAddress: destinationRouteToken,
+        dstTokenAddress: destinationRouteToken,
+      },
+      sourceRouteToken,
+      destinationRouteToken,
+      sourceRouteAssetId: this._settlementAssetId(req.srcChainId, sourceRouteToken),
+      destinationRouteAssetId: this._settlementAssetId(req.dstChainId, destinationRouteToken),
+    };
   }
 
   private async _selectCctpPlan(
@@ -839,22 +993,36 @@ export class QuoteEngine {
     return keccak256(abiCoder.encode(['uint256', 'address'], [BigInt(chainId), getAddress(tokenAddress)]));
   }
 
-  private _resolveAxelarAsset(
-    req: QuoteRequest,
-    rail: Rail,
-    settlementToken: SettlementToken,
-  ): ResolvedAxelarAsset | null {
-    if (rail !== Rail.AXELAR) return null;
-    const canonicalAssetId = `${req.srcChainId}:${settlementToken}`;
-    try {
-      return this.axelarAssetCatalog.resolve({
-        srcChainId: req.srcChainId,
-        dstChainId: req.dstChainId,
-        canonicalAssetId,
-      });
-    } catch {
-      return null;
+  private _defaultAxelarDirectCanonicalAssetIds(): string[] {
+    const configured = this._readEnv('AXELAR_DIRECT_ROUTE_ASSETS');
+    if (!configured) return ['WETH'];
+    return configured.split(',').map((value) => value.trim().toUpperCase()).filter(Boolean);
+  }
+
+  private _defaultLayerZeroRouteFamilies(): Partial<Record<string, LayerZeroRouteOption['offerType']>> {
+    const overrides: Partial<Record<string, LayerZeroRouteOption['offerType']>> = {
+      USDC: 'lz_stargate_pool',
+      USDT: 'lz_oft_adapter',
+      WETH: 'lz_oft',
+    };
+
+    for (const assetAlias of this.routeAssetPolicy.allowedAssets(Rail.LAYERZERO)) {
+      const normalized = assetAlias.trim().toUpperCase();
+      const explicit = this._readEnv(`LAYERZERO_ROUTE_FAMILY_${normalized}`);
+      if (!explicit) continue;
+      if (this._isLayerZeroOfferType(explicit)) {
+        overrides[normalized] = explicit;
+      }
     }
+
+    return overrides;
+  }
+
+  private _isLayerZeroOfferType(value: string): value is LayerZeroRouteOption['offerType'] {
+    return value === 'lz_oft'
+      || value === 'lz_oft_adapter'
+      || value === 'lz_stargate_pool'
+      || value === 'lz_stargate_oft';
   }
 
   private _zeroBytes32(): string {

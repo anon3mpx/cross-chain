@@ -10,6 +10,18 @@ import "@openzeppelin/contracts/access/Ownable2Step.sol";
 contract LayerZeroReceiverAdapter is Ownable2Step {
     using SafeERC20 for IERC20;
 
+    struct ReceiverPayload {
+        bytes32 intentId;
+        address user;
+        address tokenOut;
+        uint256 minAmountOut;
+        address expectedRouteToken;
+        bytes32 expectedRouteAssetId;
+        uint256 minRouteAmount;
+        bytes swapData;
+        bytes32 swapPluginId;
+    }
+
     address public immutable endpoint;
     address public immutable oft;
     address public immutable settlementToken;
@@ -86,40 +98,27 @@ contract LayerZeroReceiverAdapter is Ownable2Step {
         uint256 amount = OFTComposeMsgCodec.amountLD(_message);
         bytes calldata receiverPayload = OFTComposeMsgCodec.composeMsg(_message);
 
-        (
-            bytes32 payloadIntentId,
-            address payloadUser,
-            address payloadTokenOut,
-            uint256 payloadMinAmountOut,
-            address expectedSettlementToken,
-            bytes32 expectedSettlementAssetId,
-            uint256 payloadMinSettlementAmount,
-            bytes memory payloadSwapData,
-            bytes32 payloadSwapPluginId
-        ) = abi.decode(
-            receiverPayload,
-            (bytes32, address, address, uint256, address, bytes32, uint256, bytes, bytes32)
-        );
-        payloadIntentId;
-        payloadUser;
-        payloadTokenOut;
-        payloadMinAmountOut;
-        payloadMinSettlementAmount;
-        payloadSwapData;
-        payloadSwapPluginId;
+        ReceiverPayload memory decoded = _decodeReceiverPayload(receiverPayload);
+        decoded.intentId;
+        decoded.user;
+        decoded.tokenOut;
+        decoded.minAmountOut;
+        decoded.minRouteAmount;
+        decoded.swapData;
+        decoded.swapPluginId;
 
-        if (expectedSettlementToken == address(0)) revert ZeroAddress("expectedSettlementToken");
-        address expectedOft = expectedComposeSenders[srcEid][expectedSettlementAssetId];
+        if (decoded.expectedRouteToken == address(0)) revert ZeroAddress("expectedRouteToken");
+        address expectedOft = expectedComposeSenders[srcEid][decoded.expectedRouteAssetId];
         if (expectedOft == address(0)) expectedOft = oft;
         if (_from != expectedOft) revert UnauthorizedComposeSender(_from, expectedOft);
 
-        if (settlementToken != expectedSettlementToken) {
-            revert UnexpectedSettlementToken(settlementToken, expectedSettlementToken);
+        if (settlementToken != decoded.expectedRouteToken) {
+            revert UnexpectedSettlementToken(settlementToken, decoded.expectedRouteToken);
         }
 
-        bytes32 receivedSettlementAssetId = keccak256(abi.encode(block.chainid, settlementToken));
-        if (receivedSettlementAssetId != expectedSettlementAssetId) {
-            revert UnexpectedSettlementAsset(receivedSettlementAssetId, expectedSettlementAssetId);
+        bytes32 receivedRouteAssetId = keccak256(abi.encode(block.chainid, settlementToken));
+        if (receivedRouteAssetId != decoded.expectedRouteAssetId) {
+            revert UnexpectedSettlementAsset(receivedRouteAssetId, decoded.expectedRouteAssetId);
         }
 
         IERC20(settlementToken).safeTransfer(receiver, amount);
@@ -151,6 +150,27 @@ contract LayerZeroReceiverAdapter is Ownable2Step {
 
     function rescueTokens(address token, uint256 amount) external onlyOwner {
         IERC20(token).safeTransfer(owner(), amount);
+    }
+
+    function _decodeReceiverPayload(bytes calldata receiverPayload)
+        internal
+        pure
+        returns (ReceiverPayload memory decoded)
+    {
+        (
+            decoded.intentId,
+            decoded.user,
+            decoded.tokenOut,
+            decoded.minAmountOut,
+            decoded.expectedRouteToken,
+            decoded.expectedRouteAssetId,
+            decoded.minRouteAmount,
+            decoded.swapData,
+            decoded.swapPluginId
+        ) = abi.decode(
+            receiverPayload,
+            (bytes32, address, address, uint256, address, bytes32, uint256, bytes, bytes32)
+        );
     }
 }
 

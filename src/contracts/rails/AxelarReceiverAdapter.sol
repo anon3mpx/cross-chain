@@ -10,6 +10,18 @@ import "@openzeppelin/contracts/access/Ownable2Step.sol";
 contract AxelarReceiverAdapter is Ownable2Step {
     using SafeERC20 for IERC20;
 
+    struct ReceiverPayload {
+        bytes32 intentId;
+        address user;
+        address tokenOut;
+        uint256 minAmountOut;
+        address expectedRouteToken;
+        bytes32 expectedRouteAssetId;
+        uint256 minRouteAmount;
+        bytes swapData;
+        bytes32 swapPluginId;
+    }
+
     bytes32 public constant EXECUTE_SUCCESS = keccak256("its-execute-success");
 
     address public immutable interchainTokenService;
@@ -72,36 +84,23 @@ contract AxelarReceiverAdapter is Ownable2Step {
             receiverPayload = receiverPayload[4:];
         }
 
-        (
-            bytes32 payloadIntentId,
-            address payloadUser,
-            address payloadTokenOut,
-            uint256 payloadMinAmountOut,
-            address expectedSettlementToken,
-            bytes32 expectedSettlementAssetId,
-            uint256 payloadMinSettlementAmount,
-            bytes memory payloadSwapData,
-            bytes32 payloadSwapPluginId
-        ) = abi.decode(
-            receiverPayload,
-            (bytes32, address, address, uint256, address, bytes32, uint256, bytes, bytes32)
-        );
-        payloadIntentId;
-        payloadUser;
-        payloadTokenOut;
-        payloadMinAmountOut;
-        payloadMinSettlementAmount;
-        payloadSwapData;
-        payloadSwapPluginId;
+        ReceiverPayload memory decoded = _decodeReceiverPayload(receiverPayload);
+        decoded.intentId;
+        decoded.user;
+        decoded.tokenOut;
+        decoded.minAmountOut;
+        decoded.minRouteAmount;
+        decoded.swapData;
+        decoded.swapPluginId;
 
-        if (expectedSettlementToken == address(0)) revert ZeroAddress("expectedSettlementToken");
-        if (token != expectedSettlementToken) {
-            revert UnexpectedSettlementToken(token, expectedSettlementToken);
+        if (decoded.expectedRouteToken == address(0)) revert ZeroAddress("expectedRouteToken");
+        if (token != decoded.expectedRouteToken) {
+            revert UnexpectedSettlementToken(token, decoded.expectedRouteToken);
         }
 
-        bytes32 receivedSettlementAssetId = keccak256(abi.encode(block.chainid, token));
-        if (receivedSettlementAssetId != expectedSettlementAssetId) {
-            revert UnexpectedSettlementAsset(receivedSettlementAssetId, expectedSettlementAssetId);
+        bytes32 receivedRouteAssetId = keccak256(abi.encode(block.chainid, token));
+        if (receivedRouteAssetId != decoded.expectedRouteAssetId) {
+            revert UnexpectedSettlementAsset(receivedRouteAssetId, decoded.expectedRouteAssetId);
         }
 
         IERC20(token).safeTransfer(receiver, amount);
@@ -146,6 +145,27 @@ contract AxelarReceiverAdapter is Ownable2Step {
         returns (bytes32)
     {
         return keccak256(abi.encode(sourceChain, sourceAddress));
+    }
+
+    function _decodeReceiverPayload(bytes calldata receiverPayload)
+        internal
+        pure
+        returns (ReceiverPayload memory decoded)
+    {
+        (
+            decoded.intentId,
+            decoded.user,
+            decoded.tokenOut,
+            decoded.minAmountOut,
+            decoded.expectedRouteToken,
+            decoded.expectedRouteAssetId,
+            decoded.minRouteAmount,
+            decoded.swapData,
+            decoded.swapPluginId
+        ) = abi.decode(
+            receiverPayload,
+            (bytes32, address, address, uint256, address, bytes32, uint256, bytes, bytes32)
+        );
     }
 }
 

@@ -157,11 +157,20 @@ contract ConfigureAll is ScriptBase {
 
         address pluginAddr = vm.envAddress("AXELAR_PLUGIN");
         uint32 dstChainId = uint32(vm.envUint("AXELAR_ROUTE_CHAIN_ID"));
+        bytes32 routeAssetId = vm.envBytes32("AXELAR_ROUTE_ASSET_ID");
         string memory chainName = vm.envString("AXELAR_ROUTE_NAME");
         address dstReceiver = vm.envAddress("AXELAR_ROUTE_RECEIVER");
         bytes32 tokenId = vm.envBytes32("AXELAR_ROUTE_TOKEN_ID");
+        address routeToken = vm.envAddress("AXELAR_ROUTE_TOKEN");
 
-        AxelarRailPlugin(pluginAddr).setRouteConfig(dstChainId, chainName, dstReceiver, tokenId);
+        AxelarRailPlugin(pluginAddr).setRouteConfig(
+            dstChainId,
+            routeAssetId,
+            chainName,
+            dstReceiver,
+            tokenId,
+            routeToken
+        );
     }
 
     function _configureLayerZeroRoutes() internal {
@@ -169,11 +178,22 @@ contract ConfigureAll is ScriptBase {
 
         address pluginAddr = vm.envAddress("LZ_PLUGIN");
         uint32 dstChainId = uint32(vm.envUint("LZ_ROUTE_CHAIN_ID"));
+        bytes32 routeAssetId = vm.envBytes32("LZ_ROUTE_ASSET_ID");
         uint32 dstEid = uint32(vm.envUint("LZ_ROUTE_EID"));
         address dstReceiver = vm.envAddress("LZ_ROUTE_RECEIVER");
         bytes memory sendOptions = vm.envOr("LZ_ROUTE_OPTIONS", bytes(""));
+        address routeOft = vm.envAddress("LZ_ROUTE_OFT");
+        address routeToken = vm.envAddress("LZ_ROUTE_TOKEN");
 
-        LayerZeroRailPlugin(pluginAddr).setRouteConfig(dstChainId, dstEid, dstReceiver, sendOptions);
+        LayerZeroRailPlugin(pluginAddr).setRouteConfig(
+            dstChainId,
+            routeAssetId,
+            dstEid,
+            dstReceiver,
+            sendOptions,
+            routeOft,
+            routeToken
+        );
     }
 
     function _configureThor() internal {

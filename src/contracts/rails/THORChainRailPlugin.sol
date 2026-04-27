@@ -53,7 +53,7 @@ contract THORChainRailPlugin is IRailPlugin, ERC165, Ownable2Step {
         uint256 expiry
     );
 
-    error UnsupportedSettlementToken(uint8 token);
+    error UnsupportedRouteToken(address token);
     error VaultNotConfigured(uint32 dstChainId);
     error AmountBelowMinimum(uint256 amount, uint256 minimum);
 
@@ -76,28 +76,12 @@ contract THORChainRailPlugin is IRailPlugin, ERC165, Ownable2Step {
         return inboundVaults[dstChainId] != address(0) || _isNativeChain(dstChainId);
     }
 
-    function settlementTokenAddress(uint8 settlementToken)
-        external view override returns (address)
-    {
-        if (settlementToken == uint8(IntentTypes.SettlementToken.USDC)) return USDC;
-        if (settlementToken == uint8(IntentTypes.SettlementToken.ETH))  return WETH;
-        if (settlementToken == uint8(IntentTypes.SettlementToken.USDT)) return USDT;
-        revert UnsupportedSettlementToken(settlementToken);
-    }
-
-    function supportsSettlementToken(uint8 settlementToken)
-        external pure override returns (bool)
-    {
-        return settlementToken == uint8(IntentTypes.SettlementToken.USDC)
-            || settlementToken == uint8(IntentTypes.SettlementToken.ETH)
-            || settlementToken == uint8(IntentTypes.SettlementToken.USDT);
-    }
-
     /// @notice Fee estimate: THORChain charges ~0.1-0.3% slip + dynamic outbound fee.
     ///         VPS fetches live fee from THORChain API before quoting — this is a fallback.
-    function estimateFee(uint32 dstChainId, uint256 /*amount*/, uint8 /*settlementToken*/)
+    function estimateFee(uint32 dstChainId, uint256 /*amount*/, address routeToken, bytes32 /*routeAssetId*/, uint256 /*dstGasLimit*/)
         external view override returns (uint256 fee, uint256 eta)
     {
+        if (!_isSupportedRouteToken(routeToken)) revert UnsupportedRouteToken(routeToken);
         // ETH ~30s, BTC ~10min (1 confirmation), SOL ~15s
         // Non-EVM native chains use pseudo-chainIds — ETA varies
         if (dstChainId == 0) eta = 600;       // BTC: 1 confirmation ~10min
@@ -124,7 +108,8 @@ contract THORChainRailPlugin is IRailPlugin, ERC165, Ownable2Step {
             params.minThorOutput        // limit: minimum output in 8-dec THORChain units
         );
 
-        address asset = params.settlementTokenAddr;
+        address asset = params.routeTokenAddr;
+        if (!_isSupportedRouteToken(asset)) revert UnsupportedRouteToken(asset);
 
         // USDC/USDT path: approve and call depositWithExpiry
         if (asset != address(0)) {
@@ -193,6 +178,10 @@ contract THORChainRailPlugin is IRailPlugin, ERC165, Ownable2Step {
             || chainId == 100  // LTC
             || chainId == 101  // BCH
             || chainId == 102; // GAIA (Cosmos)
+    }
+
+    function _isSupportedRouteToken(address token) internal view returns (bool) {
+        return token == USDC || token == WETH || token == USDT || token == address(0);
     }
 
     // ── Admin ──────────────────────────────────────────────────────────────────

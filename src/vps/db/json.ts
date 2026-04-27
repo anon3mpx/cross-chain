@@ -74,6 +74,7 @@ export function reviveQuote(raw: any): QuoteResult {
     minAmountOut: toBigIntOrZero(q.minAmountOut),
     minSrcSwapOut: toBigIntOrZero(q.minSrcSwapOut),
     minSettlementAmount: toBigIntOrZero(q.minSettlementAmount),
+    dstGasLimit: typeof q.dstGasLimit === 'number' && Number.isFinite(q.dstGasLimit) ? q.dstGasLimit : 0,
     feeAmountToken: toBigIntOrZero(q.feeAmountToken),
     minThorOutput: toOptionalBigInt(q.minThorOutput),
     settlementAssetId: parseOptionalString(q.settlementAssetId) ?? `0x${'0'.repeat(64)}`,

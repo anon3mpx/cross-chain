@@ -13,18 +13,15 @@ contract LayerZeroRailPlugin is IRailPlugin, ERC165, Ownable2Step {
     using SafeERC20 for IERC20;
 
     bytes32 public constant override railId = keccak256("LZ_V2");
-    bytes32 internal constant LEGACY_ROUTE_ASSET_ID = bytes32(0);
 
-    address public immutable usdc;
     ILayerZeroEndpointV2 public immutable endpoint;
-    ILayerZeroOFT public immutable oft;
 
     struct LzRouteConfig {
         uint32 dstEid;
         address dstReceiver;
         bytes options;
-        address oft;
-        address settlementToken;
+        address routeOft;
+        address routeToken;
     }
 
     // EVM chainId => LayerZero endpoint ID (eid)
@@ -33,10 +30,8 @@ contract LayerZeroRailPlugin is IRailPlugin, ERC165, Ownable2Step {
     mapping(uint32 => address) public destinationReceivers;
     // EVM chainId => extra options blob (executor config, gas, etc.)
     mapping(uint32 => bytes) public sendOptionsByChain;
-    // EVM chainId + source settlement asset identifier => route config
+    // EVM chainId + source route asset identifier => route config
     mapping(uint32 => mapping(bytes32 => LzRouteConfig)) public routeConfigs;
-    // Settlement token enum => source token address on this chain
-    mapping(uint8 => address) public settlementTokens;
 
     event LayerZeroBridgeInitiated(
         bytes32 indexed intentId,
@@ -47,23 +42,18 @@ contract LayerZeroRailPlugin is IRailPlugin, ERC165, Ownable2Step {
         bytes32 railTxId
     );
 
-    error UnsupportedSettlementToken(uint8 token);
     error UnsupportedRoute(uint32 dstChainId);
+    error RouteAssetNotConfigured(uint32 dstChainId, bytes32 routeAssetId);
     error ReceiverNotConfigured(uint32 dstChainId);
-    error SettlementTokenMismatch(address provided, address expected);
+    error RouteTokenMismatch(address provided, address expected);
     error InsufficientNativeFee(uint256 provided, uint256 required);
     error UnsupportedLzTokenFee(uint256 lzTokenFee);
 
     constructor(
-        address _usdc,
         address _endpoint,
-        address _oft,
         address _owner
     ) Ownable(_owner) {
-        usdc = _usdc;
         endpoint = ILayerZeroEndpointV2(_endpoint);
-        oft = ILayerZeroOFT(_oft);
-        settlementTokens[uint8(IntentTypes.SettlementToken.USDC)] = _usdc;
     }
 
     function supportsRoute(uint32 /*srcChainId*/, uint32 dstChainId)
@@ -75,50 +65,20 @@ contract LayerZeroRailPlugin is IRailPlugin, ERC165, Ownable2Step {
         return chainIdToEid[dstChainId] != 0;
     }
 
-    function settlementTokenAddress(uint8 settlementToken)
-        external
-        view
-        override
-        returns (address)
-    {
-        address token = settlementTokens[settlementToken];
-        if (token == address(0)) {
-            revert UnsupportedSettlementToken(settlementToken);
-        }
-        return token;
-    }
-
-    function supportsSettlementToken(uint8 settlementToken)
-        external
-        view
-        override
-        returns (bool)
-    {
-        return settlementTokens[settlementToken] != address(0);
-    }
-
-    function estimateFee(uint32 dstChainId, uint256 amount, uint8 settlementToken)
+    function estimateFee(uint32 dstChainId, uint256 amount, address routeToken, bytes32 routeAssetId, uint256 /*dstGasLimit*/)
         external
         view
         override
         returns (uint256 fee, uint256 eta)
     {
-        address settlementTokenAddr = settlementTokens[settlementToken];
-        if (settlementTokenAddr == address(0)) {
-            revert UnsupportedSettlementToken(settlementToken);
-        }
-
-        LzRouteConfig memory route = _resolveRouteConfig(
-            dstChainId,
-            _settlementAssetId(block.chainid, settlementTokenAddr)
-        );
+        LzRouteConfig memory route = _resolveRouteConfig(dstChainId, routeAssetId);
         uint32 dstEid = route.dstEid;
         address dstReceiver = route.dstReceiver;
-        if (dstEid == 0 || route.oft == address(0) || route.settlementToken == address(0)) {
+        if (dstEid == 0 || route.routeOft == address(0) || route.routeToken == address(0)) {
             revert UnsupportedRoute(dstChainId);
         }
-        if (route.settlementToken != settlementTokenAddr) {
-            revert UnsupportedRoute(dstChainId);
+        if (route.routeToken != routeToken) {
+            revert RouteTokenMismatch(routeToken, route.routeToken);
         }
         if (dstReceiver == address(0)) revert ReceiverNotConfigured(dstChainId);
 
@@ -127,7 +87,7 @@ contract LayerZeroRailPlugin is IRailPlugin, ERC165, Ownable2Step {
             address(0),
             address(0),
             uint256(0),
-            settlementTokenAddr,
+            route.routeToken,
             bytes32(0),
             uint256(0),
             bytes(""),
@@ -143,7 +103,7 @@ contract LayerZeroRailPlugin is IRailPlugin, ERC165, Ownable2Step {
             oftCmd: bytes("")
         });
 
-        MessagingFee memory mFee = ILayerZeroOFT(route.oft).quoteSend(sendParam, false);
+        MessagingFee memory mFee = ILayerZeroOFT(route.routeOft).quoteSend(sendParam, false);
         if (mFee.lzTokenFee != 0) revert UnsupportedLzTokenFee(mFee.lzTokenFee);
         fee = mFee.nativeFee;
         eta = 120;
@@ -155,17 +115,17 @@ contract LayerZeroRailPlugin is IRailPlugin, ERC165, Ownable2Step {
         override
         returns (bytes32 railTxId)
     {
-        LzRouteConfig memory route = _resolveRouteConfig(params.dstChainId, params.settlementAssetId);
+        LzRouteConfig memory route = _resolveRouteConfig(params.dstChainId, params.routeAssetId);
         uint32 dstEid = route.dstEid;
         address dstReceiver = route.dstReceiver;
-        address routeSettlementToken = route.settlementToken;
-        address routeOft = route.oft;
-        if (dstEid == 0 || routeSettlementToken == address(0) || routeOft == address(0)) {
+        address configuredRouteToken = route.routeToken;
+        address routeOft = route.routeOft;
+        if (dstEid == 0 || configuredRouteToken == address(0) || routeOft == address(0)) {
             revert UnsupportedRoute(params.dstChainId);
         }
         if (dstReceiver == address(0)) revert ReceiverNotConfigured(params.dstChainId);
-        if (params.settlementTokenAddr != routeSettlementToken) {
-            revert SettlementTokenMismatch(params.settlementTokenAddr, routeSettlementToken);
+        if (params.routeTokenAddr != configuredRouteToken) {
+            revert RouteTokenMismatch(params.routeTokenAddr, configuredRouteToken);
         }
 
         bytes memory composePayload = params.dstCalldata;
@@ -187,8 +147,8 @@ contract LayerZeroRailPlugin is IRailPlugin, ERC165, Ownable2Step {
             revert InsufficientNativeFee(msg.value, feeQuote.nativeFee);
         }
 
-        IERC20(routeSettlementToken).safeTransferFrom(msg.sender, address(this), params.amount);
-        IERC20(routeSettlementToken).forceApprove(routeOft, params.amount);
+        IERC20(configuredRouteToken).safeTransferFrom(msg.sender, address(this), params.amount);
+        IERC20(configuredRouteToken).forceApprove(routeOft, params.amount);
 
         routeOftContract.send{value: feeQuote.nativeFee}(
             sendParam,
@@ -224,77 +184,56 @@ contract LayerZeroRailPlugin is IRailPlugin, ERC165, Ownable2Step {
 
     function setRouteConfig(
         uint32 chainId,
-        uint32 dstEid,
-        address receiver,
-        bytes calldata sendOptions
-    ) external onlyOwner {
-        _storeRouteConfig(
-            chainId,
-            LEGACY_ROUTE_ASSET_ID,
-            dstEid,
-            receiver,
-            sendOptions,
-            address(oft),
-            usdc
-        );
-    }
-
-    function setRouteConfig(
-        uint32 chainId,
-        bytes32 settlementAssetId,
+        bytes32 routeAssetId,
         uint32 dstEid,
         address receiver,
         bytes calldata sendOptions,
         address routeOft,
-        address routeSettlementToken
+        address routeToken
     ) external onlyOwner {
         _storeRouteConfig(
             chainId,
-            settlementAssetId,
+            routeAssetId,
             dstEid,
             receiver,
             sendOptions,
             routeOft,
-            routeSettlementToken
+            routeToken
         );
-    }
-
-    function setSettlementTokenAddress(uint8 settlementToken, address token) external onlyOwner {
-        settlementTokens[settlementToken] = token;
     }
 
     function _storeRouteConfig(
         uint32 chainId,
-        bytes32 settlementAssetId,
+        bytes32 routeAssetId,
         uint32 dstEid,
         address receiver,
         bytes calldata sendOptions,
         address routeOft,
-        address routeSettlementToken
+        address routeToken
     ) internal {
-        routeConfigs[chainId][settlementAssetId] = LzRouteConfig({
+        routeConfigs[chainId][routeAssetId] = LzRouteConfig({
             dstEid: dstEid,
             dstReceiver: receiver,
             options: sendOptions,
-            oft: routeOft,
-            settlementToken: routeSettlementToken
+            routeOft: routeOft,
+            routeToken: routeToken
         });
 
-        if (settlementAssetId == LEGACY_ROUTE_ASSET_ID || chainIdToEid[chainId] == 0) {
+        if (chainIdToEid[chainId] == 0) {
             chainIdToEid[chainId] = dstEid;
             destinationReceivers[chainId] = receiver;
             sendOptionsByChain[chainId] = sendOptions;
         }
     }
 
-    function _resolveRouteConfig(uint32 chainId, bytes32 settlementAssetId)
+    function _resolveRouteConfig(uint32 chainId, bytes32 routeAssetId)
         internal
         view
         returns (LzRouteConfig memory route)
     {
-        route = routeConfigs[chainId][settlementAssetId];
+        route = routeConfigs[chainId][routeAssetId];
         if (route.dstEid == 0) {
-            route = routeConfigs[chainId][LEGACY_ROUTE_ASSET_ID];
+            revert RouteAssetNotConfigured(chainId, routeAssetId);
         }
     }
 
@@ -309,10 +248,6 @@ contract LayerZeroRailPlugin is IRailPlugin, ERC165, Ownable2Step {
 
     function _addressToBytes32(address a) internal pure returns (bytes32) {
         return bytes32(uint256(uint160(a)));
-    }
-
-    function _settlementAssetId(uint256 chainId, address token) internal pure returns (bytes32) {
-        return keccak256(abi.encode(chainId, token));
     }
 }
 

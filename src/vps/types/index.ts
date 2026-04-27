@@ -153,10 +153,12 @@ export interface QuoteResult {
   rail:              Rail;
   railType:          'messaging' | 'liquidity';
   settlementToken:   SettlementToken;
+  routeAsset?:       RouteAssetRef;
   settlementAssetId: string;    // bytes32-like provider/canonical asset id for source settlement
   expectedDstSettlementToken: string; // destination settlement token expected by ReceiverV1
   expectedDstSettlementAssetId: string; // bytes32-like expected destination settlement asset id
   minSettlementAmount: bigint;  // min settlement amount required before destination execution
+  dstGasLimit:        number;   // destination execution gas budget for messaging rails
   etaSeconds:        number;
   expiresAt:         number;
   railPluginId:      string;
@@ -286,6 +288,7 @@ export interface RailScore {
   rail:              Rail;
   config:            RailConfig;
   score:             number;
+  routeAssetAlias:   string;
   settlementToken:   SettlementToken;
   requiresTokenHop:  boolean;
 }
@@ -312,6 +315,7 @@ export interface Hop {
   rail:               Rail;
   srcChainId:         number;
   dstChainId:         number;
+  routeAssetAlias:    string;
   /** Settlement token entering this bridge leg (output of prior hop or src swap). */
   settlementTokenIn:  SettlementToken;
   /** Settlement token exiting this bridge leg (may differ if hub has aggregator). */

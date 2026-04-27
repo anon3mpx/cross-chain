@@ -118,6 +118,21 @@ function registerDexQuotes(engine: { registerDexQuoteFn(chainId: number, fn: (..
   });
 }
 
+function assertSelectionIntegration(integration: any) {
+  if (integration?.mode === 'provider_direct') {
+    assert.equal(integration.action?.kind, 'thorchain_swap');
+    assert.equal(typeof integration.action?.depositAddress, 'string');
+    assert.ok(integration.action.depositAddress.length > 0);
+    return;
+  }
+
+  const routerIntegration = integration?.mode === 'router_intent'
+    ? integration.integration
+    : integration;
+  assert.equal(routerIntegration.contractAddress, TEST_ENV.CHAIN_8453_ROUTER_V1);
+  assert.match(routerIntegration.calldata, /^0x[0-9a-f]+$/i);
+}
+
 test('status quote selection creates an intent from the selected offer', async () => {
   await withPatchedEnv({}, async () => {
     const {
@@ -164,13 +179,12 @@ test('status quote selection creates an intent from the selected offer', async (
       const selectionBody = await selectRes.json() as {
         intentId: string;
         quote: { rail: string; intentId: string };
-        integration: { contractAddress: string; calldata: string };
+        integration: unknown;
       };
 
       assert.equal(selectionBody.quote.rail, selectedOffer.rail);
       assert.equal(selectionBody.quote.intentId, selectionBody.intentId);
-      assert.equal(selectionBody.integration.contractAddress, TEST_ENV.CHAIN_8453_ROUTER_V1);
-      assert.match(selectionBody.integration.calldata, /^0x[0-9a-f]+$/i);
+      assertSelectionIntegration(selectionBody.integration);
 
       const intentRes = await fetch(`${server.baseUrl}/intent/${selectionBody.intentId}`);
       assert.equal(intentRes.status, 200);
@@ -251,13 +265,12 @@ test('partner quote selection creates an intent from the selected offer', async 
       const selectionBody = await selectRes.json() as {
         intentId: string;
         quote: { rail: string; intentId: string };
-        integration: { contractAddress: string; calldata: string };
+        integration: unknown;
       };
 
       assert.equal(selectionBody.quote.rail, selectedOffer.rail);
       assert.equal(selectionBody.quote.intentId, selectionBody.intentId);
-      assert.equal(selectionBody.integration.contractAddress, TEST_ENV.CHAIN_8453_ROUTER_V1);
-      assert.match(selectionBody.integration.calldata, /^0x[0-9a-f]+$/i);
+      assertSelectionIntegration(selectionBody.integration);
 
       const intentRes = await fetch(`${server.baseUrl}/partner/intent/${selectionBody.intentId}`, {
         headers: { 'x-api-key': partner.apiKey },

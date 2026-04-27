@@ -117,9 +117,9 @@ contract AxelarRailPluginTest {
         usdc = new MockAxelarToken(address(its), "Mock USDC", "mUSDC", 6);
         weth = new MockAxelarToken(address(its), "Mock WETH", "mWETH", 18);
         gasService = new MockAxelarGasService(GAS_FEE);
-        plugin = new AxelarRailPlugin(address(usdc), address(gasService), address(its), address(this));
+        plugin = new AxelarRailPlugin(address(gasService), address(its), address(this));
 
-        plugin.setRouteConfig(DST_CHAIN, "arbitrum", address(0xBEEF), DST_TOKEN_ID);
+        plugin.setRouteConfig(DST_CHAIN, LEGACY_SETTLEMENT_ASSET_ID, "arbitrum", address(0xBEEF), DST_TOKEN_ID, address(usdc));
         usdc.mint(address(this), 1_000_000e6);
         weth.mint(address(this), 1_000_000e18);
     }
@@ -147,7 +147,6 @@ contract AxelarRailPluginTest {
     function testBridgeAcceptsDynamicAxelarToken() public {
         uint256 amount = 2e18;
         weth.approve(address(plugin), amount);
-        plugin.setSettlementTokenAddress(uint8(IntentTypes.SettlementToken.ETH), address(weth));
         plugin.setRouteConfig(
             DST_CHAIN,
             DYNAMIC_SETTLEMENT_ASSET_ID,
@@ -175,7 +174,14 @@ contract AxelarRailPluginTest {
 
     function testEstimateFeeRevertsOnUnsupportedRoute() public {
         (bool ok, ) = address(plugin).call(
-            abi.encodeWithSelector(plugin.estimateFee.selector, uint32(999999), uint256(1e6), uint8(0))
+            abi.encodeWithSelector(
+                plugin.estimateFee.selector,
+                uint32(999999),
+                uint256(1e6),
+                address(usdc),
+                LEGACY_SETTLEMENT_ASSET_ID,
+                uint256(200_000)
+            )
         );
         _assertTrue(!ok, "expected unsupported route revert");
     }
@@ -183,7 +189,6 @@ contract AxelarRailPluginTest {
     function testBridgeRevertsWhenDynamicAssetRouteMissing() public {
         uint256 amount = 1e18;
         weth.approve(address(plugin), amount);
-        plugin.setSettlementTokenAddress(uint8(IntentTypes.SettlementToken.ETH), address(weth));
 
         IntentTypes.BridgeParams memory params =
             _bridgeParams(address(weth), amount, UNKNOWN_SETTLEMENT_ASSET_ID, keccak256("intent-missing-route"));
@@ -204,12 +209,12 @@ contract AxelarRailPluginTest {
     ) internal pure returns (IntentTypes.BridgeParams memory) {
         return IntentTypes.BridgeParams({
             intentId: intentId,
-            settlementTokenAddr: settlementToken,
+            routeTokenAddr: settlementToken,
             amount: amount,
-            settlementAssetId: settlementAssetId,
-            expectedDstSettlementToken: address(0),
-            expectedDstSettlementAssetId: bytes32(0),
-            minSettlementAmount: 0,
+            routeAssetId: settlementAssetId,
+            expectedDstRouteToken: address(0),
+            expectedDstRouteAssetId: bytes32(0),
+            minRouteAmount: 0,
             dstChainId: DST_CHAIN,
             railData: bytes(""),
             dstReceiver: address(0xBEEF),

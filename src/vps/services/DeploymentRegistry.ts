@@ -1,5 +1,10 @@
 import { Rail } from '../types';
 
+export interface DeploymentRegistry {
+  isExecutable(rail: Rail, srcChainId: number, dstChainId: number): boolean;
+  requiresDestinationContracts(rail: Rail, srcChainId: number, dstChainId: number): boolean;
+}
+
 export interface DeploymentRoute {
   rail: Rail;
   srcChainId: number;
@@ -10,7 +15,7 @@ export interface DeploymentRoute {
   destinationReady: boolean;
 }
 
-export class StaticDeploymentRegistry {
+export class StaticDeploymentRegistry implements DeploymentRegistry {
   constructor(private readonly routes: DeploymentRoute[]) {}
 
   isExecutable(rail: Rail, srcChainId: number, dstChainId: number): boolean {

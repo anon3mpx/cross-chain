@@ -101,6 +101,7 @@ function decodeQuote(raw: string): QuoteResult {
     expectedDstSettlementToken?: string;
     expectedDstSettlementAssetId?: string;
     minSettlementAmount?: bigint;
+    dstGasLimit?: number;
   };
 
   if (typeof parsed.railData !== 'string') {
@@ -123,6 +124,9 @@ function decodeQuote(raw: string): QuoteResult {
   }
   if (typeof parsed.minSettlementAmount !== 'bigint') {
     parsed.minSettlementAmount = 0n;
+  }
+  if (typeof parsed.dstGasLimit !== 'number' || !Number.isFinite(parsed.dstGasLimit)) {
+    parsed.dstGasLimit = 0;
   }
   return parsed as QuoteResult;
 }
