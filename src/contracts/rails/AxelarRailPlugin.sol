@@ -32,6 +32,8 @@ contract AxelarRailPlugin is IRailPlugin, ERC165, Ownable2Step {
     mapping(uint32 => bytes32) public destinationTokenIds;
     // EVM chainId + source route asset identifier => route config
     mapping(uint32 => mapping(bytes32 => AxelarRouteConfig)) public routeConfigs;
+    // EVM chainId + source route token => route config
+    mapping(uint32 => mapping(address => AxelarRouteConfig)) internal routeConfigsByToken;
 
     event AxelarBridgeInitiated(
         bytes32 indexed intentId,
@@ -51,6 +53,7 @@ contract AxelarRailPlugin is IRailPlugin, ERC165, Ownable2Step {
     error InsufficientGasPayment(uint256 provided, uint256 required);
     error InterchainTokenServiceMismatch(address tokenService, address expectedService);
     error InvalidDestinationGasLimit(uint256 gasLimit);
+    error UnexpectedRouteAsset(bytes32 provided, bytes32 expected);
 
     constructor(
         address _gasService,
@@ -76,7 +79,7 @@ contract AxelarRailPlugin is IRailPlugin, ERC165, Ownable2Step {
         override
         returns (uint256 fee, uint256 eta)
     {
-        AxelarRouteConfig memory route = _resolveRouteConfig(dstChainId, routeAssetId);
+        AxelarRouteConfig memory route = _resolveRouteConfig(dstChainId, routeToken, routeAssetId);
         string memory dstChainName = route.chainName;
         address dstReceiver = route.receiver;
         if (bytes(dstChainName).length == 0) {
@@ -119,7 +122,11 @@ contract AxelarRailPlugin is IRailPlugin, ERC165, Ownable2Step {
         override
         returns (bytes32 railTxId)
     {
-        AxelarRouteConfig memory route = _resolveRouteConfig(params.dstChainId, params.routeAssetId);
+        AxelarRouteConfig memory route = _resolveRouteConfig(
+            params.dstChainId,
+            params.routeTokenAddr,
+            params.routeAssetId
+        );
         string memory dstChainName = route.chainName;
         address dstReceiver = route.receiver;
         bytes32 dstTokenId = route.destinationTokenId;
@@ -191,6 +198,23 @@ contract AxelarRailPlugin is IRailPlugin, ERC165, Ownable2Step {
 
     function setRouteConfig(
         uint32 chainId,
+        string calldata axelarChainName,
+        address receiver,
+        bytes32 destinationTokenId,
+        address sourceRouteToken
+    ) external onlyOwner {
+        _storeRouteConfig(
+            chainId,
+            deriveRouteAssetId(sourceRouteToken),
+            axelarChainName,
+            receiver,
+            destinationTokenId,
+            sourceRouteToken
+        );
+    }
+
+    function setRouteConfigWithAssetId(
+        uint32 chainId,
         bytes32 routeAssetId,
         string calldata axelarChainName,
         address receiver,
@@ -207,6 +231,10 @@ contract AxelarRailPlugin is IRailPlugin, ERC165, Ownable2Step {
         );
     }
 
+    function deriveRouteAssetId(address sourceRouteToken) public view returns (bytes32) {
+        return keccak256(abi.encode(block.chainid, sourceRouteToken));
+    }
+
     function _storeRouteConfig(
         uint32 chainId,
         bytes32 routeAssetId,
@@ -215,24 +243,35 @@ contract AxelarRailPlugin is IRailPlugin, ERC165, Ownable2Step {
         bytes32 destinationTokenId,
         address sourceRouteToken
     ) internal {
-        routeConfigs[chainId][routeAssetId] = AxelarRouteConfig({
+        AxelarRouteConfig memory route = AxelarRouteConfig({
             chainName: axelarChainName,
             receiver: receiver,
             destinationTokenId: destinationTokenId,
             sourceRouteToken: sourceRouteToken
         });
 
+        routeConfigs[chainId][routeAssetId] = route;
+        routeConfigsByToken[chainId][sourceRouteToken] = route;
+
         chainIdToAxelarName[chainId] = axelarChainName;
         destinationReceivers[chainId] = receiver;
         destinationTokenIds[chainId] = destinationTokenId;
     }
 
-    function _resolveRouteConfig(uint32 chainId, bytes32 routeAssetId)
+    function _resolveRouteConfig(uint32 chainId, address routeToken, bytes32 routeAssetId)
         internal
         view
         returns (AxelarRouteConfig memory route)
     {
-        return routeConfigs[chainId][routeAssetId];
+        bytes32 expectedRouteAssetId = deriveRouteAssetId(routeToken);
+        if (routeAssetId != expectedRouteAssetId) {
+            revert UnexpectedRouteAsset(routeAssetId, expectedRouteAssetId);
+        }
+
+        route = routeConfigsByToken[chainId][routeToken];
+        if (route.sourceRouteToken == address(0)) {
+            route = routeConfigs[chainId][expectedRouteAssetId];
+        }
     }
 
     function supportsInterface(bytes4 interfaceId)

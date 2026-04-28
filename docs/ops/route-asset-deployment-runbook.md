@@ -16,7 +16,7 @@ It covers:
 This document assumes the current codebase state where:
 
 - messaging rails use `RouterV1` + `ReceiverV1`
-- Axelar and LayerZero routes are keyed by `routeAssetId`
+- Axelar and LayerZero route config is keyed operationally by `routeToken`, with `routeAssetId` derived on-chain from `keccak256(abi.encode(localChainId, localRouteToken))`
 - `dstGasLimit` is signed inside the intent
 - THORChain is provider-direct and does not require destination deployments
 
@@ -63,7 +63,7 @@ There are four layers that must all agree.
 
 3. On-chain route configuration
 
-- `dstChainId + routeAssetId -> route config`
+- `dstChainId + routeToken -> route config`
 
 4. Runtime signing and execution
 
@@ -399,20 +399,25 @@ RECEIVER_APPROVED_CALLER_2=<local LayerZeroReceiverAdapter>
 
 Registering plugins is idempotent, so `ConfigureAll` can be rerun safely.
 
-## 11. How To Derive `routeAssetId`
+## 11. How `routeAssetId` Works
 
-This is critical.
+Operators do not configure `routeAssetId` anymore for Axelar or LayerZero routes.
 
-For Axelar and LayerZero route config, `routeAssetId` is keyed by:
+The messaging rail plugins derive it internally from:
 
 - local source chain ID
 - local source route token address
 
-In other words:
+Formula:
 
 `routeAssetId = keccak256(abi.encode(localChainId, localRouteToken))`
 
-This matches the quote engine and plugin expectations.
+This still matters for:
+
+- VPS quote generation
+- signed intent integrity
+- destination `ReceiverV1` verification
+- debugging mismatches
 
 ### Example using `cast`
 
@@ -423,12 +428,7 @@ ENCODED=$(cast abi-encode "f(uint256,address)" 84532 0x1234567890123456789012345
 cast keccak "$ENCODED"
 ```
 
-Use that output as:
-
-- `AXELAR_ROUTE_ASSET_ID`
-- `LZ_ROUTE_ASSET_ID`
-
-Do not hash the destination token address here.
+Use this only to verify what the contracts and VPS should derive. Do not pass it into `ConfigureAll`.
 
 ## 12. Per-Pair Route Configuration
 
@@ -465,7 +465,6 @@ CCTP_FAST_MAX_FEE_BPS_CAP=100
 AXELAR_SET_ROUTE=true
 AXELAR_PLUGIN=<local AxelarRailPlugin>
 AXELAR_ROUTE_CHAIN_ID=<remote EVM chain id>
-AXELAR_ROUTE_ASSET_ID=<keccak256(localChainId, localRouteToken)>
 AXELAR_ROUTE_NAME=<remote Axelar chain name>
 AXELAR_ROUTE_RECEIVER=<remote AxelarReceiverAdapter>
 AXELAR_ROUTE_TOKEN_ID=<remote Axelar destination token id>
@@ -486,7 +485,6 @@ if you want all of them live on Axelar.
 LZ_SET_ROUTE=true
 LZ_PLUGIN=<local LayerZeroRailPlugin>
 LZ_ROUTE_CHAIN_ID=<remote EVM chain id>
-LZ_ROUTE_ASSET_ID=<keccak256(localChainId, localRouteToken)>
 LZ_ROUTE_EID=<remote LayerZero EID>
 LZ_ROUTE_RECEIVER=<remote LayerZeroReceiverAdapter>
 LZ_ROUTE_OPTIONS=<hex bytes or empty>
@@ -676,7 +674,7 @@ For `Base Sepolia (84532) -> Arbitrum Sepolia (421614)`:
 ## 18. What Usually Breaks
 
 - `ROUTER_INTENT_SIGNER` and `VPS_INTENT_SIGNER_PRIVATE_KEY` do not match.
-- `AXELAR_ROUTE_ASSET_ID` or `LZ_ROUTE_ASSET_ID` derived from the wrong token.
+- VPS derived `routeAssetId` from the wrong local route token.
 - `AXELAR_ROUTE_TOKEN` omitted in configure env.
 - `LZ_ROUTE_TOKEN` omitted in configure env.
 - `LZ_ROUTE_OFT` omitted in configure env.
@@ -733,4 +731,3 @@ You are ready to widen rollout only when all of the following are true:
 - `node --import tsx --test tests/vps/*.test.ts` passes
 - `forge test --config-path config/foundry.toml` passes
 - end-to-end testnet smoke passes for every rail family you plan to expose
-

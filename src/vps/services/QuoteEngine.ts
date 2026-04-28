@@ -25,6 +25,10 @@ import { AxelarAssetCatalog, type AxelarRouteOption } from './axelar/AxelarAsset
 import { CHAIN_CONFIGS, getChainConfig } from '../config/chains';
 import { ROUTE_ASSET_ALLOWLISTS } from '../config/routeExecution';
 import { getSettlementTokenAddress, getSwapPluginIdForChain } from '../config/contracts';
+import {
+  getDefaultAxelarDirectAssetsFromMetadata,
+  getDefaultLayerZeroRouteFamiliesFromMetadata,
+} from '../config/routeMetadata';
 import { randomBytes } from 'crypto';
 import { InMemoryQuoteCache, QuoteCache } from '../cache/QuoteCache';
 import {
@@ -995,16 +999,13 @@ export class QuoteEngine {
 
   private _defaultAxelarDirectCanonicalAssetIds(): string[] {
     const configured = this._readEnv('AXELAR_DIRECT_ROUTE_ASSETS');
-    if (!configured) return ['WETH'];
+    if (!configured) return getDefaultAxelarDirectAssetsFromMetadata();
     return configured.split(',').map((value) => value.trim().toUpperCase()).filter(Boolean);
   }
 
   private _defaultLayerZeroRouteFamilies(): Partial<Record<string, LayerZeroRouteOption['offerType']>> {
-    const overrides: Partial<Record<string, LayerZeroRouteOption['offerType']>> = {
-      USDC: 'lz_stargate_pool',
-      USDT: 'lz_oft_adapter',
-      WETH: 'lz_oft',
-    };
+    const overrides: Partial<Record<string, LayerZeroRouteOption['offerType']>> =
+      getDefaultLayerZeroRouteFamiliesFromMetadata();
 
     for (const assetAlias of this.routeAssetPolicy.allowedAssets(Rail.LAYERZERO)) {
       const normalized = assetAlias.trim().toUpperCase();

@@ -105,9 +105,6 @@ contract AxelarRailPluginTest {
     AxelarRailPlugin private plugin;
 
     uint32 private constant DST_CHAIN = 42161;
-    bytes32 private constant LEGACY_SETTLEMENT_ASSET_ID = bytes32(0);
-    bytes32 private constant DYNAMIC_SETTLEMENT_ASSET_ID = keccak256("BASE_AXELAR_WETH");
-    bytes32 private constant UNKNOWN_SETTLEMENT_ASSET_ID = keccak256("UNKNOWN_ASSET");
     bytes32 private constant DST_TOKEN_ID = keccak256("ARBITRUM_USDC");
     bytes32 private constant DST_WETH_TOKEN_ID = keccak256("ARBITRUM_WETH");
     uint256 private constant GAS_FEE = 0.01 ether;
@@ -119,7 +116,7 @@ contract AxelarRailPluginTest {
         gasService = new MockAxelarGasService(GAS_FEE);
         plugin = new AxelarRailPlugin(address(gasService), address(its), address(this));
 
-        plugin.setRouteConfig(DST_CHAIN, LEGACY_SETTLEMENT_ASSET_ID, "arbitrum", address(0xBEEF), DST_TOKEN_ID, address(usdc));
+        plugin.setRouteConfig(DST_CHAIN, "arbitrum", address(0xBEEF), DST_TOKEN_ID, address(usdc));
         usdc.mint(address(this), 1_000_000e6);
         weth.mint(address(this), 1_000_000e18);
     }
@@ -128,7 +125,7 @@ contract AxelarRailPluginTest {
         uint256 amount = 100e6;
         usdc.approve(address(plugin), amount);
         IntentTypes.BridgeParams memory params =
-            _bridgeParams(address(usdc), amount, LEGACY_SETTLEMENT_ASSET_ID, keccak256("intent-1"));
+            _bridgeParams(address(usdc), amount, _settlementAssetId(address(usdc)), keccak256("intent-1"));
 
         bytes32 railTxId = plugin.bridge{value: GAS_FEE + 1 wei}(params);
 
@@ -149,7 +146,6 @@ contract AxelarRailPluginTest {
         weth.approve(address(plugin), amount);
         plugin.setRouteConfig(
             DST_CHAIN,
-            DYNAMIC_SETTLEMENT_ASSET_ID,
             "arbitrum",
             address(0xBEEF),
             DST_WETH_TOKEN_ID,
@@ -157,7 +153,7 @@ contract AxelarRailPluginTest {
         );
 
         IntentTypes.BridgeParams memory params =
-            _bridgeParams(address(weth), amount, DYNAMIC_SETTLEMENT_ASSET_ID, keccak256("intent-weth"));
+            _bridgeParams(address(weth), amount, _settlementAssetId(address(weth)), keccak256("intent-weth"));
 
         bytes32 railTxId = plugin.bridge{value: GAS_FEE}(params);
 
@@ -179,7 +175,7 @@ contract AxelarRailPluginTest {
                 uint32(999999),
                 uint256(1e6),
                 address(usdc),
-                LEGACY_SETTLEMENT_ASSET_ID,
+                _settlementAssetId(address(usdc)),
                 uint256(200_000)
             )
         );
@@ -191,12 +187,25 @@ contract AxelarRailPluginTest {
         weth.approve(address(plugin), amount);
 
         IntentTypes.BridgeParams memory params =
-            _bridgeParams(address(weth), amount, UNKNOWN_SETTLEMENT_ASSET_ID, keccak256("intent-missing-route"));
+            _bridgeParams(address(weth), amount, _settlementAssetId(address(weth)), keccak256("intent-missing-route"));
 
         (bool ok, ) = address(plugin).call{value: GAS_FEE}(
             abi.encodeWithSelector(plugin.bridge.selector, params)
         );
         _assertTrue(!ok, "expected missing dynamic route revert");
+    }
+
+    function testBridgeRevertsWhenRouteAssetIdDoesNotMatchToken() public {
+        uint256 amount = 100e6;
+        usdc.approve(address(plugin), amount);
+
+        IntentTypes.BridgeParams memory params =
+            _bridgeParams(address(usdc), amount, _settlementAssetId(address(weth)), keccak256("intent-bad-asset"));
+
+        (bool ok, ) = address(plugin).call{value: GAS_FEE}(
+            abi.encodeWithSelector(plugin.bridge.selector, params)
+        );
+        _assertTrue(!ok, "expected route asset mismatch revert");
     }
 
     receive() external payable {}
@@ -233,6 +242,10 @@ contract AxelarRailPluginTest {
 
     function _assertEq(bytes32 a, bytes32 b, string memory err) internal pure {
         require(a == b, err);
+    }
+
+    function _settlementAssetId(address token) internal view returns (bytes32) {
+        return keccak256(abi.encode(block.chainid, token));
     }
 
     function _assertTrue(bool ok, string memory err) internal pure {

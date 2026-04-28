@@ -2,6 +2,11 @@ import { AbiCoder, getAddress, keccak256 } from 'ethers';
 import { getChainConfig } from '../../config/chains';
 import { getSettlementTokenAddress } from '../../config/contracts';
 import {
+  getLayerZeroDestinationEidFromMetadata,
+  getLayerZeroExtraOptionsFromMetadata,
+  getLayerZeroOftAddressFromMetadata,
+} from '../../config/routeMetadata';
+import {
   getLayerZeroAssetAliases,
   getLayerZeroDestinationEidEnvKeys,
   getLayerZeroExtraOptionsEnvKeys,
@@ -134,7 +139,10 @@ export class LayerZeroRouteCatalog {
       );
     }
 
-    const oftAddressRaw = this._readFirst(getLayerZeroOftAddressEnvKeys(
+    const oftAddressRaw = getLayerZeroOftAddressFromMetadata(
+      input.srcChainId,
+      input.canonicalAssetId,
+    ) ?? this._readFirst(getLayerZeroOftAddressEnvKeys(
       input.srcChainId,
       input.canonicalAssetId,
     ));
@@ -144,14 +152,21 @@ export class LayerZeroRouteCatalog {
       );
     }
 
-    const dstEidRaw = this._readFirst(getLayerZeroDestinationEidEnvKeys(input.dstChainId));
+    const dstEidRaw = String(
+      getLayerZeroDestinationEidFromMetadata(input.dstChainId)
+      ?? this._readFirst(getLayerZeroDestinationEidEnvKeys(input.dstChainId))
+      ?? '',
+    );
     if (!dstEidRaw) {
       throw new Error(
         `layerzero route catalog: missing destination eid for chain ${input.dstChainId}`,
       );
     }
 
-    const extraOptionsRaw = this._readFirst(getLayerZeroExtraOptionsEnvKeys(
+    const extraOptionsRaw = getLayerZeroExtraOptionsFromMetadata(
+      input.dstChainId,
+      input.canonicalAssetId,
+    ) ?? this._readFirst(getLayerZeroExtraOptionsEnvKeys(
       input.dstChainId,
       input.canonicalAssetId,
     ));

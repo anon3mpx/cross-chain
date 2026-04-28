@@ -32,6 +32,8 @@ contract LayerZeroRailPlugin is IRailPlugin, ERC165, Ownable2Step {
     mapping(uint32 => bytes) public sendOptionsByChain;
     // EVM chainId + source route asset identifier => route config
     mapping(uint32 => mapping(bytes32 => LzRouteConfig)) public routeConfigs;
+    // EVM chainId + source route token => route config
+    mapping(uint32 => mapping(address => LzRouteConfig)) internal routeConfigsByToken;
 
     event LayerZeroBridgeInitiated(
         bytes32 indexed intentId,
@@ -48,6 +50,7 @@ contract LayerZeroRailPlugin is IRailPlugin, ERC165, Ownable2Step {
     error RouteTokenMismatch(address provided, address expected);
     error InsufficientNativeFee(uint256 provided, uint256 required);
     error UnsupportedLzTokenFee(uint256 lzTokenFee);
+    error UnexpectedRouteAsset(bytes32 provided, bytes32 expected);
 
     constructor(
         address _endpoint,
@@ -71,7 +74,7 @@ contract LayerZeroRailPlugin is IRailPlugin, ERC165, Ownable2Step {
         override
         returns (uint256 fee, uint256 eta)
     {
-        LzRouteConfig memory route = _resolveRouteConfig(dstChainId, routeAssetId);
+        LzRouteConfig memory route = _resolveRouteConfig(dstChainId, routeToken, routeAssetId);
         uint32 dstEid = route.dstEid;
         address dstReceiver = route.dstReceiver;
         if (dstEid == 0 || route.routeOft == address(0) || route.routeToken == address(0)) {
@@ -115,7 +118,11 @@ contract LayerZeroRailPlugin is IRailPlugin, ERC165, Ownable2Step {
         override
         returns (bytes32 railTxId)
     {
-        LzRouteConfig memory route = _resolveRouteConfig(params.dstChainId, params.routeAssetId);
+        LzRouteConfig memory route = _resolveRouteConfig(
+            params.dstChainId,
+            params.routeTokenAddr,
+            params.routeAssetId
+        );
         uint32 dstEid = route.dstEid;
         address dstReceiver = route.dstReceiver;
         address configuredRouteToken = route.routeToken;
@@ -184,6 +191,25 @@ contract LayerZeroRailPlugin is IRailPlugin, ERC165, Ownable2Step {
 
     function setRouteConfig(
         uint32 chainId,
+        uint32 dstEid,
+        address receiver,
+        bytes calldata sendOptions,
+        address routeOft,
+        address routeToken
+    ) external onlyOwner {
+        _storeRouteConfig(
+            chainId,
+            deriveRouteAssetId(routeToken),
+            dstEid,
+            receiver,
+            sendOptions,
+            routeOft,
+            routeToken
+        );
+    }
+
+    function setRouteConfigWithAssetId(
+        uint32 chainId,
         bytes32 routeAssetId,
         uint32 dstEid,
         address receiver,
@@ -202,6 +228,10 @@ contract LayerZeroRailPlugin is IRailPlugin, ERC165, Ownable2Step {
         );
     }
 
+    function deriveRouteAssetId(address routeToken) public view returns (bytes32) {
+        return keccak256(abi.encode(block.chainid, routeToken));
+    }
+
     function _storeRouteConfig(
         uint32 chainId,
         bytes32 routeAssetId,
@@ -211,13 +241,16 @@ contract LayerZeroRailPlugin is IRailPlugin, ERC165, Ownable2Step {
         address routeOft,
         address routeToken
     ) internal {
-        routeConfigs[chainId][routeAssetId] = LzRouteConfig({
+        LzRouteConfig memory route = LzRouteConfig({
             dstEid: dstEid,
             dstReceiver: receiver,
             options: sendOptions,
             routeOft: routeOft,
             routeToken: routeToken
         });
+
+        routeConfigs[chainId][routeAssetId] = route;
+        routeConfigsByToken[chainId][routeToken] = route;
 
         if (chainIdToEid[chainId] == 0) {
             chainIdToEid[chainId] = dstEid;
@@ -226,14 +259,22 @@ contract LayerZeroRailPlugin is IRailPlugin, ERC165, Ownable2Step {
         }
     }
 
-    function _resolveRouteConfig(uint32 chainId, bytes32 routeAssetId)
+    function _resolveRouteConfig(uint32 chainId, address routeToken, bytes32 routeAssetId)
         internal
         view
         returns (LzRouteConfig memory route)
     {
-        route = routeConfigs[chainId][routeAssetId];
+        bytes32 expectedRouteAssetId = deriveRouteAssetId(routeToken);
+        if (routeAssetId != expectedRouteAssetId) {
+            revert UnexpectedRouteAsset(routeAssetId, expectedRouteAssetId);
+        }
+
+        route = routeConfigsByToken[chainId][routeToken];
+        if (route.routeToken == address(0)) {
+            route = routeConfigs[chainId][expectedRouteAssetId];
+        }
         if (route.dstEid == 0) {
-            revert RouteAssetNotConfigured(chainId, routeAssetId);
+            revert RouteAssetNotConfigured(chainId, expectedRouteAssetId);
         }
     }
 

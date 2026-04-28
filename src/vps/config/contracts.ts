@@ -1,6 +1,10 @@
 import { Rail, SettlementToken } from '../types';
 import { hasAggregator } from './chains';
 import { getRailEnvAliases } from '../rails/registry';
+import {
+  getDefaultRouteTokenAddress,
+  getRouteMetadataTokenAddress,
+} from './routeMetadata';
 
 const ZERO_ADDR = '0x0000000000000000000000000000000000000000';
 const BYTES32_RE = /^0x[0-9a-fA-F]{64}$/;
@@ -48,6 +52,14 @@ export function getSettlementTokenAddress(
   token: SettlementToken,
   rail?: Rail,
 ): string | undefined {
+  if (rail) {
+    const configured = getRouteMetadataTokenAddress(chainId, rail, token);
+    if (configured) return asAddress(configured);
+  }
+
+  const defaultConfigured = getDefaultRouteTokenAddress(chainId, token);
+  if (defaultConfigured) return asAddress(defaultConfigured);
+
   if (rail) {
     for (const railName of getRailEnvAliases(rail)) {
       const railScoped = asAddress(readEnv(`CHAIN_${chainId}_TOKEN_${railName}_${token}`));

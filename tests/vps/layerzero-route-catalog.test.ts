@@ -73,16 +73,16 @@ test('LayerZeroRouteCatalog resolves route metadata with alias and env fallbacks
 test('LayerZeroRouteCatalog rejects invalid destination eid and invalid options bytes', async () => {
   await withPatchedEnv({
     CHAIN_8453_TOKEN_LAYERZERO_ETH: BASE_ETH,
-    CHAIN_42161_TOKEN_LAYERZERO_ETH: ARB_ETH,
+    CHAIN_11155111_TOKEN_LAYERZERO_ETH: ARB_ETH,
     CHAIN_8453_LAYERZERO_OFT_ETH: BASE_OFT_ETH,
-    CHAIN_42161_LAYERZERO_DST_EID: 'not-a-number',
+    CHAIN_11155111_LAYERZERO_DST_EID: 'not-a-number',
   }, () => {
     const catalog = new LayerZeroRouteCatalog();
     assert.throws(
       () =>
         catalog.resolve({
           srcChainId: 8453,
-          dstChainId: 42161,
+          dstChainId: 11155111,
           canonicalAssetId: 'ETH',
         }),
       /invalid dstEid/,
@@ -91,17 +91,17 @@ test('LayerZeroRouteCatalog rejects invalid destination eid and invalid options 
 
   await withPatchedEnv({
     CHAIN_8453_TOKEN_LAYERZERO_ETH: BASE_ETH,
-    CHAIN_42161_TOKEN_LAYERZERO_ETH: ARB_ETH,
+    CHAIN_11155111_TOKEN_LAYERZERO_ETH: ARB_ETH,
     CHAIN_8453_LAYERZERO_OFT_ETH: BASE_OFT_ETH,
-    CHAIN_42161_LAYERZERO_DST_EID: '30110',
-    CHAIN_42161_LZ_EXTRA_OPTIONS_ETH: '0x123',
+    CHAIN_11155111_LAYERZERO_DST_EID: '30110',
+    CHAIN_11155111_LZ_EXTRA_OPTIONS_ETH: '0x123',
   }, () => {
     const catalog = new LayerZeroRouteCatalog();
     assert.throws(
       () =>
         catalog.resolve({
           srcChainId: 8453,
-          dstChainId: 42161,
+          dstChainId: 11155111,
           canonicalAssetId: 'ETH',
         }),
       /invalid extraOptions/,

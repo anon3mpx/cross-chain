@@ -1,6 +1,7 @@
 import { AbiCoder, getAddress, keccak256 } from 'ethers';
 import { getChainConfig } from '../../config/chains';
 import { getSettlementTokenAddress } from '../../config/contracts';
+import { getAxelarDestinationTokenIdFromMetadata } from '../../config/routeMetadata';
 import {
   getAxelarAssetAliases,
   getAxelarDestinationTokenIdEnvKeys,
@@ -126,7 +127,10 @@ export class AxelarAssetCatalog {
       );
     }
 
-    const destinationTokenIdRaw = this._readFirst(getAxelarDestinationTokenIdEnvKeys(
+    const destinationTokenIdRaw = getAxelarDestinationTokenIdFromMetadata(
+      input.dstChainId,
+      input.canonicalAssetId,
+    ) ?? this._readFirst(getAxelarDestinationTokenIdEnvKeys(
       input.dstChainId,
       input.canonicalAssetId,
     ));
