@@ -23,16 +23,17 @@ contract LayerZeroReceiverAdapter is Ownable2Step {
     }
 
     address public immutable endpoint;
-    address public immutable oft;
-    address public immutable settlementToken;
     address public immutable receiver;
 
     // srcEid => trusted source composeFrom address bytes32.
     mapping(uint32 => bytes32) public trustedPeers;
+    // expected destination settlement asset => configured local settlement token.
+    mapping(bytes32 => address) public settlementTokenByAssetId;
     // srcEid + expected destination settlement asset => expected compose sender (source OFT).
     mapping(uint32 => mapping(bytes32 => address)) public expectedComposeSenders;
 
     event TrustedPeerSet(uint32 indexed srcEid, bytes32 indexed peer);
+    event SettlementTokenSet(bytes32 indexed expectedSettlementAssetId, address indexed settlementToken);
     event ExpectedComposeSenderSet(
         uint32 indexed srcEid,
         bytes32 indexed expectedSettlementAssetId,
@@ -52,22 +53,17 @@ contract LayerZeroReceiverAdapter is Ownable2Step {
     error UnexpectedSettlementToken(address received, address expected);
     error UnexpectedSettlementAsset(bytes32 received, bytes32 expected);
     error MalformedComposeMessage(uint256 length);
+    error UnsupportedSettlementAsset(bytes32 expectedRouteAssetId);
     error ZeroAddress(string field);
 
     constructor(
         address _endpoint,
-        address _oft,
-        address _settlementToken,
         address _receiver,
         address _owner
     ) Ownable(_owner) {
         if (_endpoint == address(0)) revert ZeroAddress("endpoint");
-        if (_oft == address(0)) revert ZeroAddress("oft");
-        if (_settlementToken == address(0)) revert ZeroAddress("settlementToken");
         if (_receiver == address(0)) revert ZeroAddress("receiver");
         endpoint = _endpoint;
-        oft = _oft;
-        settlementToken = _settlementToken;
         receiver = _receiver;
     }
 
@@ -108,8 +104,12 @@ contract LayerZeroReceiverAdapter is Ownable2Step {
         decoded.swapPluginId;
 
         if (decoded.expectedRouteToken == address(0)) revert ZeroAddress("expectedRouteToken");
+        address settlementToken = settlementTokenByAssetId[decoded.expectedRouteAssetId];
+        if (settlementToken == address(0)) {
+            revert UnsupportedSettlementAsset(decoded.expectedRouteAssetId);
+        }
         address expectedOft = expectedComposeSenders[srcEid][decoded.expectedRouteAssetId];
-        if (expectedOft == address(0)) expectedOft = oft;
+        if (expectedOft == address(0)) revert UnauthorizedComposeSender(_from, address(0));
         if (_from != expectedOft) revert UnauthorizedComposeSender(_from, expectedOft);
 
         if (settlementToken != decoded.expectedRouteToken) {
@@ -136,6 +136,12 @@ contract LayerZeroReceiverAdapter is Ownable2Step {
         bytes32 peerBytes32 = OFTComposeMsgCodec.addressToBytes32(peer);
         trustedPeers[srcEid] = peerBytes32;
         emit TrustedPeerSet(srcEid, peerBytes32);
+    }
+
+    function setSettlementToken(bytes32 expectedSettlementAssetId, address settlementToken) external onlyOwner {
+        if (settlementToken == address(0)) revert ZeroAddress("settlementToken");
+        settlementTokenByAssetId[expectedSettlementAssetId] = settlementToken;
+        emit SettlementTokenSet(expectedSettlementAssetId, settlementToken);
     }
 
     function setExpectedComposeSender(

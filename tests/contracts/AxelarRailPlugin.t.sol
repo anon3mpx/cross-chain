@@ -105,8 +105,6 @@ contract AxelarRailPluginTest {
     AxelarRailPlugin private plugin;
 
     uint32 private constant DST_CHAIN = 42161;
-    bytes32 private constant DST_TOKEN_ID = keccak256("ARBITRUM_USDC");
-    bytes32 private constant DST_WETH_TOKEN_ID = keccak256("ARBITRUM_WETH");
     uint256 private constant GAS_FEE = 0.01 ether;
 
     function setUp() public {
@@ -116,7 +114,7 @@ contract AxelarRailPluginTest {
         gasService = new MockAxelarGasService(GAS_FEE);
         plugin = new AxelarRailPlugin(address(gasService), address(its), address(this));
 
-        plugin.setRouteConfig(DST_CHAIN, "arbitrum", address(0xBEEF), DST_TOKEN_ID, address(usdc));
+        plugin.setChainConfig(DST_CHAIN, "arbitrum", address(0xBEEF));
         usdc.mint(address(this), 1_000_000e6);
         weth.mint(address(this), 1_000_000e18);
     }
@@ -144,14 +142,6 @@ contract AxelarRailPluginTest {
     function testBridgeAcceptsDynamicAxelarToken() public {
         uint256 amount = 2e18;
         weth.approve(address(plugin), amount);
-        plugin.setRouteConfig(
-            DST_CHAIN,
-            "arbitrum",
-            address(0xBEEF),
-            DST_WETH_TOKEN_ID,
-            address(weth)
-        );
-
         IntentTypes.BridgeParams memory params =
             _bridgeParams(address(weth), amount, _settlementAssetId(address(weth)), keccak256("intent-weth"));
 
@@ -176,23 +166,23 @@ contract AxelarRailPluginTest {
                 uint256(1e6),
                 address(usdc),
                 _settlementAssetId(address(usdc)),
-                uint256(200_000)
+                uint256(200_000),
+                bytes("")
             )
         );
         _assertTrue(!ok, "expected unsupported route revert");
     }
 
-    function testBridgeRevertsWhenDynamicAssetRouteMissing() public {
+    function testBridgeRevertsWhenChainRouteMissing() public {
         uint256 amount = 1e18;
         weth.approve(address(plugin), amount);
 
         IntentTypes.BridgeParams memory params =
             _bridgeParams(address(weth), amount, _settlementAssetId(address(weth)), keccak256("intent-missing-route"));
+        params.dstChainId = 999999;
 
-        (bool ok, ) = address(plugin).call{value: GAS_FEE}(
-            abi.encodeWithSelector(plugin.bridge.selector, params)
-        );
-        _assertTrue(!ok, "expected missing dynamic route revert");
+        (bool ok, ) = address(plugin).call{value: GAS_FEE}(abi.encodeWithSelector(plugin.bridge.selector, params));
+        _assertTrue(!ok, "expected missing chain route revert");
     }
 
     function testBridgeRevertsWhenRouteAssetIdDoesNotMatchToken() public {

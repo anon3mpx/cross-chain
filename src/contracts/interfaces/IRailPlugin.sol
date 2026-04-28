@@ -24,7 +24,8 @@ interface IRailPlugin {
         uint256 amount,
         address routeToken,
         bytes32 routeAssetId,
-        uint256 dstGasLimit
+        uint256 dstGasLimit,
+        bytes calldata railData
     ) external view returns (uint256 fee, uint256 eta);
 
     /// @notice Execute the bridge transfer

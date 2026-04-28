@@ -90,6 +90,8 @@ interface ResolvedRouteExecutionAsset {
   sourceRouteAssetId: string;
   destinationRouteAssetId: string;
   axelarDestinationTokenId?: string;
+  layerZeroRouteOft?: string;
+  layerZeroOptions?: string;
 }
 
 export interface OfferSelectionResult {
@@ -322,6 +324,16 @@ export class QuoteEngine {
       outboundFeeUSD = this._settlementTokenToUSD(settlementToken, cctpPlan.circleFeeToken);
       realizedRailFeeUSD += outboundFeeUSD;
       bridgeAmount = srcSwapAmount - cctpPlan.circleFeeToken;
+    } else if (hop.rail === Rail.LAYERZERO) {
+      if (!routeAsset.layerZeroRouteOft) return null;
+      railData = abiCoder.encode(
+        ['uint8', 'address', 'bytes'],
+        [
+          this._layerZeroFamilyCode(routeAsset.offerType),
+          routeAsset.layerZeroRouteOft,
+          routeAsset.layerZeroOptions ?? '0x',
+        ],
+      );
     }
 
     // Get dst swap quote: settlementToken → tokenOut
@@ -746,6 +758,8 @@ export class QuoteEngine {
           option.routeAsset.srcTokenAddress ?? option.routeAsset.tokenAddress ?? '',
         ),
         destinationRouteAssetId: option.expectedDstAssetId,
+        layerZeroRouteOft: option.oftAddress,
+        layerZeroOptions: option.extraOptions,
       };
     }
 
@@ -896,6 +910,21 @@ export class QuoteEngine {
 
   private _ceilDiv(value: bigint, denominator: bigint): bigint {
     return (value + denominator - 1n) / denominator;
+  }
+
+  private _layerZeroFamilyCode(offerType: RailOfferType): number {
+    switch (offerType) {
+      case 'lz_oft':
+        return 0;
+      case 'lz_oft_adapter':
+        return 1;
+      case 'lz_stargate_pool':
+        return 2;
+      case 'lz_stargate_oft':
+        return 3;
+      default:
+        throw new Error(`quote engine: unsupported LayerZero offer type ${offerType}`);
+    }
   }
 
   private async _estimateUSD(token: string, chainId: number, amount: bigint): Promise<number> {

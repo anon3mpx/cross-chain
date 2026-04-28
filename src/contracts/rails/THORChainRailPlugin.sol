@@ -78,7 +78,14 @@ contract THORChainRailPlugin is IRailPlugin, ERC165, Ownable2Step {
 
     /// @notice Fee estimate: THORChain charges ~0.1-0.3% slip + dynamic outbound fee.
     ///         VPS fetches live fee from THORChain API before quoting — this is a fallback.
-    function estimateFee(uint32 dstChainId, uint256 /*amount*/, address routeToken, bytes32 /*routeAssetId*/, uint256 /*dstGasLimit*/)
+    function estimateFee(
+        uint32 dstChainId,
+        uint256 /*amount*/,
+        address routeToken,
+        bytes32 /*routeAssetId*/,
+        uint256 /*dstGasLimit*/,
+        bytes calldata /*railData*/
+    )
         external view override returns (uint256 fee, uint256 eta)
     {
         if (!_isSupportedRouteToken(routeToken)) revert UnsupportedRouteToken(routeToken);

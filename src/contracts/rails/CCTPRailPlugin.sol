@@ -52,7 +52,14 @@ contract CCTPRailPlugin is IRailPlugin, ERC165, Ownable2Step {
         return chainToDomain[dstChainId] != 0 || dstChainId == 1; // ETH mainnet is domain 0
     }
 
-    function estimateFee(uint32 dstChainId, uint256 /*amount*/, address routeToken, bytes32 /*routeAssetId*/, uint256 /*dstGasLimit*/)
+    function estimateFee(
+        uint32 dstChainId,
+        uint256 /*amount*/,
+        address routeToken,
+        bytes32 /*routeAssetId*/,
+        uint256 /*dstGasLimit*/,
+        bytes calldata /*railData*/
+    )
         external view override returns (uint256 fee, uint256 eta)
     {
         if (chainToDomain[dstChainId] == 0 && dstChainId != 1)

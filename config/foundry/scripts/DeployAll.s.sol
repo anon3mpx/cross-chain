@@ -150,14 +150,9 @@ contract DeployAll is ScriptBase {
         }
 
         address lzEndpoint = vm.envOr("LZ_ENDPOINT", address(0));
-        address lzOft = vm.envOr("LZ_OFT", address(0));
-        address layerZeroUsdc = vm.envOr(
-            "LAYERZERO_USDC",
-            vm.envOr("LZ_USDC", vm.envOr("USDC", address(0)))
-        );
-        if (lzEndpoint != address(0) && lzOft != address(0) && layerZeroUsdc != address(0)) {
+        if (lzEndpoint != address(0)) {
             LayerZeroReceiverAdapter lzAdapter =
-                new LayerZeroReceiverAdapter(lzEndpoint, lzOft, layerZeroUsdc, receiver, owner);
+                new LayerZeroReceiverAdapter(lzEndpoint, receiver, owner);
             emit ScriptLogAddress("LayerZeroReceiverAdapter", address(lzAdapter));
         }
     }

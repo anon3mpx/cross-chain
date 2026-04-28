@@ -90,8 +90,8 @@ contract ReceiverAdaptersTest {
         bytes4(keccak256("UnexpectedSettlementAsset(bytes32,bytes32)"));
     bytes4 private constant LZ_UNEXPECTED_SETTLEMENT_TOKEN_SELECTOR =
         bytes4(keccak256("UnexpectedSettlementToken(address,address)"));
-    bytes4 private constant LZ_UNEXPECTED_SETTLEMENT_ASSET_SELECTOR =
-        bytes4(keccak256("UnexpectedSettlementAsset(bytes32,bytes32)"));
+    bytes4 private constant LZ_UNSUPPORTED_SETTLEMENT_ASSET_SELECTOR =
+        bytes4(keccak256("UnsupportedSettlementAsset(bytes32)"));
     bytes4 private constant LZ_UNAUTHORIZED_COMPOSE_SENDER_SELECTOR =
         bytes4(keccak256("UnauthorizedComposeSender(address,address)"));
 
@@ -102,17 +102,13 @@ contract ReceiverAdaptersTest {
         endpoint = new LayerZeroEndpointCaller();
 
         axelarAdapter = new AxelarReceiverAdapter(address(its), address(receiver), address(this));
-        lzAdapter = new LayerZeroReceiverAdapter(
-            address(endpoint),
-            LZ_OFT,
-            address(usdc),
-            address(receiver),
-            address(this)
-        );
+        lzAdapter = new LayerZeroReceiverAdapter(address(endpoint), address(receiver), address(this));
 
         axelarAdapter.setTrustedSourceAddress("ethereum", SOURCE_RAIL, true);
         axelarAdapter.setTrustedToken(AXELAR_TOKEN_ID, address(usdc), true);
         lzAdapter.setTrustedPeerAddress(SRC_EID, SOURCE_RAIL);
+        lzAdapter.setSettlementToken(_receiverSettlementAssetId(address(usdc)), address(usdc));
+        lzAdapter.setExpectedComposeSender(SRC_EID, _receiverSettlementAssetId(address(usdc)), LZ_OFT);
     }
 
     function testAxelarAdapterForwardsToReceiver() public {
@@ -414,7 +410,7 @@ contract ReceiverAdaptersTest {
         );
 
         _assertTrue(!ok, "expected LayerZero payload asset mismatch revert");
-        _assertEqBytes4(_errorSelector(data), LZ_UNEXPECTED_SETTLEMENT_ASSET_SELECTOR, "wrong revert selector");
+        _assertEqBytes4(_errorSelector(data), LZ_UNSUPPORTED_SETTLEMENT_ASSET_SELECTOR, "wrong revert selector");
     }
 
     function _encodeOftComposeMessage(

@@ -85,8 +85,8 @@ contract LayerZeroRailPluginTest {
     uint32 private constant DST_CHAIN = 10;
     uint32 private constant DST_EID = 30111;
     uint256 private constant LZ_NATIVE_FEE = 0.005 ether;
-    bytes4 private constant ROUTE_ASSET_NOT_CONFIGURED_SELECTOR =
-        bytes4(keccak256("RouteAssetNotConfigured(uint32,bytes32)"));
+    uint8 private constant FAMILY_OFT = 0;
+    uint8 private constant FAMILY_OFT_ADAPTER = 1;
 
     function setUp() public {
         usdc = new MockLayerZeroToken("Mock USDC", "mUSDC", 6);
@@ -95,7 +95,7 @@ contract LayerZeroRailPluginTest {
         wethOft = new MockLayerZeroOFT(address(weth), LZ_NATIVE_FEE);
         plugin = new LayerZeroRailPlugin(address(0x9999), address(this));
 
-        plugin.setRouteConfig(DST_CHAIN, DST_EID, address(0xBEEF), hex"01020304", address(oft), address(usdc));
+        plugin.setFamilyRouteConfig(DST_CHAIN, FAMILY_OFT, DST_EID, address(0xBEEF), hex"01020304");
         usdc.mint(address(this), 1_000_000e6);
         weth.mint(address(this), 1_000_000e18);
     }
@@ -115,7 +115,8 @@ contract LayerZeroRailPluginTest {
                 amount,
                 _settlementAssetId(address(usdc)),
                 keccak256("intent-lz"),
-                payload
+                payload,
+                _railData(FAMILY_OFT, address(oft), hex"")
             );
 
         bytes32 railTxId = plugin.bridge{value: LZ_NATIVE_FEE + 1 wei}(params);
@@ -140,13 +141,12 @@ contract LayerZeroRailPluginTest {
             keccak256("intent-lz-weth")
         );
 
-        plugin.setRouteConfig(
+        plugin.setFamilyRouteConfig(
             DST_CHAIN,
+            FAMILY_OFT_ADAPTER,
             DST_EID,
             address(0xBEEF),
-            hex"05060708",
-            address(wethOft),
-            address(weth)
+            hex"05060708"
         );
         weth.approve(address(plugin), amount);
 
@@ -156,7 +156,8 @@ contract LayerZeroRailPluginTest {
                 amount,
                 settlementAssetId,
                 keccak256("intent-lz-weth"),
-                payload
+                payload,
+                _railData(FAMILY_OFT_ADAPTER, address(wethOft), hex"")
             );
 
         bytes32 railTxId = plugin.bridge{value: LZ_NATIVE_FEE}(params);
@@ -178,7 +179,8 @@ contract LayerZeroRailPluginTest {
                 1e6,
                 _settlementAssetId(address(usdc)),
                 keccak256("intent-lz-2"),
-                hex""
+                hex"",
+                _railData(FAMILY_OFT, address(oft), hex"")
             );
         params.dstChainId = 55555;
         params.dstCalldata = hex"";
@@ -189,7 +191,7 @@ contract LayerZeroRailPluginTest {
         _assertTrue(!ok, "expected unsupported route revert");
     }
 
-    function testEstimateFeeRevertsWhenRouteMissingForRequestedSettlementToken() public {
+    function testEstimateFeeRevertsWhenRouteFamilyMissing() public {
         (bool ok, bytes memory data) = address(plugin).call(
             abi.encodeWithSelector(
                 plugin.estimateFee.selector,
@@ -197,12 +199,17 @@ contract LayerZeroRailPluginTest {
                 uint256(1e18),
                 address(weth),
                 _settlementAssetId(address(weth)),
-                uint256(200_000)
+                uint256(200_000),
+                _railData(FAMILY_OFT_ADAPTER, address(wethOft), hex"")
             )
         );
 
         _assertTrue(!ok, "expected estimate fee to revert");
-        _assertEqBytes4(_errorSelector(data), ROUTE_ASSET_NOT_CONFIGURED_SELECTOR, "wrong revert selector");
+        _assertEqBytes4(
+            _errorSelector(data),
+            bytes4(keccak256("RouteFamilyNotConfigured(uint32,uint8)")),
+            "wrong revert selector"
+        );
     }
 
     function testBridgeRevertsWhenRouteAssetIdDoesNotMatchToken() public {
@@ -220,7 +227,8 @@ contract LayerZeroRailPluginTest {
                 amount,
                 _settlementAssetId(address(weth)),
                 keccak256("intent-lz-bad-asset"),
-                payload
+                payload,
+                _railData(FAMILY_OFT, address(oft), hex"")
             );
 
         (bool ok, ) = address(plugin).call{value: LZ_NATIVE_FEE}(
@@ -236,7 +244,8 @@ contract LayerZeroRailPluginTest {
         uint256 amount,
         bytes32 settlementAssetId,
         bytes32 intentId,
-        bytes memory dstCalldata
+        bytes memory dstCalldata,
+        bytes memory railData
     ) internal pure returns (IntentTypes.BridgeParams memory) {
         return IntentTypes.BridgeParams({
             intentId: intentId,
@@ -247,7 +256,7 @@ contract LayerZeroRailPluginTest {
             expectedDstRouteAssetId: bytes32(0),
             minRouteAmount: 0,
             dstChainId: DST_CHAIN,
-            railData: bytes(""),
+            railData: railData,
             dstReceiver: address(0xBEEF),
             dstCalldata: dstCalldata,
             gasForDst: 200_000,
@@ -274,6 +283,14 @@ contract LayerZeroRailPluginTest {
             hex"1234",
             bytes32(0)
         );
+    }
+
+    function _railData(uint8 family, address routeOft, bytes memory optionsOverride)
+        internal
+        pure
+        returns (bytes memory)
+    {
+        return abi.encode(family, routeOft, optionsOverride);
     }
 
     function _settlementAssetId(address token) internal view returns (bytes32) {

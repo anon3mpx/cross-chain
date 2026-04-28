@@ -44,7 +44,14 @@ contract MockRailPlugin is ERC165, IRailPlugin {
         return true;
     }
 
-    function estimateFee(uint32, uint256, address, bytes32, uint256) external pure returns (uint256 fee, uint256 eta) {
+    function estimateFee(
+        uint32,
+        uint256,
+        address,
+        bytes32,
+        uint256,
+        bytes calldata
+    ) external pure returns (uint256 fee, uint256 eta) {
         return (0, 60);
     }
 

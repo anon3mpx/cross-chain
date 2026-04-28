@@ -31,7 +31,7 @@ const PLUGIN_REGISTRY_ABI = [
 ];
 
 const RAIL_FEE_ABI = [
-  'function estimateFee(uint32 dstChainId,uint256 amount,address routeToken,bytes32 routeAssetId,uint256 dstGasLimit) view returns (uint256 fee,uint256 eta)',
+  'function estimateFee(uint32 dstChainId,uint256 amount,address routeToken,bytes32 routeAssetId,uint256 dstGasLimit,bytes railData) view returns (uint256 fee,uint256 eta)',
 ];
 
 const ROUTER_SIGNING_TYPES: Record<string, TypedDataField[]> = {
@@ -226,6 +226,7 @@ async function estimateNativeGas(quote: QuoteResult): Promise<string> {
     routeToken,
     routeAssetId,
     toBigIntStrict(quote.dstGasLimit, 'dstGasLimit'),
+    normalizeBytes(quote.railData ?? '0x', 'railData'),
   );
   return fee.toString();
 }
