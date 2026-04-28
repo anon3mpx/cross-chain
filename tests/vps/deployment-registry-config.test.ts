@@ -31,6 +31,5 @@ test('chain config resolves deployment registry addresses before env fallback', 
   const arbitrum = getChainConfig(42161);
 
   assert.equal(base?.routerV1, '0x1111111111111111111111111111111111111111');
-  assert.equal(base?.routerV1Abi, 'current');
   assert.equal(arbitrum?.receiverV1, '0x2222222222222222222222222222222222222222');
 });

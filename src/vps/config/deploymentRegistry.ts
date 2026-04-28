@@ -5,7 +5,6 @@ type ReceiverAdapterKind = 'axelar' | 'layerzero';
 
 export interface ChainDeploymentEntry {
   routerV1?: string;
-  routerV1Abi?: 'legacy' | 'current';
   receiverV1?: string;
   pluginRegistry?: string;
   paymaster?: string;
@@ -17,7 +16,6 @@ export interface ChainDeploymentEntry {
 export const DEPLOYMENT_REGISTRY_BY_CHAIN: Record<number, ChainDeploymentEntry> = {
   8453: {
     routerV1: '0x1111111111111111111111111111111111111111',
-    routerV1Abi: 'current',
     receiverV1: '0x1111111111111111111111111111111111111112',
     pluginRegistry: '0x1111111111111111111111111111111111111113',
     railPlugins: {
@@ -32,7 +30,6 @@ export const DEPLOYMENT_REGISTRY_BY_CHAIN: Record<number, ChainDeploymentEntry> 
   },
   42161: {
     routerV1: '0x2222222222222222222222222222222222222221',
-    routerV1Abi: 'current',
     receiverV1: '0x2222222222222222222222222222222222222222',
     pluginRegistry: '0x2222222222222222222222222222222222222223',
     railPlugins: {
@@ -45,15 +42,9 @@ export const DEPLOYMENT_REGISTRY_BY_CHAIN: Record<number, ChainDeploymentEntry> 
       layerzero: '0x2222222222222222222222222222222222222227',
     },
   },
-  84532: {
-    routerV1Abi: 'current',
-  },
-  421614: {
-    routerV1Abi: 'current',
-  },
-  11155420: {
-    routerV1Abi: 'current',
-  },
+  84532: {},
+  421614: {},
+  11155420: {},
 };
 
 export function getDeploymentEntry(chainId: number): ChainDeploymentEntry | undefined {
@@ -62,10 +53,6 @@ export function getDeploymentEntry(chainId: number): ChainDeploymentEntry | unde
 
 export function getRouterAddressFromDeploymentRegistry(chainId: number): string | undefined {
   return getDeploymentEntry(chainId)?.routerV1;
-}
-
-export function getRouterAbiFromDeploymentRegistry(chainId: number): 'legacy' | 'current' | undefined {
-  return getDeploymentEntry(chainId)?.routerV1Abi;
 }
 
 export function getReceiverAddressFromDeploymentRegistry(chainId: number): string | undefined {

@@ -215,7 +215,6 @@ You should keep deployed addresses in the registry file and use env only for tem
 Registry shape includes:
 
 - `routerV1`
-- `routerV1Abi`
 - `receiverV1`
 - `pluginRegistry`
 - `railPlugins`
@@ -225,11 +224,8 @@ Env fallback still works with keys like:
 
 ```bash
 CHAIN_84532_ROUTER_V1=0x...
-CHAIN_84532_ROUTER_V1_ABI=current
 CHAIN_421614_RECEIVER_V1=0x...
 ```
-
-Use `current` for all fresh deployments in this clean-break rollout.
 
 ### 6.3 Intent signer
 
@@ -687,7 +683,7 @@ Do not expose wide THOR coverage on day one.
 1. Add `CHAIN_<id>_TOKEN_<RAIL>_<TOKEN>` keys.
 2. Add Axelar token IDs.
 3. Add LayerZero OFT / EID / options keys.
-4. Add `CHAIN_<id>_ROUTER_V1`, `CHAIN_<id>_ROUTER_V1_ABI=current`, and `CHAIN_<id>_RECEIVER_V1`.
+4. Add `CHAIN_<id>_ROUTER_V1` and `CHAIN_<id>_RECEIVER_V1`.
 
 ### Phase 4: THOR canary
 

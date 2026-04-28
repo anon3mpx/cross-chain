@@ -18,10 +18,6 @@ const ROUTER_V1_IFACE = new Interface([
   'function initiateSwap((address user,address tokenIn,address tokenOut,uint256 amountIn,uint256 minAmountOut,uint256 minSrcSwapOut,uint32 dstChainId,uint8 rail,address routeToken,bytes32 routeAssetId,address expectedDstRouteToken,bytes32 expectedDstRouteAssetId,uint256 minRouteAmount,uint256 feeAmount,bytes swapDataSrc,bytes swapDataDst,bytes32 swapPluginIdSrc,bytes32 dstSwapPluginId,bytes32 railPluginId,bytes railData,uint256 dstGasLimit,address dstReceiver,bytes nativeDstAddress,string thorAssetIdentifier,uint256 minThorOutput,bytes32 intentId,uint256 deadline) intent,bytes signature)',
 ]);
 
-const ROUTER_V1_LEGACY_IFACE = new Interface([
-  'function initiateSwap((address user,address tokenIn,address tokenOut,uint256 amountIn,uint256 minAmountOut,uint256 minSrcSwapOut,uint32 dstChainId,uint8 rail,uint8 settlementToken,uint256 feeAmount,bytes swapDataSrc,bytes swapDataDst,bytes32 dstSwapPluginId,address dstReceiver,bytes nativeDstAddress,string thorAssetIdentifier,uint256 minThorOutput,bytes32 intentId,uint256 deadline) intent,bytes32 swapPluginId,bytes32 railPluginId)',
-]);
-
 const ROUTER_REGISTRY_ABI = [
   'function registry() view returns (address)',
 ];
@@ -173,13 +169,6 @@ export async function buildRouterCalldata(
     intentId: normalizeBytes32(intentId, 'intentId'),
     deadline: toBigIntStrict(quote.expiresAt, 'expiresAt'),
   };
-
-  if (srcCfg.routerV1Abi === 'legacy') {
-    throw new Error(
-      `calldata: legacy RouterV1 on chain ${quote.srcChainId} cannot verify signed intents; ` +
-      'deploy the current RouterV1 ABI or set CHAIN_<chainId>_ROUTER_V1_ABI=current',
-    );
-  }
 
   const signature = await signRouterIntent(payload, quote.srcChainId, getRouterAddress(quote.srcChainId));
   return ROUTER_V1_IFACE.encodeFunctionData('initiateSwap', [payload, signature]);

@@ -102,7 +102,6 @@ export interface ChainConfig {
   rpcUrl:        string;
   rpcFallback:   string;
   routerV1?:     string;    // RouterV1 contract address (EVM only)
-  routerV1Abi:   'legacy' | 'current';
   receiverV1?:   string;    // ReceiverV1 contract address (EVM only, messaging rails only)
   hasAggregator: boolean;
   nativeStable:  SettlementToken;
