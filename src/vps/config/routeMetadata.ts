@@ -10,6 +10,7 @@ export interface RailRouteMetadata {
 }
 
 export interface ChainRouteMetadataEntry {
+  axelarChainName?: string;
   defaultTokens?: Partial<Record<SettlementToken, string>>;
   rails: Partial<Record<MessagingRail, RailRouteMetadata>>;
   axelarTokenIds?: Partial<Record<RouteAssetAlias, string>>;
@@ -35,6 +36,7 @@ export const ROUTE_METADATA_DEFAULTS: RouteMetadataDefaults = {
 
 export const ROUTE_METADATA_BY_CHAIN: Record<number, ChainRouteMetadataEntry> = {
   8453: {
+    axelarChainName: 'base',
     defaultTokens: {
       [SettlementToken.USDC]: '0x0000000000000000000000000000000000001001',
       [SettlementToken.USDT]: '0x0000000000000000000000000000000000001004',
@@ -73,8 +75,12 @@ export const ROUTE_METADATA_BY_CHAIN: Record<number, ChainRouteMetadataEntry> = 
         },
       },
     },
+    layerZero: {
+      dstEid: 30184,
+    },
   },
   42161: {
+    axelarChainName: 'arbitrum',
     defaultTokens: {
       [SettlementToken.USDC]: '0x0000000000000000000000000000000000002001',
       [SettlementToken.USDT]: '0x0000000000000000000000000000000000002004',
@@ -116,6 +122,7 @@ export const ROUTE_METADATA_BY_CHAIN: Record<number, ChainRouteMetadataEntry> = 
     },
   },
   84532: {
+    axelarChainName: 'base-sepolia',
     defaultTokens: {
       [SettlementToken.USDC]: '0x036CbD53842c5426634e7929541eC2318f3dCF7e',
     },
@@ -129,6 +136,7 @@ export const ROUTE_METADATA_BY_CHAIN: Record<number, ChainRouteMetadataEntry> = 
     },
   },
   421614: {
+    axelarChainName: 'arbitrum-sepolia',
     defaultTokens: {
       [SettlementToken.USDC]: '0x75faf114eafb1BDbe2F0316DF893fd58CE46AA4d',
     },
@@ -148,6 +156,7 @@ export const ROUTE_METADATA_BY_CHAIN: Record<number, ChainRouteMetadataEntry> = 
     },
   },
   11155420: {
+    axelarChainName: 'optimism-sepolia',
     defaultTokens: {
       [SettlementToken.USDC]: '0x5fd84259d66Cd46123540766Be93DFE6D43130D7',
     },
@@ -200,6 +209,10 @@ function firstAliasMatch<T>(record: Partial<Record<RouteAssetAlias, T>> | undefi
 
 export function getRouteMetadataEntry(chainId: number): ChainRouteMetadataEntry | undefined {
   return ROUTE_METADATA_BY_CHAIN[chainId];
+}
+
+export function getAxelarChainNameFromMetadata(chainId: number): string | undefined {
+  return getRouteMetadataEntry(chainId)?.axelarChainName;
 }
 
 export function getRouteMetadataTokenAddress(

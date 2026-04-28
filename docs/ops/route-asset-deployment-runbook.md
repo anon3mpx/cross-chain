@@ -16,7 +16,10 @@ It covers:
 This document assumes the current codebase state where:
 
 - messaging rails use `RouterV1` + `ReceiverV1`
-- Axelar and LayerZero route config is keyed operationally by `routeToken`, with `routeAssetId` derived on-chain from `keccak256(abi.encode(localChainId, localRouteToken))`
+- Axelar source config is pair-scoped: `dstChainId -> { chainName, receiver }`
+- LayerZero source config is pair + family scoped: `dstChainId + family -> { dstEid, receiver, options }`
+- LayerZero destination execution is multi-asset through `LayerZeroReceiverAdapter`
+- `routeAssetId` is derived on-chain from `keccak256(abi.encode(localChainId, localRouteToken))`
 - `dstGasLimit` is signed inside the intent
 - THORChain is provider-direct and does not require destination deployments
 
@@ -24,6 +27,7 @@ Related references:
 
 - [DeployAll.s.sol](/Users/ganadhish/code/work/ruflo/config/foundry/scripts/DeployAll.s.sol)
 - [ConfigureAll.s.sol](/Users/ganadhish/code/work/ruflo/config/foundry/scripts/ConfigureAll.s.sol)
+- [deploymentRegistry.ts](/Users/ganadhish/code/work/ruflo/src/vps/config/deploymentRegistry.ts)
 - [routeExecution.ts](/Users/ganadhish/code/work/ruflo/src/vps/config/routeExecution.ts)
 - [foundry-env-chain-guide.md](/Users/ganadhish/code/work/ruflo/docs/foundry-env-chain-guide.md)
 - [thorchain-api-direct.md](/Users/ganadhish/code/work/ruflo/docs/ops/thorchain-api-direct.md)
@@ -61,11 +65,21 @@ There are four layers that must all agree.
 - Axelar destination token IDs
 - LayerZero OFT / OFTAdapter / Stargate metadata
 
-3. On-chain route configuration
+3. Off-chain deployment registry
 
-- `dstChainId + routeToken -> route config`
+- Router / receiver addresses
+- plugin registry
+- rail plugin addresses
+- receiver adapter addresses
 
-4. Runtime signing and execution
+4. On-chain route configuration
+
+- Axelar source chain: one pair config per destination chain
+- LayerZero source chain: one family config per destination chain and route family
+- Axelar destination chain: one trusted token row per supported asset
+- LayerZero destination chain: one settlement token row and one compose-sender row per supported asset
+
+5. Runtime signing and execution
 
 - `ROUTER_INTENT_SIGNER` used in the deployed `RouterV1`
 - `VPS_INTENT_SIGNER_PRIVATE_KEY` used by the VPS to sign intents
@@ -189,7 +203,25 @@ Notes:
 
 ### 6.2 Router / receiver addresses for VPS
 
-The VPS also needs deployed contract addresses per chain:
+Preferred source of truth is now [deploymentRegistry.ts](/Users/ganadhish/code/work/ruflo/src/vps/config/deploymentRegistry.ts:1).
+
+The VPS resolves:
+
+1. `deploymentRegistry.ts`
+2. env fallback
+
+You should keep deployed addresses in the registry file and use env only for temporary overrides.
+
+Registry shape includes:
+
+- `routerV1`
+- `routerV1Abi`
+- `receiverV1`
+- `pluginRegistry`
+- `railPlugins`
+- `receiverAdapters`
+
+Env fallback still works with keys like:
 
 ```bash
 CHAIN_84532_ROUTER_V1=0x...
@@ -459,7 +491,39 @@ CCTP_FAST_ROUTE_CALLER=0x0000000000000000000000000000000000000000
 CCTP_FAST_MAX_FEE_BPS_CAP=100
 ```
 
-### 12.3 Axelar
+### 12.3 Metadata-driven planning
+
+Use the TS metadata planner first:
+
+```bash
+npm run vps:route-config-plan -- --src-chain-id 8453 --dst-chain-id 42161
+```
+
+Useful variants:
+
+```bash
+npm run vps:route-config-plan -- --src-chain-id 8453 --dst-chain-id 42161 --assets USDC,WETH
+npm run vps:route-config-plan -- --src-chain-id 8453 --dst-chain-id 42161 --json
+```
+
+The planner reads:
+
+- [deploymentRegistry.ts](/Users/ganadhish/code/work/ruflo/src/vps/config/deploymentRegistry.ts)
+- [routeMetadata.ts](/Users/ganadhish/code/work/ruflo/src/vps/config/routeMetadata.ts)
+- [routeExecution.ts](/Users/ganadhish/code/work/ruflo/src/vps/config/routeExecution.ts)
+
+It emits:
+
+- the single Axelar pair config needed on the source chain
+- the LayerZero family configs needed on the source chain
+- the Axelar trusted-token rows needed on the destination chain
+- the LayerZero destination asset registry rows needed on the destination chain
+
+When the deployment registry has the relevant plugin / adapter addresses, the planner prints them directly instead of placeholders.
+
+This should be your default workflow. `ConfigureAll` remains the low-level writer, but operators should stop reasoning about each asset manually.
+
+### 12.4 Axelar
 
 ```bash
 AXELAR_SET_ROUTE=true
@@ -467,11 +531,23 @@ AXELAR_PLUGIN=<local AxelarRailPlugin>
 AXELAR_ROUTE_CHAIN_ID=<remote EVM chain id>
 AXELAR_ROUTE_NAME=<remote Axelar chain name>
 AXELAR_ROUTE_RECEIVER=<remote AxelarReceiverAdapter>
-AXELAR_ROUTE_TOKEN_ID=<remote Axelar destination token id>
-AXELAR_ROUTE_TOKEN=<local source route token address>
 ```
 
-Repeat this once per route asset:
+This now runs once per destination chain on the source chain, not once per asset.
+
+Then on the destination chain, trust each supported asset:
+
+```bash
+AXELAR_ADAPTER_SET_TRUSTED_SOURCE=true
+AXELAR_ADAPTER=<local AxelarReceiverAdapter>
+AXELAR_SOURCE_CHAIN=<remote Axelar chain name>
+AXELAR_SOURCE_ADDRESS=<remote AxelarRailPlugin address>
+AXELAR_SOURCE_TRUSTED=true
+AXELAR_TRUSTED_TOKEN_ID=<token id for this asset>
+AXELAR_TRUSTED_TOKEN=<local destination token for this asset>
+```
+
+Repeat the destination trusted-token write once per asset:
 
 - USDC
 - USDT
@@ -479,7 +555,7 @@ Repeat this once per route asset:
 
 if you want all of them live on Axelar.
 
-### 12.4 LayerZero
+### 12.5 LayerZero
 
 ```bash
 LZ_SET_ROUTE=true
@@ -487,18 +563,36 @@ LZ_PLUGIN=<local LayerZeroRailPlugin>
 LZ_ROUTE_CHAIN_ID=<remote EVM chain id>
 LZ_ROUTE_EID=<remote LayerZero EID>
 LZ_ROUTE_RECEIVER=<remote LayerZeroReceiverAdapter>
+LZ_ROUTE_FAMILY=<lz_oft|lz_oft_adapter|lz_stargate_pool|lz_stargate_oft>
 LZ_ROUTE_OPTIONS=<hex bytes or empty>
-LZ_ROUTE_OFT=<local OFT/OFTAdapter/Stargate contract used for this asset>
-LZ_ROUTE_TOKEN=<local source route token address>
 ```
 
-Repeat once per route asset and family:
+This now runs once per destination chain and family on the source chain.
+
+With the current default curated set, that usually means:
 
 - USDC as `lz_stargate_pool`
 - USDT as `lz_oft_adapter`
 - WETH as `lz_oft`
 
-If you later add `lz_stargate_oft`, configure that asset the same way but point `LZ_ROUTE_OFT` at the corresponding Stargate OFT contract and set the VPS family override.
+Then on the destination chain, configure the peer and per-asset registry:
+
+```bash
+LZ_ADAPTER_SET_TRUSTED_PEER=true
+LZ_ADAPTER=<local LayerZeroReceiverAdapter>
+LZ_SOURCE_EID=<remote source eid>
+LZ_SOURCE_PEER_ADDRESS=<remote LayerZeroReceiverAdapter>
+```
+
+```bash
+LZ_ADAPTER_SET_ASSET=true
+LZ_ADAPTER=<local LayerZeroReceiverAdapter>
+LZ_SOURCE_EID=<remote source eid>
+LZ_SETTLEMENT_TOKEN=<local destination route token for this asset>
+LZ_COMPOSE_SENDER=<remote source OFT/OFTAdapter/Stargate contract for this asset>
+```
+
+Repeat the asset-registry write once per supported asset.
 
 ## 13. Adapter Trust Configuration
 
@@ -675,9 +769,9 @@ For `Base Sepolia (84532) -> Arbitrum Sepolia (421614)`:
 
 - `ROUTER_INTENT_SIGNER` and `VPS_INTENT_SIGNER_PRIVATE_KEY` do not match.
 - VPS derived `routeAssetId` from the wrong local route token.
-- `AXELAR_ROUTE_TOKEN` omitted in configure env.
-- `LZ_ROUTE_TOKEN` omitted in configure env.
-- `LZ_ROUTE_OFT` omitted in configure env.
+- wrong Axelar destination token ID trusted on the destination chain.
+- wrong LayerZero family configured for the destination chain.
+- wrong `LZ_COMPOSE_SENDER` configured for a destination asset row.
 - local `ReceiverV1` missing approved local adapter caller.
 - adapter trust configured with remote adapter instead of remote rail plugin.
 - `CHAIN_<id>_TOKEN_<RAIL>_<TOKEN>` env missing for one direction.

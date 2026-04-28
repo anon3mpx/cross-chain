@@ -5,6 +5,11 @@ This guide explains how to maintain env variables for:
 - `config/foundry/scripts/DeployAll.s.sol`
 - `config/foundry/scripts/ConfigureAll.s.sol`
 
+Related runtime registries:
+
+- [deploymentRegistry.ts](/Users/ganadhish/code/work/ruflo/src/vps/config/deploymentRegistry.ts)
+- [routeMetadata.ts](/Users/ganadhish/code/work/ruflo/src/vps/config/routeMetadata.ts)
+
 It is written to replace scattered chain-specific notes like `currentEnvOnBaseSepolia.md` and `currentEnvOnArbSepolia.md`.
 
 ## 1) Important: How These Scripts Read Env
@@ -21,6 +26,9 @@ Examples:
 They do **not** read `CHAIN_<id>_*` keys directly.
 
 `CHAIN_<id>_*` keys are used by VPS runtime config, not by these Foundry scripts.
+
+Deployed contract addresses should now live primarily in [deploymentRegistry.ts](/Users/ganadhish/code/work/ruflo/src/vps/config/deploymentRegistry.ts:1).  
+Foundry still uses flat env for the active execution context, but the VPS runtime and route-config planner read the typed registry first.
 
 ## 2) Recommended Maintenance Model
 
@@ -121,7 +129,8 @@ Use these for local inbound callers on this chain:
 - `AXELAR_ROUTE_CHAIN_ID`
 - `AXELAR_ROUTE_NAME`
 - `AXELAR_ROUTE_RECEIVER`
-- `AXELAR_ROUTE_TOKEN_ID`
+
+This is pair-scoped on the source chain. There is no per-asset Axelar source route row anymore.
 
 ### G) LayerZero route config
 
@@ -130,7 +139,10 @@ Use these for local inbound callers on this chain:
 - `LZ_ROUTE_CHAIN_ID`
 - `LZ_ROUTE_EID`
 - `LZ_ROUTE_RECEIVER`
+- `LZ_ROUTE_FAMILY`
 - `LZ_ROUTE_OPTIONS`
+
+This is pair + family scoped on the source chain. There is no per-asset `LZ_ROUTE_OFT` or `LZ_ROUTE_TOKEN` in source route config anymore.
 
 ### H) THOR config
 
@@ -145,6 +157,8 @@ Use these for local inbound callers on this chain:
 - `AXELAR_SOURCE_CHAIN` (remote chain Axelar name)
 - `AXELAR_SOURCE_ADDRESS` (remote chain AxelarRailPlugin address)
 - `AXELAR_SOURCE_TRUSTED=true`
+- `AXELAR_TRUSTED_TOKEN_ID`
+- `AXELAR_TRUSTED_TOKEN`
 
 ### J) LayerZero adapter trust
 
@@ -152,6 +166,14 @@ Use these for local inbound callers on this chain:
 - `LZ_ADAPTER`
 - `LZ_SOURCE_EID`
 - `LZ_SOURCE_PEER`
+
+### K) LayerZero adapter asset registry
+
+- `LZ_ADAPTER_SET_ASSET=true`
+- `LZ_ADAPTER`
+- `LZ_SOURCE_EID`
+- `LZ_SETTLEMENT_TOKEN`
+- `LZ_COMPOSE_SENDER`
 
 ## 5) Chain-Wise Update Workflow
 
@@ -166,11 +188,14 @@ Do this for each chain pass.
 4. Fill active configure vars with deployed local addresses:
 - `PLUGIN_REGISTRY`, `ROUTER_V1`, `RECEIVER_V1`, `RAIL_PLUGIN_*`, `SWAP_PLUGIN_*`
 5. Add route to remote chain:
-- CCTP/Axelar/LZ route fields targeting remote chain IDs and receiver/adapters.
+- CCTP route fields targeting remote chain IDs and receiver/adapters.
+- Axelar pair config on the source chain.
+- LayerZero family config on the source chain.
 6. Add local receiver approvals:
 - set local adapter(s) in `RECEIVER_APPROVED_CALLER_*`.
-7. Configure adapter trust:
-- local adapter + remote source identity.
+7. Configure destination trust and asset rows:
+- Axelar trusted source + trusted tokens.
+- LayerZero trusted peer + destination asset registry rows.
 8. Run configure:
 - `npm run sol:configure:all`
 9. Switch active block to next chain and repeat.
@@ -204,7 +229,9 @@ Do this for each chain pass.
 - Forgetting to set `RECEIVER_APPROVED_CALLER_*` for local adapters.
 - Leaving old chain values in active vars when switching chain.
 - Providing wrong Axelar chain name spelling (`base-sepolia`, `arbitrum-sepolia`).
-- Forgetting `AXELAR_ROUTE_TOKEN_ID` for Axelar route config.
+- Forgetting `AXELAR_TRUSTED_TOKEN_ID` / `AXELAR_TRUSTED_TOKEN` on the destination chain.
+- Forgetting `LZ_ROUTE_FAMILY` for LayerZero source config.
+- Forgetting `LZ_SETTLEMENT_TOKEN` / `LZ_COMPOSE_SENDER` on the destination chain.
 
 ## 8) Minimal "Active Block" Template
 
@@ -260,12 +287,30 @@ AXELAR_PLUGIN=
 AXELAR_ROUTE_CHAIN_ID=
 AXELAR_ROUTE_NAME=
 AXELAR_ROUTE_RECEIVER=
-AXELAR_ROUTE_TOKEN_ID=
 
-# Axelar trust (local adapter, remote source)
+# LayerZero route
+LZ_PLUGIN=
+LZ_ROUTE_CHAIN_ID=
+LZ_ROUTE_EID=
+LZ_ROUTE_RECEIVER=
+LZ_ROUTE_FAMILY=
+LZ_ROUTE_OPTIONS=
+
+# Axelar trust (destination chain)
 AXELAR_ADAPTER_SET_TRUSTED_SOURCE=false
 AXELAR_ADAPTER=
 AXELAR_SOURCE_CHAIN=
 AXELAR_SOURCE_ADDRESS=
 AXELAR_SOURCE_TRUSTED=true
+AXELAR_TRUSTED_TOKEN_ID=
+AXELAR_TRUSTED_TOKEN=
+
+# LayerZero trust / destination asset registry
+LZ_ADAPTER_SET_TRUSTED_PEER=false
+LZ_ADAPTER_SET_ASSET=false
+LZ_ADAPTER=
+LZ_SOURCE_EID=
+LZ_SOURCE_PEER_ADDRESS=
+LZ_SETTLEMENT_TOKEN=
+LZ_COMPOSE_SENDER=
 ```
