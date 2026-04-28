@@ -9,7 +9,7 @@ import {
   getDefaultLayerZeroRouteFamiliesFromMetadata,
   getLayerZeroDestinationEidFromMetadata,
 } from './routeMetadata';
-import { ROUTE_ASSET_ALLOWLISTS } from './routeExecution';
+import { RAIL_SETTLEMENT_ASSET_ALLOWLISTS } from './routeExecution';
 import { AxelarAssetCatalog } from '../services/axelar/AxelarAssetCatalog';
 import { LayerZeroRouteCatalog } from '../services/layerzero/LayerZeroRouteCatalog';
 import { Rail, RailOfferType } from '../types';
@@ -78,8 +78,8 @@ export function buildMessagingRouteConfigPlan(
   const warnings: string[] = [];
   const assetAliases = normalizeAssetAliases(
     input.assetAliases ?? [...new Set([
-      ...(ROUTE_ASSET_ALLOWLISTS.AXELAR ?? []),
-      ...(ROUTE_ASSET_ALLOWLISTS.LAYERZERO ?? []),
+      ...(RAIL_SETTLEMENT_ASSET_ALLOWLISTS.AXELAR ?? []),
+      ...(RAIL_SETTLEMENT_ASSET_ALLOWLISTS.LAYERZERO ?? []),
     ])],
   );
 

@@ -1,5 +1,9 @@
 import { Rail } from '../types';
 
+/**
+ * Policy for which assets a rail may use as settlement / route assets.
+ * This does not describe the global set of user-facing tokenIn/tokenOut assets.
+ */
 export interface RouteAssetPolicy {
   isAllowed(rail: Rail, assetAlias: string): boolean;
   allowedAssets(rail: Rail): string[];

@@ -2,11 +2,11 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { StaticDestinationGasPolicy } from '../../src/vps/services/DestinationGasPolicy';
 import { Rail } from '../../src/vps/types';
-import { ROUTE_ASSET_ALLOWLISTS } from '../../src/vps/config/routeExecution';
+import { RAIL_SETTLEMENT_ASSET_ALLOWLISTS } from '../../src/vps/config/routeExecution';
 import { StaticRouteAssetPolicy } from '../../src/vps/services/RouteAssetPolicy';
 
-test('default route allowlist config and destination gas policy expose configurable rail behavior', () => {
-  const policy = new StaticRouteAssetPolicy(ROUTE_ASSET_ALLOWLISTS);
+test('settlement asset policy and destination gas policy expose configurable rail behavior', () => {
+  const policy = new StaticRouteAssetPolicy(RAIL_SETTLEMENT_ASSET_ALLOWLISTS);
   const gasPolicy = new StaticDestinationGasPolicy();
 
   assert.equal(policy.isAllowed(Rail.AXELAR, 'USDC'), true);

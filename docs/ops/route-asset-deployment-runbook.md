@@ -28,6 +28,7 @@ Related references:
 - [DeployAll.s.sol](/Users/ganadhish/code/work/ruflo/config/foundry/scripts/DeployAll.s.sol)
 - [ConfigureAll.s.sol](/Users/ganadhish/code/work/ruflo/config/foundry/scripts/ConfigureAll.s.sol)
 - [deploymentRegistry.ts](/Users/ganadhish/code/work/ruflo/src/vps/config/deploymentRegistry.ts)
+- [globalTokenSupport.ts](/Users/ganadhish/code/work/ruflo/src/vps/config/globalTokenSupport.ts)
 - [routeExecution.ts](/Users/ganadhish/code/work/ruflo/src/vps/config/routeExecution.ts)
 - [foundry-env-chain-guide.md](/Users/ganadhish/code/work/ruflo/docs/foundry-env-chain-guide.md)
 - [thorchain-api-direct.md](/Users/ganadhish/code/work/ruflo/docs/ops/thorchain-api-direct.md)
@@ -55,31 +56,35 @@ These do not require Ruflo destination deployments for native THOR destinations 
 
 There are four layers that must all agree.
 
-1. Off-chain allowlist
+1. Global token support policy
 
-- Which route assets a rail is allowed to quote.
+- Which user-facing tokenIn / tokenOut assets Ruflo can support broadly through swaps.
 
-2. Off-chain provider metadata
+2. Off-chain rail settlement policy
+
+- Which assets each rail is allowed to transport as settlement / route assets.
+
+3. Off-chain provider metadata
 
 - Token addresses
 - Axelar destination token IDs
 - LayerZero OFT / OFTAdapter / Stargate metadata
 
-3. Off-chain deployment registry
+4. Off-chain deployment registry
 
 - Router / receiver addresses
 - plugin registry
 - rail plugin addresses
 - receiver adapter addresses
 
-4. On-chain route configuration
+5. On-chain route configuration
 
 - Axelar source chain: one pair config per destination chain
 - LayerZero source chain: one family config per destination chain and route family
 - Axelar destination chain: one trusted token row per supported asset
 - LayerZero destination chain: one settlement token row and one compose-sender row per supported asset
 
-5. Runtime signing and execution
+6. Runtime signing and execution
 
 - `ROUTER_INTENT_SIGNER` used in the deployed `RouterV1`
 - `VPS_INTENT_SIGNER_PRIVATE_KEY` used by the VPS to sign intents
@@ -112,14 +117,36 @@ For every local chain and every destination chain, list:
 
 If this inventory is incomplete, deployment will stall later.
 
-## 4. Off-Chain Allowlisting
+## 4. Global Tokens Vs Settlement Assets
 
-The first gate is the VPS route-asset allowlist in [routeExecution.ts](/Users/ganadhish/code/work/ruflo/src/vps/config/routeExecution.ts:10).
+The codebase now distinguishes between:
+
+1. Global user-facing token support
+
+- configured in [globalTokenSupport.ts](/Users/ganadhish/code/work/ruflo/src/vps/config/globalTokenSupport.ts:1)
+- aggregator chains can support arbitrary ERC-20 tokenIn / tokenOut
+- non-aggregator chains fall back to curated direct assets
+
+2. Rail settlement assets
+
+- configured in [routeExecution.ts](/Users/ganadhish/code/work/ruflo/src/vps/config/routeExecution.ts:1)
+- these are the curated assets that a rail is allowed to transport cross-chain
+
+Example:
+
+- `MORPHO -> CAKE` can be globally supported on aggregator chains
+- but Axelar / LayerZero may still only transport `USDC`, `USDT`, or `WETH`
+
+So messaging config scales with settlement assets, not every user-facing token.
+
+## 5. Rail Settlement Allowlist
+
+The rail settlement gate is the VPS settlement-asset allowlist in [routeExecution.ts](/Users/ganadhish/code/work/ruflo/src/vps/config/routeExecution.ts:10).
 
 Current model:
 
 ```ts
-export const ROUTE_ASSET_ALLOWLISTS = {
+export const RAIL_SETTLEMENT_ASSET_ALLOWLISTS = {
   [Rail.CCTP]: ['USDC'],
   [Rail.AXELAR]: ['USDC', 'USDT', 'WETH'],
   [Rail.LAYERZERO]: ['USDC', 'USDT', 'WETH'],
@@ -147,7 +174,7 @@ Alias rules in this repo:
 
 Do not add an alias to the allowlist unless all required token and provider metadata exists.
 
-## 5. Destination Gas Configuration
+## 6. Destination Gas Configuration
 
 `dstGasLimit` is no longer hardcoded in contracts. The VPS signs it into the intent, and messaging rails enforce it.
 
@@ -663,7 +690,7 @@ Do not expose wide THOR coverage on day one.
 
 ### Phase 1: Local code / config
 
-1. Finalize `ROUTE_ASSET_ALLOWLISTS`.
+1. Finalize `RAIL_SETTLEMENT_ASSET_ALLOWLISTS`.
 2. Finalize `DESTINATION_GAS_LIMITS`.
 3. Decide LayerZero family mapping per asset.
 4. Decide Axelar direct-route assets.
@@ -680,10 +707,10 @@ Do not expose wide THOR coverage on day one.
 
 ### Phase 3: VPS metadata
 
-1. Add `CHAIN_<id>_TOKEN_<RAIL>_<TOKEN>` keys.
+1. Add chain token and provider metadata to [routeMetadata.ts](/Users/ganadhish/code/work/ruflo/src/vps/config/routeMetadata.ts).
 2. Add Axelar token IDs.
-3. Add LayerZero OFT / EID / options keys.
-4. Add `CHAIN_<id>_ROUTER_V1` and `CHAIN_<id>_RECEIVER_V1`.
+3. Add LayerZero OFT / EID / options metadata.
+4. Add deployed chain contracts to [deploymentRegistry.ts](/Users/ganadhish/code/work/ruflo/src/vps/config/deploymentRegistry.ts).
 
 ### Phase 4: THOR canary
 
@@ -755,7 +782,7 @@ For `Base Sepolia (84532) -> Arbitrum Sepolia (421614)`:
 4. Configure Arbitrum local routes targeting Base.
 5. Trust Base remote sources on Arbitrum adapters.
 6. Trust Arbitrum remote sources on Base adapters.
-7. Add VPS chain-scoped token/env keys for both chains.
+7. Add VPS route metadata and deployment registry entries for both chains.
 8. Run quote smoke tests:
    - Base USDC -> Arbitrum USDC through CCTP
    - Base WETH -> Arbitrum ETH through LayerZero OFT
@@ -770,8 +797,8 @@ For `Base Sepolia (84532) -> Arbitrum Sepolia (421614)`:
 - wrong `LZ_COMPOSE_SENDER` configured for a destination asset row.
 - local `ReceiverV1` missing approved local adapter caller.
 - adapter trust configured with remote adapter instead of remote rail plugin.
-- `CHAIN_<id>_TOKEN_<RAIL>_<TOKEN>` env missing for one direction.
-- LayerZero family override says `lz_oft_adapter` but `CHAIN_<src>_LZ_OFT_<ALIAS>` points at the wrong contract.
+- route metadata missing the rail token entry for one direction.
+- LayerZero family override says `lz_oft_adapter` but the configured OFT entry points at the wrong contract.
 - THOR canary allowlist too broad too early.
 
 ## 19. Rollback
@@ -780,12 +807,12 @@ For `Base Sepolia (84532) -> Arbitrum Sepolia (421614)`:
 
 To stop quoting an asset on a rail:
 
-1. Remove the alias from `ROUTE_ASSET_ALLOWLISTS`.
+1. Remove the alias from `RAIL_SETTLEMENT_ASSET_ALLOWLISTS`.
 2. Redeploy VPS.
 
 To stop a single route pair:
 
-1. Remove or invalidate the provider metadata env for that pair.
+1. Remove or invalidate the provider metadata for that pair.
 2. Redeploy VPS.
 3. Optionally disable on-chain route config administratively in a follow-up patch if you want hard shutdown at the plugin level.
 

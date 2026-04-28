@@ -5,7 +5,7 @@
 // ─────────────────────────────────────────────────────────
 
 import { Rail, RailConfig, RailScore, SettlementToken, ChainConfig, CHAIN_ID } from '../types';
-import { ROUTE_ASSET_ALLOWLISTS } from '../config/routeExecution';
+import { RAIL_SETTLEMENT_ASSET_ALLOWLISTS } from '../config/routeExecution';
 import { type DeploymentRegistry } from './DeploymentRegistry';
 import { StaticRouteAssetPolicy, type RouteAssetPolicy } from './RouteAssetPolicy';
 import {
@@ -23,7 +23,7 @@ export const RAIL_CONFIGS: Record<Rail, RailConfig> = Object.values(Rail).reduce
 
 export class RailSelector {
   constructor(
-    private readonly routeAssetPolicy: RouteAssetPolicy = new StaticRouteAssetPolicy(ROUTE_ASSET_ALLOWLISTS),
+    private readonly routeAssetPolicy: RouteAssetPolicy = new StaticRouteAssetPolicy(RAIL_SETTLEMENT_ASSET_ALLOWLISTS),
     private readonly deploymentRegistry?: DeploymentRegistry,
   ) {}
 

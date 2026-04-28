@@ -23,7 +23,7 @@ import {
 import { RouteBuilder } from './RouterBuilder';
 import { AxelarAssetCatalog, type AxelarRouteOption } from './axelar/AxelarAssetCatalog';
 import { CHAIN_CONFIGS, getChainConfig } from '../config/chains';
-import { ROUTE_ASSET_ALLOWLISTS } from '../config/routeExecution';
+import { RAIL_SETTLEMENT_ASSET_ALLOWLISTS } from '../config/routeExecution';
 import { getSettlementTokenAddress, getSwapPluginIdForChain } from '../config/contracts';
 import {
   getDefaultAxelarDirectAssetsFromMetadata,
@@ -128,7 +128,7 @@ export class QuoteEngine {
     deps: QuoteEngineDependencies = {},
   ) {
     this.cache = cache;
-    this.routeAssetPolicy = deps.routeAssetPolicy ?? new StaticRouteAssetPolicy(ROUTE_ASSET_ALLOWLISTS);
+    this.routeAssetPolicy = deps.routeAssetPolicy ?? new StaticRouteAssetPolicy(RAIL_SETTLEMENT_ASSET_ALLOWLISTS);
     this.destinationGasPolicy = deps.destinationGasPolicy ?? new StaticDestinationGasPolicy();
     this.routeBuilder = deps.routeBuilder ?? new RouteBuilder(new RailSelector(this.routeAssetPolicy));
     this.axelarAssetCatalog = deps.axelarAssetCatalog ?? new AxelarAssetCatalog({
