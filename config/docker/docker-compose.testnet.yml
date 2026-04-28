@@ -124,9 +124,9 @@ services:
     ports:
       - "8081:8080"
     environment:
-      SWAGGER_JSON: /app/openapi.json
+      SWAGGER_JSON: /workspace/openapi.json
     volumes:
-      - ../../openapi.json:/app/openapi.json:ro
+      - ../..:/workspace:ro
 
 volumes:
   empx-cross-chain_pg_data:

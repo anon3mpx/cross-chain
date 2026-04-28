@@ -11,15 +11,15 @@ import { StaticRouteAssetPolicy, type RouteAssetPolicy } from './RouteAssetPolic
 import {
   CHAIN_RAILS,
   PLUGIN_ID,
+  RAIL_PROVIDERS,
   getChainRails,
-  getRailConfig,
 } from '../rails/registry';
 
 export { CHAIN_RAILS, PLUGIN_ID };
-export const RAIL_CONFIGS: Record<Rail, RailConfig> = Object.values(Rail).reduce((acc, rail) => {
-  acc[rail] = getRailConfig(rail);
+export const RAIL_CONFIGS: Partial<Record<Rail, RailConfig>> = Object.values(RAIL_PROVIDERS).reduce((acc, provider) => {
+  acc[provider.rail] = provider.config;
   return acc;
-}, {} as Record<Rail, RailConfig>);
+}, {} as Partial<Record<Rail, RailConfig>>);
 
 export class RailSelector {
   constructor(
@@ -55,6 +55,7 @@ export class RailSelector {
       }
 
       const config = RAIL_CONFIGS[rail];
+      if (!config) continue;
       for (const routeAssetAlias of this.routeAssetPolicy.allowedAssets(rail)) {
         const settlementToken = this._settlementTokenForRouteAssetAlias(routeAssetAlias);
         if (!settlementToken) continue;

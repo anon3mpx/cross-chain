@@ -13,6 +13,7 @@ export enum SettlementToken {
 export enum Rail {
   // ── Messaging rails (bridge-based, ReceiverV1 on destination) ─────────────
   CCTP      = 'CCTP',       // Free, native USDC, ~25s. EVM + Solana.
+  CCTP_FAST = 'CCTP_FAST',  // $5-10, native USDC, ~15s. EVM only, CCTP fast liquidity pool.
   AXELAR    = 'AXELAR',     // $0.50, 60+ chains, GMP + tokens
   LAYERZERO = 'LAYERZERO',  // $0.35, 80+ chains, configurable DVN
   VIA_LABS  = 'VIA_LABS',   // $0.25, 30+ chains, API-first
@@ -24,7 +25,7 @@ export enum Rail {
 
 // ── Rail category helpers ──────────────────────────────────────────────────────
 export const LIQUIDITY_RAILS = new Set([Rail.THORCHAIN]);
-export const MESSAGING_RAILS = new Set([Rail.CCTP, Rail.AXELAR, Rail.LAYERZERO, Rail.VIA_LABS, Rail.WORMHOLE]);
+export const MESSAGING_RAILS = new Set([Rail.CCTP, Rail.CCTP_FAST, Rail.AXELAR, Rail.LAYERZERO, Rail.VIA_LABS, Rail.WORMHOLE]);
 
 // ── Non-EVM pseudo chain IDs (used internally, never on-chain) ────────────────
 export const CHAIN_ID = {

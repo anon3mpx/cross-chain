@@ -25,7 +25,7 @@ abstract contract ScriptBase {
     event ScriptLogAddress(string indexed label, address value);
     event ScriptLogBytes32(string indexed label, bytes32 value);
 
-    function _nonZero(address value, string memory label) internal {
+    function _nonZero(address value, string memory label) internal pure {
         require(value != address(0), label);
     }
 }
