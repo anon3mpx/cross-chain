@@ -36,6 +36,12 @@ import {
   type THORChainQuoteRequest,
   type THORChainQuoteResult,
 } from './thorchain/THORChainQuoteWorker';
+import {
+  buildTHORChainQuoteRequest,
+  isQuoteCacheable,
+  shouldCacheOfferSet,
+  shouldReuseCachedOfferSet,
+} from './thorchain/THORChainQuotePolicy';
 import { StaticRouteAssetPolicy, type RouteAssetPolicy } from './RouteAssetPolicy';
 import { StaticDestinationGasPolicy, type DestinationGasPolicy } from './DestinationGasPolicy';
 import { LayerZeroRouteCatalog, type LayerZeroRouteOption } from './layerzero/LayerZeroRouteCatalog';
@@ -205,13 +211,15 @@ export class QuoteEngine {
   async getQuote(req: QuoteRequest): Promise<QuoteResult | null> {
     const cacheKey = this._cacheKey(req);
     const cached = await this.cache.get(cacheKey);
-    if (cached) return cached;
+    if (cached && isQuoteCacheable(cached)) return cached;
 
     const offerSet = await this.getOffers(req);
     if (!offerSet || offerSet.offers.length === 0) return null;
 
     const quote = this._materializeLegacyQuote(offerSet.offers[0]);
-    await this.cache.set(cacheKey, quote, CACHE_TTL_MS);
+    if (isQuoteCacheable(quote)) {
+      await this.cache.set(cacheKey, quote, CACHE_TTL_MS);
+    }
     return quote;
   }
 
@@ -449,9 +457,9 @@ export class QuoteEngine {
     }
 
     try {
-      const thorQuote = await this.thorchainQuoteWorker.quote(
-        this._buildThorchainQuoteRequest(req, offer),
-      );
+      const quoteRequest = this._buildThorchainQuoteRequest(req, route, offer);
+      if (!quoteRequest) return null;
+      const thorQuote = await this.thorchainQuoteWorker.quote(quoteRequest);
       if (!thorQuote) return null;
       return this._applyThorchainQuote(offer, thorQuote);
     } catch {
@@ -463,27 +471,25 @@ export class QuoteEngine {
 
   private _buildThorchainQuoteRequest(
     req: QuoteRequest,
+    route: Route,
     offer: RailOffer,
-  ): THORChainQuoteRequest {
+  ): THORChainQuoteRequest | null {
     const executionQuote = offer.execution.quote as QuoteResult | undefined;
     const settlementInputAmount =
       executionQuote?.minSettlementAmount && executionQuote.minSettlementAmount > 0n
         ? executionQuote.minSettlementAmount
         : offer.amountIn;
-    const sourceSettlementToken = offer.sourceSettlementAsset.tokenAddress;
-    const destinationSettlementToken = offer.destinationSettlementAsset.tokenAddress;
-    return {
+    return buildTHORChainQuoteRequest({
       amountIn: settlementInputAmount,
       srcChainId: req.srcChainId,
       dstChainId: req.dstChainId,
       tokenIn: req.tokenIn,
       tokenOut: req.tokenOut,
       destinationAddress: req.nativeDstAddress ?? req.userAddress,
-      fromAsset: sourceSettlementToken ?? req.tokenIn,
-      toAsset: this._isAddress(req.tokenOut)
-        ? (destinationSettlementToken ?? req.tokenOut)
-        : req.tokenOut,
-    };
+      routeAssetAlias: route.hops[0].routeAssetAlias,
+      sourceTokenAddress: offer.sourceSettlementAsset.tokenAddress,
+      destinationTokenAddress: offer.destinationSettlementAsset.tokenAddress,
+    });
   }
 
   private _applyThorchainQuote(
@@ -556,7 +562,9 @@ export class QuoteEngine {
     const cacheKey = this._cacheKey(req);
     const cached = this.offerCache.get(cacheKey);
     if (cached) {
-      if (Date.now() < cached.expiresAt) return cached.value;
+      if (Date.now() < cached.expiresAt && shouldReuseCachedOfferSet(cached.value)) {
+        return cached.value;
+      }
       this.offerCache.delete(cacheKey);
     }
 
@@ -586,10 +594,12 @@ export class QuoteEngine {
     if (offers.length === 0) return null;
 
     const offerSet = this._toOfferSet(offers);
-    this.offerCache.set(this._cacheKey(req), {
-      value: offerSet,
-      expiresAt: Date.now() + CACHE_TTL_MS,
-    });
+    if (shouldCacheOfferSet(offerSet)) {
+      this.offerCache.set(this._cacheKey(req), {
+        value: offerSet,
+        expiresAt: Date.now() + CACHE_TTL_MS,
+      });
+    }
     return offerSet;
   }
 

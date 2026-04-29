@@ -2,6 +2,9 @@ export interface THORChainClientOptions {
   baseUrl?: string;
   fetchFn?: typeof fetch;
   timeoutMs?: number;
+  maxRetries?: number;
+  retryBaseDelayMs?: number;
+  clientId?: string;
 }
 
 export interface THORChainSwapQuoteResponse {
@@ -39,11 +42,17 @@ export class THORChainClient {
   private readonly baseUrl: string;
   private readonly fetchFn: typeof fetch;
   private readonly timeoutMs: number;
+  private readonly maxRetries: number;
+  private readonly retryBaseDelayMs: number;
+  private readonly clientId?: string;
 
   constructor(options: THORChainClientOptions = {}) {
-    this.baseUrl = (options.baseUrl ?? process.env.THORCHAIN_BASE_URL ?? 'https://thornode.ninerealms.com').replace(/\/$/, '');
+    this.baseUrl = (options.baseUrl ?? process.env.THORCHAIN_BASE_URL ?? 'https://thornode.thorchain.network').replace(/\/$/, '');
     this.fetchFn = options.fetchFn ?? fetch;
     this.timeoutMs = options.timeoutMs ?? this._readIntEnv('THORCHAIN_API_TIMEOUT_MS', 5_000);
+    this.maxRetries = options.maxRetries ?? this._readNonNegativeIntEnv('THORCHAIN_API_MAX_RETRIES', 2);
+    this.retryBaseDelayMs = options.retryBaseDelayMs ?? this._readNonNegativeIntEnv('THORCHAIN_API_RETRY_BASE_DELAY_MS', 200);
+    this.clientId = options.clientId ?? process.env.THORCHAIN_CLIENT_ID;
   }
 
   async quoteSwap(params: URLSearchParams): Promise<THORChainSwapQuoteResponse> {
@@ -63,21 +72,42 @@ export class THORChainClient {
   }
 
   private async _getJson<T>(path: string): Promise<T> {
-    const abortController = new AbortController();
-    const timeout = setTimeout(() => abortController.abort(), this.timeoutMs);
-    try {
-      const response = await this.fetchFn(`${this.baseUrl}${path}`, {
-        method: 'GET',
-        headers: { Accept: 'application/json' },
-        signal: abortController.signal,
-      });
-      if (!response.ok) {
-        throw new Error(`THORChain API ${response.status} for ${path}`);
+    let attempt = 0;
+    let lastError: Error | undefined;
+
+    while (attempt <= this.maxRetries) {
+      const abortController = new AbortController();
+      const timeout = setTimeout(() => abortController.abort(), this.timeoutMs);
+      try {
+        const headers: Record<string, string> = { Accept: 'application/json' };
+        if (this.clientId) {
+          headers['x-client-id'] = this.clientId;
+        }
+        const response = await this.fetchFn(`${this.baseUrl}${path}`, {
+          method: 'GET',
+          headers,
+          signal: abortController.signal,
+        });
+        if (!response.ok) {
+          if (this._shouldRetryStatus(response.status) && attempt < this.maxRetries) {
+            await this._sleep(this.retryBaseDelayMs * (2 ** attempt));
+            attempt += 1;
+            continue;
+          }
+          throw new Error(`THORChain API ${response.status} for ${path}`);
+        }
+        return response.json() as Promise<T>;
+      } catch (err) {
+        lastError = err instanceof Error ? err : new Error(String(err));
+        if (attempt >= this.maxRetries) break;
+        await this._sleep(this.retryBaseDelayMs * (2 ** attempt));
+        attempt += 1;
+      } finally {
+        clearTimeout(timeout);
       }
-      return response.json() as Promise<T>;
-    } finally {
-      clearTimeout(timeout);
     }
+
+    throw lastError ?? new Error(`THORChain API request failed for ${path}`);
   }
 
   private _readIntEnv(name: string, fallback: number): number {
@@ -86,5 +116,22 @@ export class THORChainClient {
     const parsed = Number(raw);
     if (!Number.isFinite(parsed) || parsed <= 0) return fallback;
     return Math.floor(parsed);
+  }
+
+  private _readNonNegativeIntEnv(name: string, fallback: number): number {
+    const raw = process.env[name];
+    if (!raw) return fallback;
+    const parsed = Number(raw);
+    if (!Number.isFinite(parsed) || parsed < 0) return fallback;
+    return Math.floor(parsed);
+  }
+
+  private _shouldRetryStatus(status: number): boolean {
+    return status === 429 || status === 503;
+  }
+
+  private async _sleep(ms: number): Promise<void> {
+    if (ms <= 0) return;
+    await new Promise((resolve) => setTimeout(resolve, ms));
   }
 }
