@@ -272,3 +272,104 @@ test('getOffers preserves arbitrary THOR output token metadata', async () => {
     }
   });
 });
+
+test('selectOffer works for THOR-only offer sets', async () => {
+  await withPatchedEnv({ CHAIN_8453_THORCHAIN_CHAIN_ALIAS: 'BASE' }, async () => {
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = (async () => new Response(JSON.stringify([
+      { asset: 'BASE.ETH', status: 'available', nativeDecimal: '18' },
+      { asset: 'ETH.ETH', status: 'available', nativeDecimal: '18' },
+    ]), { status: 200 })) as typeof fetch;
+
+    const engine = new QuoteEngine(undefined, {
+      thorchainQuoteWorker: {
+        quote: async () => ({
+          quote: {
+            to_asset: 'ETH.ETH',
+            expected_amount_out: '1000000000000000',
+            inbound_address: '0xthorvault',
+            memo: '=:ETH.ETH:0x3333333333333333333333333333333333333333:0',
+            expiry: Math.floor(Date.now() / 1000) + 120,
+          },
+          expectedAmountOut: '1000000000000000',
+          settlementTimeSeconds: 60,
+        }),
+      },
+    });
+
+    try {
+      const offerSet = await engine.getOffers({
+        tokenIn: 'BASE.ETH',
+        tokenOut: 'ETH.ETH',
+        amountIn: 100_000_000_000_000_000n,
+        srcChainId: 8453,
+        dstChainId: 1,
+        userAddress: '0x3333333333333333333333333333333333333333',
+      });
+
+      assert.ok(offerSet);
+      assert.equal(offerSet!.offers.length, 1);
+      assert.equal(offerSet!.offers[0].rail, Rail.THORCHAIN);
+
+      const selected = await engine.selectOffer(offerSet!.offerSetId, offerSet!.offers[0].offerId);
+      assert.ok(selected.offer);
+      assert.equal(selected.offer!.offerId, offerSet!.offers[0].offerId);
+      assert.equal(selected.reason, undefined);
+    } finally {
+      globalThis.fetch = originalFetch;
+      engine.resetDexQuoteFns();
+    }
+  });
+});
+
+test('selectOffer resolves older offerSetId even after a newer quote for same request key', async () => {
+  await withPatchedEnv({ CHAIN_8453_THORCHAIN_CHAIN_ALIAS: 'BASE' }, async () => {
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = (async () => new Response(JSON.stringify([
+      { asset: 'BASE.ETH', status: 'available', nativeDecimal: '18' },
+      { asset: 'ETH.ETH', status: 'available', nativeDecimal: '18' },
+    ]), { status: 200 })) as typeof fetch;
+
+    const engine = new QuoteEngine(undefined, {
+      thorchainQuoteWorker: {
+        quote: async () => ({
+          quote: {
+            to_asset: 'ETH.ETH',
+            expected_amount_out: '1000000000000000',
+            inbound_address: '0xthorvault',
+            memo: '=:ETH.ETH:0x3333333333333333333333333333333333333333:0',
+            expiry: Math.floor(Date.now() / 1000) + 120,
+          },
+          expectedAmountOut: '1000000000000000',
+          settlementTimeSeconds: 60,
+        }),
+      },
+    });
+
+    try {
+      const req = {
+        tokenIn: 'BASE.ETH',
+        tokenOut: 'ETH.ETH',
+        amountIn: 100_000_000_000_000_000n,
+        srcChainId: 8453,
+        dstChainId: 1,
+        userAddress: '0x3333333333333333333333333333333333333333',
+      };
+
+      const first = await engine.getOffers(req);
+      assert.ok(first);
+      const firstOfferId = first!.offers[0].offerId;
+
+      const second = await engine.getOffers(req);
+      assert.ok(second);
+      assert.notEqual(second!.offerSetId, first!.offerSetId);
+
+      const selectedFromFirst = await engine.selectOffer(first!.offerSetId, firstOfferId);
+      assert.ok(selectedFromFirst.offer);
+      assert.equal(selectedFromFirst.offer!.offerId, firstOfferId);
+    } finally {
+      globalThis.fetch = originalFetch;
+      engine.resetDexQuoteFns();
+    }
+  });
+});

@@ -121,7 +121,8 @@ export interface QuoteEngineDependencies {
 export class QuoteEngine {
   private readonly routeBuilder: RouteBuilder;
   private readonly cache: QuoteCache;
-  private readonly offerCache = new Map<string, { value: OfferSet; expiresAt: number }>();
+  private readonly offerCache = new Map<string, { value: OfferSet; expiresAt: number; reusable: boolean }>();
+  private readonly offerSetById = new Map<string, { value: OfferSet; expiresAtMs: number }>();
   private readonly pendingOfferSets = new Map<string, Promise<OfferSet | null>>();
   private readonly dexQuoteFns = new Map<number, QuoteFn>();
   private readonly axelarAssetCatalog: Pick<AxelarAssetCatalog, 'listRoutes'>;
@@ -163,6 +164,33 @@ export class QuoteEngine {
   async selectOffer(offerSetId: string, offerId: string): Promise<OfferSelectionResult> {
     const now = Date.now();
     const nowSeconds = Math.floor(now / 1000);
+
+    const indexed = this.offerSetById.get(offerSetId);
+    if (indexed) {
+      if (indexed.expiresAtMs > now && indexed.value.expiresAt > nowSeconds) {
+        const validOffers = indexed.value.offers.filter((candidate) => candidate.expiresAt > nowSeconds);
+        const selected = validOffers.find((candidate) => candidate.offerId === offerId) ?? null;
+        if (selected) {
+          return { offer: selected, fallbackOfferSet: null };
+        }
+
+        const fallbackOffers = validOffers.filter((candidate) => candidate.offerId !== offerId);
+        if (fallbackOffers.length > 0) {
+          return {
+            offer: null,
+            fallbackOfferSet: {
+              offerSetId: indexed.value.offerSetId,
+              expiresAt: fallbackOffers.reduce((min, candidate) => Math.min(min, candidate.expiresAt), fallbackOffers[0].expiresAt),
+              offers: fallbackOffers,
+              bestOfferId: fallbackOffers[0].offerId,
+            },
+            reason: 'OFFER_UNAVAILABLE',
+          };
+        }
+      } else {
+        this.offerSetById.delete(offerSetId);
+      }
+    }
 
     let matchedSet: OfferSet | null = null;
     for (const [cacheKey, cached] of this.offerCache.entries()) {
@@ -563,10 +591,12 @@ export class QuoteEngine {
     const cacheKey = this._cacheKey(req);
     const cached = this.offerCache.get(cacheKey);
     if (cached) {
-      if (Date.now() < cached.expiresAt && shouldReuseCachedOfferSet(cached.value)) {
+      if (Date.now() < cached.expiresAt && cached.reusable && shouldReuseCachedOfferSet(cached.value)) {
         return cached.value;
       }
-      this.offerCache.delete(cacheKey);
+      if (Date.now() >= cached.expiresAt) {
+        this.offerCache.delete(cacheKey);
+      }
     }
 
     const pending = this.pendingOfferSets.get(cacheKey);
@@ -599,12 +629,15 @@ export class QuoteEngine {
     if (offers.length === 0) return null;
 
     const offerSet = this._toOfferSet(offers);
-    if (shouldCacheOfferSet(offerSet)) {
-      this.offerCache.set(this._cacheKey(req), {
-        value: offerSet,
-        expiresAt: Date.now() + CACHE_TTL_MS,
-      });
-    }
+    this.offerSetById.set(offerSet.offerSetId, {
+      value: offerSet,
+      expiresAtMs: Date.now() + CACHE_TTL_MS,
+    });
+    this.offerCache.set(this._cacheKey(req), {
+      value: offerSet,
+      expiresAt: Date.now() + CACHE_TTL_MS,
+      reusable: shouldCacheOfferSet(offerSet),
+    });
     return offerSet;
   }
 

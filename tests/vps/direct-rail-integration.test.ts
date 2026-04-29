@@ -1,6 +1,11 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { Interface, ZeroAddress } from 'ethers';
 import { buildSelectedOfferIntegration } from '../../src/vps/services/DirectRailIntegrationBuilder';
+
+const THOR_ROUTER_IFACE = new Interface([
+  'function depositWithExpiry(address payable vault,address asset,uint256 amount,string memo,uint256 expiration)',
+]);
 
 test('provider_direct THOR offers return deposit instructions instead of RouterV1 calldata', async () => {
   const integration = await buildSelectedOfferIntegration('0x' + '11'.repeat(32), {
@@ -39,4 +44,97 @@ test('provider_direct THOR offers infer provider from rail metadata when executi
   assert.equal(integration.mode, 'provider_direct');
   assert.equal(integration.action.kind, 'thorchain_swap');
   assert.equal(integration.action.depositAddress, '0xthorvault2');
+});
+
+test('provider_direct THOR offers use execution.thorQuote payload when quote is normalized', async () => {
+  const integration = await buildSelectedOfferIntegration('0x' + '33'.repeat(32), {
+    rail: 'THORCHAIN',
+    offerType: 'thor_api_direct',
+    executionMode: 'provider_direct',
+    execution: {
+      provider: 'thorchain_api',
+      quote: {
+        tokenIn: 'BASE.ETH',
+        tokenOut: 'BASE.USDC',
+        amountIn: '500000000000000',
+      },
+      thorQuote: {
+        inbound_address: '0xthorvault3',
+        memo: '=:BASE.USDC:0xabc',
+        expiry: 1_900_000_123,
+        expected_amount_out: '12345678',
+      },
+    },
+  } as any, '0x3333333333333333333333333333333333333333');
+
+  assert.equal(integration.mode, 'provider_direct');
+  assert.equal(integration.action.kind, 'thorchain_swap');
+  assert.equal(integration.action.depositAddress, '0xthorvault3');
+  assert.equal(integration.action.memo, '=:BASE.USDC:0xabc');
+  assert.equal(integration.action.expiresAt, 1_900_000_123);
+  assert.equal(integration.action.expectedAmountOut, '12345678');
+});
+
+test('provider_direct THOR offers include tx helper for ERC-20 deposits', async () => {
+  const integration = await buildSelectedOfferIntegration('0x' + '44'.repeat(32), {
+    rail: 'THORCHAIN',
+    offerType: 'thor_api_direct',
+    executionMode: 'provider_direct',
+    execution: {
+      provider: 'thorchain_api',
+      quote: {
+        srcChainId: 8453,
+        tokenIn: '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913',
+        amountIn: '10000000',
+      },
+      thorQuote: {
+        router: '0x00dc6100103BC402d490aEE3F9a5560cBd91f1d4',
+        inbound_address: '0x4feea1caeea66b3351ddba68bd80c37c9ed6c3c8',
+        memo: '=:BASE.USDC:0x05F8cC8753D90d67DBB8c02118440b8283F941c9',
+        expiry: 1_900_000_123,
+        expected_amount_out: '12345678',
+      },
+    },
+  } as any, '0x3333333333333333333333333333333333333333');
+
+  assert.equal(integration.mode, 'provider_direct');
+  assert.ok(integration.tx);
+  assert.equal(integration.tx!.to, '0x00dc6100103BC402d490aEE3F9a5560cBd91f1d4');
+  assert.equal(integration.tx!.value, '0');
+  assert.equal(integration.tx!.chainId, 8453);
+
+  const decoded = THOR_ROUTER_IFACE.decodeFunctionData('depositWithExpiry', integration.tx!.data);
+  assert.equal(decoded.vault.toLowerCase(), '0x4feea1caeea66b3351ddba68bd80c37c9ed6c3c8');
+  assert.equal(decoded.asset.toLowerCase(), '0x833589fcd6edb6e08f4c7c32d4f71b54bda02913');
+  assert.equal(decoded.amount.toString(), '10000000');
+  assert.equal(decoded.memo, '=:BASE.USDC:0x05F8cC8753D90d67DBB8c02118440b8283F941c9');
+  assert.equal(decoded.expiration.toString(), '1900000123');
+});
+
+test('provider_direct THOR offers set tx value for native deposits', async () => {
+  const integration = await buildSelectedOfferIntegration('0x' + '55'.repeat(32), {
+    rail: 'THORCHAIN',
+    offerType: 'thor_api_direct',
+    executionMode: 'provider_direct',
+    execution: {
+      provider: 'thorchain_api',
+      quote: {
+        srcChainId: 8453,
+        tokenIn: 'BASE.ETH',
+        amountIn: '500000000000000',
+      },
+      thorQuote: {
+        router: '0x00dc6100103BC402d490aEE3F9a5560cBd91f1d4',
+        inbound_address: '0x4feea1caeea66b3351ddba68bd80c37c9ed6c3c8',
+        memo: '=:BASE.USDC:0x05F8cC8753D90d67DBB8c02118440b8283F941c9',
+        expiry: 1_900_000_123,
+        expected_amount_out: '12345678',
+      },
+    },
+  } as any, '0x3333333333333333333333333333333333333333');
+
+  assert.ok(integration.tx);
+  assert.equal(integration.tx!.value, '500000000000000');
+  const decoded = THOR_ROUTER_IFACE.decodeFunctionData('depositWithExpiry', integration.tx!.data);
+  assert.equal(decoded.asset.toLowerCase(), ZeroAddress.toLowerCase());
 });
