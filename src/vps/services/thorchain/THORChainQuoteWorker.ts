@@ -17,6 +17,9 @@ export interface THORChainQuoteRequest {
   destinationAddress?: string;
   fromAsset?: string;
   toAsset?: string;
+  amountInThorchain?: bigint;
+  fromAssetDecimals?: number;
+  toAssetDecimals?: number;
   toleranceBps?: number;
   affiliateAddress?: string;
   affiliateBps?: number;
@@ -98,7 +101,7 @@ export class THORChainQuoteWorker {
     const params = new URLSearchParams();
     params.set('from_asset', input.fromAsset ?? input.tokenIn);
     params.set('to_asset', input.toAsset ?? input.tokenOut);
-    params.set('amount', input.amountIn.toString());
+    params.set('amount', (input.amountInThorchain ?? input.amountIn).toString());
 
     if (input.destinationAddress) {
       params.set('destination', input.destinationAddress);

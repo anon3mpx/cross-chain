@@ -137,7 +137,7 @@ test('getOffers returns multiple viable rails in scored order and reuses cached 
       assert.equal(quote.feeAmountToken, 500_000n);
       assert.equal(quote.feeAmountUSD, 0.5);
       assert.equal(quote.estimatedOut, 99_500_000n);
-      assert.equal(quote.minAmountOut, 99_002_500n);
+      assert.equal(quote.minAmountOut, 99_400_500n);
     } finally {
       engine.resetDexQuoteFns();
     }

@@ -313,7 +313,7 @@ export function getRailEnumValue(rail: Rail): number {
 }
 
 export function getRailEnvAliases(rail: Rail): string[] {
-  return getRailProvider(rail).aliases;
+  return getRailProvider(rail)?.aliases ?? [];
 }
 
 export function getFallbackRails(rail: Rail): Rail[] {

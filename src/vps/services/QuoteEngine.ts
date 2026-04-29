@@ -37,6 +37,7 @@ import {
   type THORChainQuoteResult,
 } from './thorchain/THORChainQuoteWorker';
 import {
+  buildTHORChainQuoteRequestFromPair,
   buildTHORChainQuoteRequest,
   isQuoteCacheable,
   shouldCacheOfferSet,
@@ -457,7 +458,7 @@ export class QuoteEngine {
     }
 
     try {
-      const quoteRequest = this._buildThorchainQuoteRequest(req, route, offer);
+      const quoteRequest = await this._buildThorchainQuoteRequest(req, route, offer);
       if (!quoteRequest) return null;
       const thorQuote = await this.thorchainQuoteWorker.quote(quoteRequest);
       if (!thorQuote) return null;
@@ -473,7 +474,7 @@ export class QuoteEngine {
     req: QuoteRequest,
     route: Route,
     offer: RailOffer,
-  ): THORChainQuoteRequest | null {
+  ): Promise<THORChainQuoteRequest | null> {
     const executionQuote = offer.execution.quote as QuoteResult | undefined;
     const settlementInputAmount =
       executionQuote?.minSettlementAmount && executionQuote.minSettlementAmount > 0n
@@ -580,17 +581,21 @@ export class QuoteEngine {
 
   private async _computeOfferSet(req: QuoteRequest): Promise<OfferSet | null> {
     const dstChain = getChainConfig(req.dstChainId);
-    if (!dstChain) return null;
+    if (!dstChain && !this.thorchainQuoteWorker) return null;
 
     const amountUSD = await this._estimateUSD(req.tokenIn, req.srcChainId, req.amountIn);
     const candidateRoutes = this.routeBuilder
       .buildRoutes(req.srcChainId, req.dstChainId, amountUSD, req.urgency ?? 'normal')
-      .filter((route) => route.viable && route.hops.length === 1);
-    if (candidateRoutes.length === 0) return null;
+      .filter((route) => route.viable && route.hops.length === 1 && route.hops[0].rail !== Rail.THORCHAIN);
 
     const offers = (await Promise.all(
       candidateRoutes.map((route) => this._buildOffer(req, route, amountUSD)),
     )).filter((offer): offer is RailOffer => offer !== null);
+
+    const thorOffer = await this._buildTHORChainProviderDirectOffer(req, amountUSD);
+    if (thorOffer) {
+      offers.push(thorOffer);
+    }
     if (offers.length === 0) return null;
 
     const offerSet = this._toOfferSet(offers);
@@ -601,6 +606,145 @@ export class QuoteEngine {
       });
     }
     return offerSet;
+  }
+
+  private async _buildTHORChainProviderDirectOffer(
+    req: QuoteRequest,
+    amountUSD: number,
+  ): Promise<RailOffer | null> {
+    if (!this.thorchainQuoteWorker) return null;
+
+    const config = getRailConfig(Rail.THORCHAIN);
+    const railFeeUSD = config.fee;
+    const protocolFeeUSD = Math.max(0.50, amountUSD * 0.0005);
+    const totalFeeUSD = railFeeUSD + protocolFeeUSD;
+    const feeBpsUncapped = Math.max(0, Math.round((totalFeeUSD / Math.max(amountUSD, 1)) * 10_000));
+    const feeRatioBps = BigInt(Math.min(feeBpsUncapped, ROUTER_MAX_FEE_BPS));
+    const feeAmountToken = (req.amountIn * feeRatioBps) / BPS_DENOMINATOR;
+    if (feeAmountToken >= req.amountIn) return null;
+    const amountAfterFee = req.amountIn - feeAmountToken;
+
+    const quoteRequest = await buildTHORChainQuoteRequestFromPair({
+      amountIn: amountAfterFee,
+      srcChainId: req.srcChainId,
+      dstChainId: req.dstChainId,
+      tokenIn: req.tokenIn,
+      tokenOut: req.tokenOut,
+      destinationAddress: req.nativeDstAddress ?? req.userAddress,
+    });
+    if (!quoteRequest) return null;
+
+    let thorQuote: THORChainQuoteResult | null;
+    try {
+      thorQuote = await this.thorchainQuoteWorker.quote(quoteRequest);
+    } catch {
+      return null;
+    }
+    if (!thorQuote) return null;
+
+    const minThorOutput = this._parseBigInt(
+      thorQuote.expectedAmountOut ?? thorQuote.quote.expected_amount_out,
+    );
+    if (!minThorOutput || minThorOutput <= 0n) return null;
+
+    const thorAsset = quoteRequest.toAsset ?? thorQuote.quote.to_asset;
+    const settlementToken = this._inferSettlementTokenFromThorAsset(thorAsset);
+    const expectedDstSettlementToken = this._isAddress(req.tokenOut)
+      ? req.tokenOut
+      : ZeroAddress;
+    const routeAsset = this._toTHORChainProviderAssetRef(
+      req.srcChainId,
+      req.dstChainId,
+      thorAsset ?? thorQuote.quote.to_asset ?? 'THORCHAIN',
+      settlementToken,
+      quoteRequest.toAssetDecimals,
+      req.tokenOut,
+    );
+    const quote: QuoteResult = {
+      intentId: this._makeIntentId(),
+      srcChainId: req.srcChainId,
+      dstChainId: req.dstChainId,
+      tokenIn: req.tokenIn,
+      tokenOut: req.tokenOut,
+      amountIn: req.amountIn,
+      estimatedOut: minThorOutput,
+      minAmountOut: this._applySlippage(minThorOutput, QUOTE_SLIPPAGE_BPS),
+      minSrcSwapOut: 0n,
+      feeAmountUSD: totalFeeUSD,
+      feeAmountToken,
+      rail: Rail.THORCHAIN,
+      railType: config.railType,
+      settlementToken,
+      settlementAssetId: this._zeroBytes32(),
+      expectedDstSettlementToken,
+      expectedDstSettlementAssetId: this._zeroBytes32(),
+      minSettlementAmount: amountAfterFee,
+      dstGasLimit: 0,
+      etaSeconds: thorQuote.settlementTimeSeconds ?? config.etaSeconds,
+      expiresAt: this._resolveThorExpiry(thorQuote.quote.expiry),
+      railPluginId: config.pluginId,
+      railData: '0x',
+      swapPluginIdSrc: ZERO_PLUGIN_ID,
+      swapPluginIdDst: ZERO_PLUGIN_ID,
+      swapDataSrc: '0x',
+      swapDataDst: '0x',
+      nativeDstAddress: req.nativeDstAddress,
+      thorAsset: thorQuote.quote.to_asset ?? undefined,
+      minThorOutput,
+      routeAsset,
+    };
+
+    const economics: OfferEconomics = {
+      providerFeeUSD: railFeeUSD,
+      protocolFeeUSD,
+      sourceGasUSD: 0,
+      settlementTimeSeconds: thorQuote.settlementTimeSeconds ?? config.etaSeconds,
+    };
+    if (thorQuote.outboundFeeUSD !== undefined) economics.outboundFeeUSD = thorQuote.outboundFeeUSD;
+    if (thorQuote.slippageBps !== undefined) economics.slippageBps = thorQuote.slippageBps;
+    if (thorQuote.recommendedMinAmountIn) economics.minimumInput = thorQuote.recommendedMinAmountIn;
+
+    return {
+      offerId: quote.intentId,
+      rail: Rail.THORCHAIN,
+      offerType: 'thor_api_direct',
+      railType: config.railType,
+      srcChainId: req.srcChainId,
+      dstChainId: req.dstChainId,
+      tokenIn: req.tokenIn,
+      tokenOut: req.tokenOut,
+      amountIn: req.amountIn,
+      estimatedOut: quote.estimatedOut,
+      minAmountOut: quote.minAmountOut,
+      expiresAt: quote.expiresAt,
+      deliveryShape: this._deliveryShapeFor(quote),
+      executionMode: 'provider_direct',
+      routeAsset: quote.routeAsset,
+      sourceSettlementAsset: quote.routeAsset!,
+      destinationSettlementAsset: quote.routeAsset!,
+      economics,
+      execution: {
+        provider: 'thorchain_api',
+        quote,
+        thorQuote: thorQuote.quote,
+        thorAssetIdentifier: thorQuote.quote.to_asset,
+        minThorOutput: thorQuote.expectedAmountOut ?? thorQuote.quote.expected_amount_out,
+        router: thorQuote.quote.router,
+        inboundAddress: thorQuote.quote.inbound_address,
+        memo: thorQuote.quote.memo,
+        thorchainExpiry: thorQuote.quote.expiry,
+        feeAmountToken: quote.feeAmountToken,
+        providerFeeUSD: railFeeUSD,
+        protocolFeeUSD,
+        railPluginId: quote.railPluginId,
+        railData: quote.railData,
+        swapPluginIdSrc: quote.swapPluginIdSrc,
+        swapPluginIdDst: quote.swapPluginIdDst,
+        swapDataSrc: quote.swapDataSrc,
+        swapDataDst: quote.swapDataDst,
+        nativeDstAddress: quote.nativeDstAddress,
+      },
+    };
   }
 
   private _toProviderAssetRef(
@@ -622,6 +766,34 @@ export class QuoteEngine {
       decimals: this._settlementTokenDecimals(settlementToken),
       assetKind: this._settlementAssetKind(settlementToken),
       assetStandard: assetStandard ?? this._assetStandardFor(rail, settlementToken),
+    };
+  }
+
+  private _toTHORChainProviderAssetRef(
+    srcChainId: number,
+    dstChainId: number,
+    thorAsset: string,
+    fallbackSettlementToken: SettlementToken,
+    decimals?: number,
+    tokenAddress?: string,
+  ): ProviderAssetRef {
+    const canonicalAssetId = this._normalizeTHORChainCanonicalAssetId(thorAsset);
+    const tokenId = this._thorchainTokenId(canonicalAssetId);
+    const normalizedTokenAddress = tokenAddress?.replace(/^0X/, '0x');
+    const addressToken = this._isAddress(normalizedTokenAddress ?? '') ? getAddress(normalizedTokenAddress!) : undefined;
+    const normalizedTokenId = tokenId?.replace(/^0X/, '0x');
+    const resolvedTokenAddress = addressToken
+      ?? (this._isAddress(normalizedTokenId ?? '') ? getAddress(normalizedTokenId!) : undefined);
+
+    return {
+      canonicalAssetId,
+      providerAssetId: `THORCHAIN:${srcChainId}:${dstChainId}:${canonicalAssetId}`,
+      tokenAddress: resolvedTokenAddress,
+      srcTokenAddress: resolvedTokenAddress,
+      dstTokenAddress: resolvedTokenAddress,
+      decimals: decimals ?? this._thorchainAssetDecimals(canonicalAssetId, fallbackSettlementToken),
+      assetKind: this._thorchainAssetKind(canonicalAssetId, fallbackSettlementToken),
+      assetStandard: this._thorchainAssetStandard(canonicalAssetId, fallbackSettlementToken),
     };
   }
 
@@ -1034,6 +1206,85 @@ export class QuoteEngine {
 
   private _settlementAssetId(chainId: number, tokenAddress: string): string {
     return keccak256(abiCoder.encode(['uint256', 'address'], [BigInt(chainId), getAddress(tokenAddress)]));
+  }
+
+  private _thorchainTokenId(asset: string): string | undefined {
+    const dash = asset.indexOf('-');
+    if (dash < 0 || dash === asset.length - 1) return undefined;
+    return asset.slice(dash + 1);
+  }
+
+  private _normalizeTHORChainCanonicalAssetId(asset: string): string {
+    const trimmed = asset.trim();
+    const dash = trimmed.indexOf('-');
+    if (dash < 0) return trimmed.toUpperCase();
+    return `${trimmed.slice(0, dash).toUpperCase()}-${trimmed.slice(dash + 1)}`;
+  }
+
+  private _thorchainAssetDecimals(asset: string, fallbackSettlementToken: SettlementToken): number {
+    const normalized = asset.trim().toUpperCase();
+    if (normalized.includes('.USDC-') || normalized.endsWith('.USDC')) return 6;
+    if (normalized.includes('.USDT-') || normalized.endsWith('.USDT')) return 6;
+    if (normalized.startsWith('BTC.')) return 8;
+    if (normalized.startsWith('DOGE.')) return 8;
+    if (normalized.startsWith('LTC.')) return 8;
+    if (normalized.startsWith('BCH.')) return 8;
+    if (normalized.startsWith('SOL.')) return 9;
+    return this._settlementTokenDecimals(fallbackSettlementToken);
+  }
+
+  private _thorchainAssetKind(
+    asset: string,
+    fallbackSettlementToken: SettlementToken,
+  ): ProviderAssetRef['assetKind'] {
+    const normalized = asset.trim().toUpperCase();
+    if (normalized.startsWith('BTC.')) return 'btc';
+    if (normalized.startsWith('SOL.')) return 'sol';
+    if (normalized.startsWith('DOGE.')) return 'doge';
+    if (normalized.startsWith('GAIA.') || normalized.startsWith('KUJI.') || normalized.startsWith('THOR.')) {
+      return 'cosmos';
+    }
+    return this._settlementAssetKind(fallbackSettlementToken);
+  }
+
+  private _thorchainAssetStandard(
+    asset: string,
+    fallbackSettlementToken: SettlementToken,
+  ): ProviderAssetRef['assetStandard'] {
+    const normalized = asset.trim().toUpperCase();
+    const [chain, ticker = ''] = normalized.split('.', 2);
+    if (!ticker.includes('-') && chain && ticker && chain === ticker) return 'thor_native';
+    if (fallbackSettlementToken === SettlementToken.BTC || fallbackSettlementToken === SettlementToken.SOL) {
+      return 'thor_native';
+    }
+    if (ticker.includes('-')) return 'erc20';
+    return 'native';
+  }
+
+  private _inferSettlementTokenFromThorAsset(asset: unknown): SettlementToken {
+    const normalized = String(asset ?? '').trim().toUpperCase();
+    if (normalized.startsWith('BTC.') || normalized.startsWith('BTC~') || normalized.startsWith('BTC-')) {
+      return SettlementToken.BTC;
+    }
+    if (normalized.startsWith('SOL.') || normalized.startsWith('SOL~') || normalized.startsWith('SOL-')) {
+      return SettlementToken.SOL;
+    }
+    if (normalized.includes('.USDT-') || normalized.endsWith('.USDT')) {
+      return SettlementToken.USDT;
+    }
+    if (normalized.endsWith('.ETH') || normalized.includes('.WETH') || normalized.includes('.ETH-')) {
+      return SettlementToken.ETH;
+    }
+    if (normalized.includes('.USDC-') || normalized.endsWith('.USDC')) {
+      return SettlementToken.USDC;
+    }
+    return SettlementToken.USDC;
+  }
+
+  private _resolveThorExpiry(raw: unknown): number {
+    const parsed = Number(raw);
+    if (Number.isFinite(parsed) && parsed > 0) return Math.floor(parsed);
+    return Math.floor(Date.now() / 1000) + 120;
   }
 
   private _defaultAxelarDirectCanonicalAssetIds(): string[] {
