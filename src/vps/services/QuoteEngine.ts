@@ -58,6 +58,7 @@ import {
 const CACHE_TTL_MS = 120_000; // Cache full quotes for 2 minutes. This is a tradeoff to reduce RPC calls while keeping quotes reasonably fresh.
 const LOWER_HEX_ADDR_RE = /^0x[0-9a-f]{40}$/;
 const ROUTER_MAX_FEE_BPS = 100; // RouterV1.MAX_FEE_BPS
+const PROTOCOL_FEE_BPS = 30; // 0.30%
 const QUOTE_SLIPPAGE_BPS = 10; // 0.1%
 const BPS_DENOMINATOR = 10_000n;
 const USDC_MICRO_UNITS = 1_000_000n;
@@ -321,10 +322,9 @@ export class QuoteEngine {
     if (!settlementAddrSrc) return null;
 
     const railFeeUSD = route.totalFeeUSD;
-    const protocolFeeUSD = Math.max(0.50, amountUSD * 0.0005);
-    const totalFeeUSD = railFeeUSD + protocolFeeUSD;
-    const feeBpsUncapped = Math.max(0, Math.round((totalFeeUSD / Math.max(amountUSD, 1)) * 10_000));
-    const feeRatioBps = BigInt(Math.min(feeBpsUncapped, ROUTER_MAX_FEE_BPS));
+    const protocolFeeUSD = amountUSD * (PROTOCOL_FEE_BPS / 10_000);
+    const totalFeeUSD = protocolFeeUSD;
+    const feeRatioBps = BigInt(Math.min(PROTOCOL_FEE_BPS, ROUTER_MAX_FEE_BPS));
     const feeAmountToken = (req.amountIn * feeRatioBps) / BPS_DENOMINATOR;
     if (feeAmountToken >= req.amountIn) return null;
     const amountAfterFee = req.amountIn - feeAmountToken;
@@ -649,10 +649,9 @@ export class QuoteEngine {
 
     const config = getRailConfig(Rail.THORCHAIN);
     const railFeeUSD = config.fee;
-    const protocolFeeUSD = Math.max(0.50, amountUSD * 0.0005);
-    const totalFeeUSD = railFeeUSD + protocolFeeUSD;
-    const feeBpsUncapped = Math.max(0, Math.round((totalFeeUSD / Math.max(amountUSD, 1)) * 10_000));
-    const feeRatioBps = BigInt(Math.min(feeBpsUncapped, ROUTER_MAX_FEE_BPS));
+    const protocolFeeUSD = amountUSD * (PROTOCOL_FEE_BPS / 10_000);
+    const totalFeeUSD = protocolFeeUSD;
+    const feeRatioBps = BigInt(Math.min(PROTOCOL_FEE_BPS, ROUTER_MAX_FEE_BPS));
     const feeAmountToken = (req.amountIn * feeRatioBps) / BPS_DENOMINATOR;
     if (feeAmountToken >= req.amountIn) return null;
     const amountAfterFee = req.amountIn - feeAmountToken;

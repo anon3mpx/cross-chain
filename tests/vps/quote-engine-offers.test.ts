@@ -132,12 +132,12 @@ test('getOffers returns multiple viable rails in scored order and reuses cached 
       const cctpOffer = result.offers.find((offer) => offer.rail === 'CCTP');
       assert.ok(cctpOffer);
       assert.equal(cctpOffer.economics.providerFeeUSD, 0);
-      assert.equal(cctpOffer.economics.protocolFeeUSD, 0.5);
+      assert.equal(cctpOffer.economics.protocolFeeUSD, 0.3);
 
-      assert.equal(quote.feeAmountToken, 500_000n);
-      assert.equal(quote.feeAmountUSD, 0.5);
-      assert.equal(quote.estimatedOut, 99_500_000n);
-      assert.equal(quote.minAmountOut, 99_400_500n);
+      assert.equal(quote.feeAmountToken, 300_000n);
+      assert.equal(quote.feeAmountUSD, 0.3);
+      assert.equal(quote.estimatedOut, 99_700_000n);
+      assert.equal(quote.minAmountOut, 99_600_300n);
     } finally {
       engine.resetDexQuoteFns();
     }
@@ -231,7 +231,7 @@ test('fast CCTP economics include the realized Circle fee for the built offer', 
         assert.ok(cctpOffer);
         assert.equal(cctpOffer.economics.providerFeeUSD, 0.00099);
         assert.equal(cctpOffer.economics.outboundFeeUSD, 0.00099);
-        assert.equal(cctpOffer.economics.protocolFeeUSD, 0.5);
+        assert.equal(cctpOffer.economics.protocolFeeUSD, 0.003);
         assert.equal(cctpOffer.economics.settlementTimeSeconds, 8);
       } finally {
         engine.resetDexQuoteFns();

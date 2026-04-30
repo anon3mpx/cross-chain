@@ -505,7 +505,7 @@ export class CctpAttestationWorker {
   private async _pollAttestation(job: RelayJob): Promise<AttestationResult> {
     const base = this._readEnv('CCTP_ATTESTATION_BASE_URL') || 'https://iris-api-sandbox.circle.com';
     const pollMs = this._readIntEnv('CCTP_ATTESTATION_POLL_MS', 4000);
-    const timeoutMs = this._readIntEnv('CCTP_ATTESTATION_TIMEOUT_MS', 10 * 60_000);
+    const timeoutMs = this._readIntEnv('CCTP_ATTESTATION_TIMEOUT_MS', 10 * 60_000); // 10 min
     const deadline = Date.now() + timeoutMs;
 
     const normalizedBase = base.replace(/\/$/, '');

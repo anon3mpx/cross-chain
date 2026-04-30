@@ -8,8 +8,9 @@ const { Contract, JsonRpcProvider, Wallet } = require('ethers');
  *   node src/vps/scripts/approveErc20.js
  */
 
-const RPC_URL = 'https://sepolia.optimism.io';
+// const RPC_URL = 'https://sepolia.optimism.io';
 // const RPC_URL = 'https://sepolia.base.org';
+const RPC_URL = 'https://mainnet.base.org';
 
 const PRIVATE_KEY = '';
 const TOKEN_ADDRESS = '0x5fd84259d66Cd46123540766Be93DFE6D43130D7'; // USDC on Base Sepolia
