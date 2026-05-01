@@ -65,23 +65,44 @@ export class THORChainMonitorWorker {
     }
 
     try {
-      const stuck = await this.intentService.findStuckIntents(300);
-      const thorStuck = stuck.filter((intent) => intent.quote.rail === Rail.THORCHAIN);
+      const [active, stuck] = await Promise.all([
+        this.intentService.listIntentsByStatuses([IntentStatus.SUBMITTED, IntentStatus.IN_TRANSIT], 300),
+        this.intentService.findStuckIntents(300),
+      ]);
+      const stuckIds = new Set(
+        stuck
+          .filter((intent) => intent.quote.rail === Rail.THORCHAIN)
+          .map((intent) => intent.intentId),
+      );
+      const thorActive = active.filter((intent) => intent.quote.rail === Rail.THORCHAIN);
 
-      for (const intent of thorStuck) {
+      for (const intent of thorActive) {
         if (!this.running) break;
-        if (intent.status !== IntentStatus.IN_TRANSIT) continue;
-        if (!intent.railTxId) continue;
+        if (intent.status !== IntentStatus.SUBMITTED && intent.status !== IntentStatus.IN_TRANSIT) continue;
+        const trackingTxHash = intent.railTxId ?? intent.srcTxHash;
+        if (!trackingTxHash) continue;
 
         let status: THORChainTxStatus;
         try {
-          status = await this.client.txStatus(intent.railTxId);
+          status = await this.client.txStatus(trackingTxHash);
         } catch (err) {
           console.warn(`[THORChain Monitor] tx status fetch failed intent=${intent.intentId}`, err);
           continue;
         }
 
         const outboundTxHash = this._extractOutboundTxHash(status);
+        if (intent.status === IntentStatus.SUBMITTED) {
+          try {
+            await this.intentService.markInTransit(intent.intentId, trackingTxHash, {
+              actor: 'system',
+              eventSource: 'thorchain-monitor',
+              allowedFrom: [IntentStatus.SUBMITTED, IntentStatus.IN_TRANSIT],
+            });
+          } catch (err) {
+            console.warn(`[THORChain Monitor] transit transition failed intent=${intent.intentId}`, err);
+          }
+        }
+
         if (this._isComplete(status) && outboundTxHash) {
           try {
             await this.intentService.markSettled(intent.intentId, outboundTxHash, {
@@ -91,6 +112,10 @@ export class THORChainMonitorWorker {
           } catch (err) {
             console.warn(`[THORChain Monitor] settle transition failed intent=${intent.intentId}`, err);
           }
+          continue;
+        }
+
+        if (!stuckIds.has(intent.intentId)) {
           continue;
         }
 

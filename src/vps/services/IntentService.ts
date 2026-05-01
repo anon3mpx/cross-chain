@@ -91,6 +91,26 @@ export class IntentService {
     }, {} as Record<IntentStatus, number>);
   }
 
+  async listIntentsByStatuses(statuses: IntentStatus[], limit = 500): Promise<Intent[]> {
+    const uniqueStatuses = [...new Set(statuses)];
+    if (uniqueStatuses.length === 0 || limit <= 0) return [];
+
+    if (this.intentRepo) {
+      const groups = await Promise.all(
+        uniqueStatuses.map((status) => this.intentRepo!.listIntentsByStatus(status, limit)),
+      );
+      return groups
+        .flat()
+        .sort((a, b) => b.updatedAt - a.updatedAt)
+        .slice(0, limit);
+    }
+
+    return uniqueStatuses
+      .flatMap((status) => this.intentEngine.getByStatus(status))
+      .sort((a, b) => b.updatedAt - a.updatedAt)
+      .slice(0, limit);
+  }
+
   async markSubmitted(intentId: string, srcTxHash: string, options: IntentTransitionOptions = {}): Promise<Intent> {
     return this.transition(intentId, IntentStatus.SUBMITTED, { srcTxHash }, {
       ...options,
