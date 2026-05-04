@@ -1,6 +1,7 @@
 import { RailOffer, QuoteResult } from '../types';
 import { buildRouterIntegration, type RouterIntegration } from './IntentCalldataBuilder';
 import { Interface, ZeroAddress, isAddress } from 'ethers';
+import type { LayerZeroValueTransferApiUserStep } from './layerzero/LayerZeroValueTransferApiClient';
 
 const THOR_ROUTER_IFACE = new Interface([
   'function depositWithExpiry(address payable vault,address asset,uint256 amount,string memo,uint256 expiration)',
@@ -23,6 +24,16 @@ export type SelectedOfferIntegration =
       value: string;
       chainId: number;
     };
+  }
+  | {
+    mode: 'provider_direct';
+    action: {
+      kind: 'layerzero_value_transfer_api';
+      quoteId: string;
+      userSteps: LayerZeroValueTransferApiUserStep[];
+      requiresFreshUserSteps: boolean;
+      submitSignatureRequired: boolean;
+    };
   };
 
 function materializeSelectedOfferQuote(offer: RailOffer): QuoteResult {
@@ -41,6 +52,42 @@ function isThorchainProviderDirectOffer(offer: RailOffer): boolean {
   if (provider === 'thorchain' || provider === 'thorchain_api') return true;
   if (offer.rail === 'THORCHAIN') return true;
   return offer.offerType === 'thor_api_direct';
+}
+
+function isLayerZeroValueTransferApiProviderDirectOffer(offer: RailOffer): boolean {
+  const provider = typeof offer.execution?.provider === 'string'
+    ? offer.execution.provider.toLowerCase()
+    : '';
+  if (provider === 'layerzero_value_transfer_api') return true;
+  return offer.rail === 'LAYERZERO' && offer.offerType === 'lz_api_direct';
+}
+
+function readLayerZeroValueTransferApiUserSteps(offer: RailOffer): LayerZeroValueTransferApiUserStep[] {
+  const execution = offer.execution as Record<string, unknown>;
+  const raw = execution.layerZeroValueTransferApiUserSteps ?? execution.userSteps;
+  return Array.isArray(raw) ? raw as LayerZeroValueTransferApiUserStep[] : [];
+}
+
+function readLayerZeroValueTransferApiQuoteId(offer: RailOffer): string {
+  const execution = offer.execution as Record<string, unknown>;
+  const quote = execution.quote as Record<string, unknown> | undefined;
+  const raw = execution.layerZeroValueTransferApiQuoteId ?? quote?.layerZeroValueTransferApiQuoteId;
+  const quoteId = String(raw ?? '').trim();
+  if (!quoteId) {
+    throw new Error(`Selected LayerZero Value Transfer API offer ${offer.offerId} is missing quote id`);
+  }
+  return quoteId;
+}
+
+function hasLayerZeroValueTransferApiStepType(
+  userSteps: LayerZeroValueTransferApiUserStep[],
+  type: string,
+): boolean {
+  return userSteps.some((step) => step.type.trim().toUpperCase() === type);
+}
+
+function requiresFreshLayerZeroValueTransferApiUserSteps(userSteps: LayerZeroValueTransferApiUserStep[]): boolean {
+  return userSteps.some((step) => step.chainType.trim().toUpperCase() === 'SOLANA');
 }
 
 export async function buildSelectedOfferIntegration(
@@ -65,9 +112,7 @@ export async function buildSelectedOfferIntegration(
     const expiresAt = Number(source.expiry ?? 0);
     const expectedAmountOut = String(source.expected_amount_out ?? '');
 
-    const router = String(
-      (source.router ?? (offer.execution as Record<string, unknown>).router ?? '') ?? '',
-    );
+    const router = String(source.router ?? (offer.execution as Record<string, unknown>).router ?? '');
     const amountInRaw = executionQuote.amountIn;
     const amountIn = typeof amountInRaw === 'bigint'
       ? amountInRaw
@@ -105,6 +150,20 @@ export async function buildSelectedOfferIntegration(
           },
         }
         : {}),
+    };
+  }
+
+  if (isLayerZeroValueTransferApiProviderDirectOffer(offer)) {
+    const userSteps = readLayerZeroValueTransferApiUserSteps(offer);
+    return {
+      mode: 'provider_direct',
+      action: {
+        kind: 'layerzero_value_transfer_api',
+        quoteId: readLayerZeroValueTransferApiQuoteId(offer),
+        userSteps,
+        requiresFreshUserSteps: requiresFreshLayerZeroValueTransferApiUserSteps(userSteps),
+        submitSignatureRequired: hasLayerZeroValueTransferApiStepType(userSteps, 'SIGNATURE'),
+      },
     };
   }
 

@@ -46,6 +46,10 @@ import {
 import { StaticRouteAssetPolicy, type RouteAssetPolicy } from './RouteAssetPolicy';
 import { StaticDestinationGasPolicy, type DestinationGasPolicy } from './DestinationGasPolicy';
 import { LayerZeroRouteCatalog, type LayerZeroRouteOption } from './layerzero/LayerZeroRouteCatalog';
+import {
+  LayerZeroValueTransferApiQuoteWorker,
+  type LayerZeroValueTransferApiQuoteResult,
+} from './layerzero/LayerZeroValueTransferApiQuoteWorker';
 import { RailSelector } from './RailSelector';
 import {
   ZERO_PLUGIN_ID,
@@ -117,6 +121,7 @@ export interface QuoteEngineDependencies {
   routeBuilder?: RouteBuilder;
   axelarAssetCatalog?: Pick<AxelarAssetCatalog, 'listRoutes'>;
   layerZeroRouteCatalog?: Pick<LayerZeroRouteCatalog, 'listRoutes'>;
+  layerZeroValueTransferApiQuoteWorker?: Pick<LayerZeroValueTransferApiQuoteWorker, 'quoteLayerZeroValueTransferApi'>;
 }
 
 export class QuoteEngine {
@@ -128,6 +133,7 @@ export class QuoteEngine {
   private readonly dexQuoteFns = new Map<number, QuoteFn>();
   private readonly axelarAssetCatalog: Pick<AxelarAssetCatalog, 'listRoutes'>;
   private readonly layerZeroRouteCatalog: Pick<LayerZeroRouteCatalog, 'listRoutes'>;
+  private readonly layerZeroValueTransferApiQuoteWorker?: Pick<LayerZeroValueTransferApiQuoteWorker, 'quoteLayerZeroValueTransferApi'>;
   private readonly thorchainQuoteWorker?: Pick<THORChainQuoteWorker, 'quote'>;
   private readonly routeAssetPolicy: RouteAssetPolicy;
   private readonly destinationGasPolicy: DestinationGasPolicy;
@@ -148,6 +154,12 @@ export class QuoteEngine {
       defaultCanonicalAssetIds: this.routeAssetPolicy.allowedAssets(Rail.LAYERZERO),
       routeFamilyOverrides: this._defaultLayerZeroRouteFamilies(),
     });
+    const hasExplicitLayerZeroValueTransferApiWorker = Object.prototype.hasOwnProperty.call(deps, 'layerZeroValueTransferApiQuoteWorker');
+    this.layerZeroValueTransferApiQuoteWorker = hasExplicitLayerZeroValueTransferApiWorker
+      ? deps.layerZeroValueTransferApiQuoteWorker
+      : this._readBoolEnv('ENABLE_LAYERZERO_TRANSFER_API', false)
+        ? new LayerZeroValueTransferApiQuoteWorker()
+        : undefined;
     const hasExplicitThorchainWorker = Object.prototype.hasOwnProperty.call(deps, 'thorchainQuoteWorker');
     if (hasExplicitThorchainWorker) {
       this.thorchainQuoteWorker = deps.thorchainQuoteWorker;
@@ -626,6 +638,10 @@ export class QuoteEngine {
     if (thorOffer) {
       offers.push(thorOffer);
     }
+    const layerZeroValueTransferApiOffer = await this._buildLayerZeroValueTransferApiProviderDirectOffer(req);
+    if (layerZeroValueTransferApiOffer) {
+      offers.push(layerZeroValueTransferApiOffer);
+    }
     if (offers.length === 0) return null;
 
     const offerSet = this._toOfferSet(offers);
@@ -779,6 +795,101 @@ export class QuoteEngine {
     };
   }
 
+  private async _buildLayerZeroValueTransferApiProviderDirectOffer(
+    req: QuoteRequest,
+  ): Promise<RailOffer | null> {
+    if (!this.layerZeroValueTransferApiQuoteWorker) return null;
+
+    let result: LayerZeroValueTransferApiQuoteResult | null;
+    try {
+      result = await this.layerZeroValueTransferApiQuoteWorker.quoteLayerZeroValueTransferApi(req);
+    } catch {
+      return null;
+    }
+    if (!result) return null;
+
+    const estimatedOut = this._parseBigInt(result.expectedAmountOut);
+    const minAmountOut = this._parseBigInt(result.minAmountOut);
+    if (!estimatedOut || estimatedOut <= 0n || !minAmountOut || minAmountOut <= 0n) {
+      return null;
+    }
+
+    const settlementToken = this._inferSettlementTokenFromSymbol(result.destinationToken.symbol);
+    const sourceAsset = this._toLayerZeroValueTransferApiAssetRef(result.sourceToken);
+    const destinationAsset = this._toLayerZeroValueTransferApiAssetRef(result.destinationToken);
+    const intentId = this._makeIntentId();
+    const nowSeconds = Math.floor(Date.now() / 1000);
+    const expiresAt = this._resolveLayerZeroValueTransferApiExpiry(result.quote.expiresAt, nowSeconds);
+
+    const quote: QuoteResult = {
+      intentId,
+      srcChainId: req.srcChainId,
+      dstChainId: req.dstChainId,
+      tokenIn: req.tokenIn,
+      tokenOut: req.tokenOut,
+      amountIn: req.amountIn,
+      estimatedOut,
+      minAmountOut,
+      minSrcSwapOut: 0n,
+      feeAmountUSD: result.feeUsd,
+      feeAmountToken: 0n,
+      rail: Rail.LAYERZERO,
+      railType: 'messaging',
+      settlementToken,
+      routeAsset: sourceAsset,
+      settlementAssetId: this._zeroBytes32(),
+      expectedDstSettlementToken: result.destinationToken.address,
+      expectedDstSettlementAssetId: this._zeroBytes32(),
+      minSettlementAmount: minAmountOut,
+      dstGasLimit: 0,
+      etaSeconds: result.settlementTimeSeconds,
+      expiresAt,
+      railPluginId: ZERO_PLUGIN_ID,
+      railData: '0x',
+      swapPluginIdSrc: ZERO_PLUGIN_ID,
+      swapPluginIdDst: ZERO_PLUGIN_ID,
+      swapDataSrc: '0x',
+      swapDataDst: '0x',
+      nativeDstAddress: req.nativeDstAddress,
+      layerZeroValueTransferApiQuoteId: result.quote.id,
+    };
+
+    return {
+      offerId: intentId,
+      rail: Rail.LAYERZERO,
+      offerType: 'lz_api_direct',
+      railType: 'messaging',
+      srcChainId: req.srcChainId,
+      dstChainId: req.dstChainId,
+      tokenIn: req.tokenIn,
+      tokenOut: req.tokenOut,
+      amountIn: req.amountIn,
+      estimatedOut,
+      minAmountOut,
+      expiresAt,
+      deliveryShape: 'direct',
+      executionMode: 'provider_direct',
+      routeAsset: sourceAsset,
+      sourceSettlementAsset: sourceAsset,
+      destinationSettlementAsset: destinationAsset,
+      economics: {
+        providerFeeUSD: result.feeUsd,
+        protocolFeeUSD: 0,
+        sourceGasUSD: 0,
+        settlementTimeSeconds: result.settlementTimeSeconds,
+      },
+      execution: {
+        provider: 'layerzero_value_transfer_api',
+        quote,
+        layerZeroValueTransferApiQuoteId: result.quote.id,
+        layerZeroValueTransferApiQuote: result.quote,
+        layerZeroValueTransferApiUserSteps: result.userSteps,
+        layerZeroValueTransferApiRouteSteps: result.quote.routeSteps ?? [],
+        feeUsd: result.feeUsd,
+      },
+    };
+  }
+
   private _toProviderAssetRef(
     chainId: number,
     canonicalAssetId: string,
@@ -798,6 +909,20 @@ export class QuoteEngine {
       decimals: this._settlementTokenDecimals(settlementToken),
       assetKind: this._settlementAssetKind(settlementToken),
       assetStandard: assetStandard ?? this._assetStandardFor(rail, settlementToken),
+    };
+  }
+
+  private _toLayerZeroValueTransferApiAssetRef(token: LayerZeroValueTransferApiQuoteResult['sourceToken']): ProviderAssetRef {
+    const canonicalAssetId = token.symbol.trim().toUpperCase();
+    return {
+      canonicalAssetId,
+      providerAssetId: `layerzero-api:${token.chainKey}:${token.address.toLowerCase()}`,
+      tokenAddress: token.address,
+      srcTokenAddress: token.address,
+      dstTokenAddress: token.address,
+      decimals: token.decimals,
+      assetKind: canonicalAssetId === 'ETH' ? 'native' : 'erc20',
+      assetStandard: canonicalAssetId === 'ETH' ? 'native' : 'erc20',
     };
   }
 
@@ -1313,10 +1438,29 @@ export class QuoteEngine {
     return SettlementToken.USDC;
   }
 
+  private _inferSettlementTokenFromSymbol(symbol: unknown): SettlementToken {
+    const normalized = String(symbol ?? '').trim().toUpperCase();
+    if (normalized === 'USDT') return SettlementToken.USDT;
+    if (normalized === 'ETH' || normalized === 'WETH') return SettlementToken.ETH;
+    if (normalized === 'SOL') return SettlementToken.SOL;
+    if (normalized === 'BTC') return SettlementToken.BTC;
+    return SettlementToken.USDC;
+  }
+
   private _resolveThorExpiry(raw: unknown): number {
     const parsed = Number(raw);
     if (Number.isFinite(parsed) && parsed > 0) return Math.floor(parsed);
     return Math.floor(Date.now() / 1000) + 120;
+  }
+
+  private _resolveLayerZeroValueTransferApiExpiry(raw: unknown, nowSeconds: number): number {
+    if (typeof raw === 'string' && raw.trim().length > 0) {
+      const parsed = Date.parse(raw);
+      if (Number.isFinite(parsed) && parsed > Date.now()) {
+        return Math.floor(parsed / 1000);
+      }
+    }
+    return nowSeconds + 120;
   }
 
   private _defaultAxelarDirectCanonicalAssetIds(): string[] {

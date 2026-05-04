@@ -170,6 +170,7 @@ export interface QuoteResult {
   // THORChain-specific
   thorAsset?:        string;    // e.g. "BTC.BTC", "SOL.SOL"
   minThorOutput?:    bigint;    // 8-decimal THORChain units
+  layerZeroValueTransferApiQuoteId?: string; // LayerZero Value Transfer API quote/transfer id
   nativeDstAddress?: string;    // User's BTC/SOL/DOGE address
   selectedByUser?:   boolean;   // true when intent came from explicit offer selection
 }
@@ -194,6 +195,7 @@ export type RailOfferType =
   | 'lz_oft_adapter'
   | 'lz_stargate_pool'
   | 'lz_stargate_oft'
+  | 'lz_api_direct'
   | 'thor_api_direct';
 
 export type DeliveryShape =

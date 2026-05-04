@@ -2,6 +2,8 @@ import { IntentService } from '../services/IntentService';
 import { CctpAttestationWorker } from '../services/CctpAttestationWorker';
 import { THORChainClient } from '../services/thorchain/THORChainClient';
 import { THORChainMonitorWorker } from '../services/thorchain/THORChainMonitorWorker';
+import { LayerZeroValueTransferApiClient } from '../services/layerzero/LayerZeroValueTransferApiClient';
+import { LayerZeroValueTransferApiMonitorWorker } from '../services/layerzero/LayerZeroValueTransferApiMonitorWorker';
 import { Rail } from '../types';
 import { getRailVariantLabel, RailVariantLabel } from './registry';
 
@@ -121,11 +123,50 @@ class THORChainRailExecutionAdapter implements RailExecutionAdapter<THORChainMon
   }
 }
 
+class LayerZeroValueTransferApiRailExecutionAdapter implements RailExecutionAdapter<LayerZeroValueTransferApiMonitorWorker> {
+  readonly rail = Rail.LAYERZERO;
+
+  async start(
+    context: RailExecutionContext,
+    options: RailExecutionOptions,
+  ): Promise<RailExecutionHandle<LayerZeroValueTransferApiMonitorWorker>> {
+    const enabled = options.enabled?.[Rail.LAYERZERO] ?? readBool('ENABLE_LAYERZERO_TRANSFER_API', false);
+    if (!enabled) {
+      return {
+        rail: this.rail,
+        mode: 'passive',
+        label: 'layerzero-value-transfer-api-disabled',
+        visualLabels: ['LAYERZERO'],
+        async stop() {
+          return;
+        },
+      };
+    }
+
+    const worker = new LayerZeroValueTransferApiMonitorWorker(
+      context.intentService,
+      new LayerZeroValueTransferApiClient(),
+    );
+    await worker.start();
+
+    return {
+      rail: this.rail,
+      mode: 'worker',
+      label: 'layerzero-value-transfer-api-monitor',
+      visualLabels: ['LAYERZERO'],
+      instance: worker,
+      async stop() {
+        worker.stop();
+      },
+    };
+  }
+}
+
 const DEFAULT_ADAPTERS: RailExecutionAdapter[] = [
   new CctpRailExecutionAdapter(),
   new THORChainRailExecutionAdapter(),
+  new LayerZeroValueTransferApiRailExecutionAdapter(),
   new PassiveRailExecutionAdapter(Rail.AXELAR, 'event-monitor'),
-  new PassiveRailExecutionAdapter(Rail.LAYERZERO, 'event-monitor'),
   new PassiveRailExecutionAdapter(Rail.VIA_LABS, 'event-monitor'),
   new PassiveRailExecutionAdapter(Rail.WORMHOLE, 'event-monitor'),
 ];

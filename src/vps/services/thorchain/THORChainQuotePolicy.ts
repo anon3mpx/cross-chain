@@ -107,7 +107,7 @@ export async function buildTHORChainQuoteRequestFromPair(
 }
 
 export function shouldCacheOfferSet(offerSet: OfferSet): boolean {
-  return offerSet.offers.every((offer) => offer.rail !== Rail.THORCHAIN);
+  return offerSet.offers.every((offer) => offer.executionMode !== 'provider_direct' && offer.rail !== Rail.THORCHAIN);
 }
 
 export function shouldReuseCachedOfferSet(offerSet: OfferSet): boolean {
@@ -115,7 +115,7 @@ export function shouldReuseCachedOfferSet(offerSet: OfferSet): boolean {
 }
 
 export function isQuoteCacheable(quote: QuoteResult): boolean {
-  return quote.rail !== Rail.THORCHAIN;
+  return quote.rail !== Rail.THORCHAIN && !quote.layerZeroValueTransferApiQuoteId;
 }
 
 async function resolveTHORChainAsset(chainId: number, token: string): Promise<ResolvedTHORChainAsset | null> {

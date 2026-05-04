@@ -11,6 +11,8 @@ import { RailSelector } from '../services/RailSelector';
 import { RecoveryEngine } from '../services/RecoveryEngine';
 import { THORChainMonitorWorker } from '../services/thorchain/THORChainMonitorWorker';
 import { THORChainQuoteWorker } from '../services/thorchain/THORChainQuoteWorker';
+import { LayerZeroValueTransferApiQuoteWorker } from '../services/layerzero/LayerZeroValueTransferApiQuoteWorker';
+import { LayerZeroValueTransferApiMonitorWorker } from '../services/layerzero/LayerZeroValueTransferApiMonitorWorker';
 import { createQuoteCacheFromEnv, QuoteCache } from '../cache/QuoteCache';
 import { registerDexQuoteAdapters } from '../bootstrap/dexAdapters';
 import { RailExecutionHandle, RailExecutionManager } from '../rails/execution';
@@ -35,6 +37,7 @@ export interface RuntimeContext {
   railExecutions: ReadonlyMap<Rail, RailExecutionHandle>;
   cctpRelayWorker?: CctpAttestationWorker;
   thorchainWorker?: THORChainMonitorWorker;
+  layerZeroValueTransferApiMonitorWorker?: LayerZeroValueTransferApiMonitorWorker;
   apiKeyManager?: ApiKeyManager;
   partnerApiRouter?: ReturnType<typeof buildPartnerAPI>;
   postgres?: PostgresIntentStore;
@@ -62,6 +65,7 @@ export async function buildRuntime(options: RuntimeOptions = {}): Promise<Runtim
   const enableThorchainWorker =
     options.railExecution?.[Rail.THORCHAIN] ?? envBool('ENABLE_THORCHAIN_WORKER', true);
   const enableThorchainQuoteWorker = envBool('ENABLE_THORCHAIN_QUOTE_WORKER', true);
+  const enableLayerZeroValueTransferApi = envBool('ENABLE_LAYERZERO_TRANSFER_API', false);
   const enableThorchainCanary = envBool('ENABLE_THORCHAIN_CANARY', false);
   const thorchainCanaryAllowlist = parseCsv(process.env.THORCHAIN_CANARY_ALLOWLIST);
   const enablePartnerApi = options.enablePartnerApi ?? envBool('ENABLE_PARTNER_API', false);
@@ -77,6 +81,9 @@ export async function buildRuntime(options: RuntimeOptions = {}): Promise<Runtim
         enableCanaryGuardrails: enableThorchainCanary,
         canaryAllowlist: thorchainCanaryAllowlist,
       })
+      : undefined,
+    layerZeroValueTransferApiQuoteWorker: enableLayerZeroValueTransferApi
+      ? new LayerZeroValueTransferApiQuoteWorker(undefined, { enabled: true })
       : undefined,
   });
   registerDexQuoteAdapters(quoteEngine, process.env);
@@ -116,10 +123,12 @@ export async function buildRuntime(options: RuntimeOptions = {}): Promise<Runtim
     enabled: {
       [Rail.CCTP]: options.railExecution?.[Rail.CCTP] ?? enableCctpRelay,
       [Rail.THORCHAIN]: enableThorchainWorker,
+      [Rail.LAYERZERO]: options.railExecution?.[Rail.LAYERZERO] ?? enableLayerZeroValueTransferApi,
     },
   });
   const cctpRelayWorker = railExecutionManager.getInstance<CctpAttestationWorker>(Rail.CCTP);
   const thorchainWorker = railExecutionManager.getInstance<THORChainMonitorWorker>(Rail.THORCHAIN);
+  const layerZeroValueTransferApiMonitorWorker = railExecutionManager.getInstance<LayerZeroValueTransferApiMonitorWorker>(Rail.LAYERZERO);
 
   const apiKeyManager = enablePartnerApi ? new ApiKeyManager() : undefined;
   const partnerApiRouter = apiKeyManager
@@ -139,6 +148,7 @@ export async function buildRuntime(options: RuntimeOptions = {}): Promise<Runtim
     railExecutions,
     cctpRelayWorker,
     thorchainWorker,
+    layerZeroValueTransferApiMonitorWorker,
     postgres,
     apiKeyManager,
     partnerApiRouter,
