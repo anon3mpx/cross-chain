@@ -7,9 +7,9 @@ import { ApiKeyManager, PartnerTier } from '../services/ApiKeyManager';
 import { IntentEngine } from '../services/IntentEngine';
 import { IntentService } from '../services/IntentService';
 import { QuoteEngine } from '../services/QuoteEngine';
-import { buildRouterIntegration } from '../services/IntentCalldataBuilder';
+import { buildSelectedOfferIntegration } from '../services/DirectRailIntegrationBuilder';
 import { Intent } from '../types';
-import { parseQuoteRequest, serializeQuote } from './quoteCodec';
+import { parseOfferSelection, parseQuoteRequest, serializeOfferSet, serializeQuote } from './quoteCodec';
 import { getRailVariantLabel } from '../rails/registry';
 
 export function buildPartnerAPI(
@@ -84,20 +84,76 @@ export function buildPartnerAPI(
       }
       if (!quoteReq.userAddress) return res.status(400).json({ error: 'userAddress required' });
 
+      const offerSet = await quoteEngine.getOffers(quoteReq);
+      if (!offerSet) {
+        return res.status(400).json({ error: 'NO_ROUTE', message: 'No route available for this chain pair and token combination' });
+      }
       const quote = await quoteEngine.getQuote(quoteReq);
-      if (!quote) return res.status(400).json({ error: 'NO_ROUTE', message: 'No route available for this chain pair and token combination' });
-
-      const intent = await intentService.createQuotedIntent(quote, quoteReq.userAddress, apiKey);
-      const { partnerRebate } = keyManager.splitFee(quote.feeAmountToken, check.partner);
-      const integration = await buildRouterIntegration(intent.intentId, quote, quoteReq.userAddress);
+      const bestFeeAmountToken = quote?.feeAmountToken ?? 0n;
+      const { partnerRebate } = keyManager.splitFee(bestFeeAmountToken, check.partner);
 
       res.json({
-        intentId:   intent.intentId,
-        quote: serializeQuote(quote),
+        offerSet: serializeOfferSet(offerSet),
+        ...(quote ? { quote: serializeQuote(quote) } : {}),
         partnerEarnings: {
           rebatePerTx:   partnerRebate.toString(),
           feeShareBps:   check.partner.feeShareBps,
           claimableNow:  keyManager.getRebateSummary(apiKey).totalUSDC,
+        },
+      });
+    } catch (err) {
+      const msg = String(err);
+      const code = msg.toLowerCase().includes('amountin')
+        || msg.toLowerCase().includes('payload')
+        || msg.toLowerCase().includes('calldata')
+        || msg.toLowerCase().includes('routerv1')
+        ? 400
+        : 500;
+      res.status(code).json({ error: code === 400 ? 'INVALID_REQUEST' : 'INTERNAL', message: msg });
+    }
+  });
+
+  router.post('/quote/select', async (req: Request, res: Response) => {
+    const apiKey = (req as any).apiKey;
+    const check  = keyManager.validateKey(apiKey);
+    if (!check.allowed) {
+      return res.status(401).json({ error: check.reason });
+    }
+
+    try {
+      const { offerSetId, offerId } = parseOfferSelection(req.body);
+      const userAddress = typeof req.body?.userAddress === 'string' ? req.body.userAddress.trim() : '';
+      if (!userAddress) return res.status(400).json({ error: 'userAddress required' });
+
+      const selection = await quoteEngine.selectOffer(offerSetId, offerId);
+      if (!selection.offer) {
+        if (selection.fallbackOfferSet) {
+          return res.status(409).json({
+            error: 'OFFER_UNAVAILABLE',
+            message: 'Selected offer is unavailable. Please select a fallback offer.',
+            fallbackOfferSet: serializeOfferSet(selection.fallbackOfferSet),
+          });
+        }
+        return res.status(404).json({
+          error: selection.reason ?? 'OFFER_NOT_FOUND',
+          message: 'Offer selection is unavailable or expired.',
+        });
+      }
+
+      const intent = await intentService.createQuotedIntentFromOffer(selection.offer, userAddress, apiKey);
+      const { partnerRebate } = keyManager.splitFee(intent.quote.feeAmountToken, check.partner);
+      const selectedIntegration = await buildSelectedOfferIntegration(intent.intentId, selection.offer, userAddress);
+      const integration = selectedIntegration.mode === 'router_intent'
+        ? selectedIntegration.integration
+        : selectedIntegration;
+
+      res.json({
+        intentId: intent.intentId,
+        quote: serializeQuote(intent.quote),
+        partnerEarnings: {
+          rebatePerTx: partnerRebate.toString(),
+          feeShareBps: check.partner.feeShareBps,
+          claimableNow: keyManager.getRebateSummary(apiKey).totalUSDC,
         },
         integration,
       });

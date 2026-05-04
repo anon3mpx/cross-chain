@@ -22,6 +22,18 @@ import {LayerZeroReceiverAdapter} from "src/contracts/rails/LayerZeroReceiverAda
 /// @notice Post-deployment configuration script.
 /// @dev Run this repeatedly as you add routes/chains. Every config block is opt-in by env flag.
 contract ConfigureAll is ScriptBase {
+    bytes4 private constant AXELAR_SET_CHAIN_CONFIG_SELECTOR =
+        bytes4(keccak256("setChainConfig(uint32,string,address)"));
+    bytes4 private constant AXELAR_SET_ROUTE_CONFIG_WITH_ASSET_ID_SELECTOR =
+        bytes4(keccak256("setRouteConfigWithAssetId(string,uint32,address)"));
+    bytes4 private constant AXELAR_SET_ROUTE_CONFIG_LEGACY_SELECTOR =
+        bytes4(keccak256("setRouteConfig(uint32,string,address,bytes32)"));
+
+    bytes4 private constant LZ_SET_FAMILY_ROUTE_CONFIG_SELECTOR =
+        bytes4(keccak256("setFamilyRouteConfig(uint32,uint8,uint32,address,bytes)"));
+    bytes4 private constant LZ_SET_ROUTE_CONFIG_LEGACY_SELECTOR =
+        bytes4(keccak256("setRouteConfig(uint32,uint32,address,bytes)"));
+
     function run() external {
         uint256 deployerPk = vm.envUint("DEPLOYER_PRIVATE_KEY");
 
@@ -159,9 +171,47 @@ contract ConfigureAll is ScriptBase {
         uint32 dstChainId = uint32(vm.envUint("AXELAR_ROUTE_CHAIN_ID"));
         string memory chainName = vm.envString("AXELAR_ROUTE_NAME");
         address dstReceiver = vm.envAddress("AXELAR_ROUTE_RECEIVER");
-        bytes32 tokenId = vm.envBytes32("AXELAR_ROUTE_TOKEN_ID");
+        bytes32 routeTokenId = vm.envOr("AXELAR_ROUTE_TOKEN_ID", bytes32(0));
+        bool ok;
+        bytes memory reason;
 
-        AxelarRailPlugin(pluginAddr).setRouteConfig(dstChainId, chainName, dstReceiver, tokenId);
+        if (_hasSelector(pluginAddr, AXELAR_SET_CHAIN_CONFIG_SELECTOR)) {
+            (ok, reason) = pluginAddr.call(
+                abi.encodeWithSelector(
+                    AXELAR_SET_CHAIN_CONFIG_SELECTOR,
+                    dstChainId,
+                    chainName,
+                    dstReceiver
+                )
+            );
+            if (!ok) _revertWithReason(reason, "AXELAR_SET_CHAIN_CONFIG_FAILED");
+            return;
+        }
+
+        if (_hasSelector(pluginAddr, AXELAR_SET_ROUTE_CONFIG_WITH_ASSET_ID_SELECTOR)) {
+            (ok, reason) = pluginAddr.call(
+                abi.encodeWithSelector(
+                    AXELAR_SET_ROUTE_CONFIG_WITH_ASSET_ID_SELECTOR,
+                    chainName,
+                    dstChainId,
+                    dstReceiver
+                )
+            );
+            if (!ok) _revertWithReason(reason, "AXELAR_SET_ROUTE_CONFIG_WITH_ASSET_ID_FAILED");
+            return;
+        }
+
+        if (routeTokenId == bytes32(0)) revert("AXELAR_ROUTE_TOKEN_ID required for legacy Axelar plugin");
+        (ok, reason) = pluginAddr.call(
+            abi.encodeWithSelector(
+                AXELAR_SET_ROUTE_CONFIG_LEGACY_SELECTOR,
+                dstChainId,
+                chainName,
+                dstReceiver,
+                routeTokenId
+            )
+        );
+        if (!ok) _revertWithReason(reason, "AXELAR_SET_ROUTE_CONFIG_LEGACY_FAILED");
     }
 
     function _configureLayerZeroRoutes() internal {
@@ -172,8 +222,36 @@ contract ConfigureAll is ScriptBase {
         uint32 dstEid = uint32(vm.envUint("LZ_ROUTE_EID"));
         address dstReceiver = vm.envAddress("LZ_ROUTE_RECEIVER");
         bytes memory sendOptions = vm.envOr("LZ_ROUTE_OPTIONS", bytes(""));
+        string memory familyValue = vm.envOr("LZ_ROUTE_FAMILY", string("lz_oft"));
+        uint8 family = _layerZeroFamilyFromValue(familyValue);
+        bool ok;
+        bytes memory reason;
 
-        LayerZeroRailPlugin(pluginAddr).setRouteConfig(dstChainId, dstEid, dstReceiver, sendOptions);
+        if (_hasSelector(pluginAddr, LZ_SET_FAMILY_ROUTE_CONFIG_SELECTOR)) {
+            (ok, reason) = pluginAddr.call(
+                abi.encodeWithSelector(
+                    LZ_SET_FAMILY_ROUTE_CONFIG_SELECTOR,
+                    dstChainId,
+                    family,
+                    dstEid,
+                    dstReceiver,
+                    sendOptions
+                )
+            );
+            if (!ok) _revertWithReason(reason, "LZ_SET_FAMILY_ROUTE_CONFIG_FAILED");
+            return;
+        }
+
+        (ok, reason) = pluginAddr.call(
+            abi.encodeWithSelector(
+                LZ_SET_ROUTE_CONFIG_LEGACY_SELECTOR,
+                dstChainId,
+                dstEid,
+                dstReceiver,
+                sendOptions
+            )
+        );
+        if (!ok) _revertWithReason(reason, "LZ_SET_ROUTE_CONFIG_LEGACY_FAILED");
     }
 
     function _configureThor() internal {
@@ -217,17 +295,33 @@ contract ConfigureAll is ScriptBase {
     }
 
     function _configureLayerZeroAdapter() internal {
-        if (!vm.envOr("LZ_ADAPTER_SET_TRUSTED_PEER", false)) return;
+        bool setTrustedPeer = vm.envOr("LZ_ADAPTER_SET_TRUSTED_PEER", false);
+        bool setAsset = vm.envOr("LZ_ADAPTER_SET_ASSET", false);
+        if (!setTrustedPeer && !setAsset) return;
 
         address adapterAddr = vm.envAddress("LZ_ADAPTER");
-        uint32 srcEid = uint32(vm.envUint("LZ_SOURCE_EID"));
+        LayerZeroReceiverAdapter adapter = LayerZeroReceiverAdapter(adapterAddr);
 
-        address srcPeerAddress = vm.envOr("LZ_SOURCE_PEER_ADDRESS", address(0));
-        if (srcPeerAddress != address(0)) {
-            LayerZeroReceiverAdapter(adapterAddr).setTrustedPeerAddress(srcEid, srcPeerAddress);
-        } else {
-            bytes32 srcPeer = vm.envBytes32("LZ_SOURCE_PEER");
-            LayerZeroReceiverAdapter(adapterAddr).setTrustedPeer(srcEid, srcPeer);
+        if (setTrustedPeer) {
+            uint32 srcEid = uint32(vm.envUint("LZ_SOURCE_EID"));
+
+            address srcPeerAddress = vm.envOr("LZ_SOURCE_PEER_ADDRESS", address(0));
+            if (srcPeerAddress != address(0)) {
+                adapter.setTrustedPeerAddress(srcEid, srcPeerAddress);
+            } else {
+                bytes32 srcPeer = vm.envBytes32("LZ_SOURCE_PEER");
+                adapter.setTrustedPeer(srcEid, srcPeer);
+            }
+        }
+
+        if (setAsset) {
+            uint32 srcEid = uint32(vm.envUint("LZ_SOURCE_EID"));
+            address settlementToken = vm.envAddress("LZ_SETTLEMENT_TOKEN");
+            address composeSender = vm.envAddress("LZ_COMPOSE_SENDER");
+            bytes32 settlementAssetId = _routeAssetId(settlementToken);
+
+            adapter.setSettlementToken(settlementAssetId, settlementToken);
+            adapter.setExpectedComposeSender(srcEid, settlementAssetId, composeSender);
         }
     }
 
@@ -279,6 +373,48 @@ contract ConfigureAll is ScriptBase {
         if (caller == address(0)) return;
         receiver.addApprovedCaller(caller);
         emit ScriptLogAddress("ReceiverApprovedCaller", caller);
+    }
+
+    function _routeAssetId(address token) internal view returns (bytes32) {
+        _nonZero(token, "route token is required");
+        return keccak256(abi.encode(block.chainid, token));
+    }
+
+    function _layerZeroFamilyFromValue(string memory family) internal pure returns (uint8) {
+        bytes32 familyHash = keccak256(bytes(family));
+        if (familyHash == keccak256("lz_oft")) return 0;
+        if (familyHash == keccak256("lz_oft_adapter")) return 1;
+        if (familyHash == keccak256("lz_stargate_pool")) return 2;
+        if (familyHash == keccak256("lz_stargate_oft")) return 3;
+        revert("unknown LayerZero family");
+    }
+
+    function _revertWithReason(bytes memory revertData, string memory fallbackMessage) internal pure {
+        if (revertData.length == 0) revert(fallbackMessage);
+        assembly {
+            revert(add(revertData, 0x20), mload(revertData))
+        }
+    }
+
+    function _hasSelector(address target, bytes4 selector) internal view returns (bool) {
+        bytes memory code = target.code;
+        bytes memory selectorBytes = abi.encodePacked(selector);
+        if (code.length < selectorBytes.length) return false;
+
+        unchecked {
+            for (uint256 i = 0; i <= code.length - selectorBytes.length; i++) {
+                if (
+                    code[i] == selectorBytes[0]
+                        && code[i + 1] == selectorBytes[1]
+                        && code[i + 2] == selectorBytes[2]
+                        && code[i + 3] == selectorBytes[3]
+                ) {
+                    return true;
+                }
+            }
+        }
+
+        return false;
     }
 }
 

@@ -9,6 +9,8 @@ import { IntentService } from '../services/IntentService';
 import { QuoteEngine } from '../services/QuoteEngine';
 import { RailSelector } from '../services/RailSelector';
 import { RecoveryEngine } from '../services/RecoveryEngine';
+import { THORChainMonitorWorker } from '../services/thorchain/THORChainMonitorWorker';
+import { THORChainQuoteWorker } from '../services/thorchain/THORChainQuoteWorker';
 import { createQuoteCacheFromEnv, QuoteCache } from '../cache/QuoteCache';
 import { registerDexQuoteAdapters } from '../bootstrap/dexAdapters';
 import { RailExecutionHandle, RailExecutionManager } from '../rails/execution';
@@ -32,6 +34,7 @@ export interface RuntimeContext {
   railExecutionManager: RailExecutionManager;
   railExecutions: ReadonlyMap<Rail, RailExecutionHandle>;
   cctpRelayWorker?: CctpAttestationWorker;
+  thorchainWorker?: THORChainMonitorWorker;
   apiKeyManager?: ApiKeyManager;
   partnerApiRouter?: ReturnType<typeof buildPartnerAPI>;
   postgres?: PostgresIntentStore;
@@ -56,6 +59,11 @@ export async function buildRuntime(options: RuntimeOptions = {}): Promise<Runtim
   const enableEventMonitor = options.enableEventMonitor ?? envBool('ENABLE_EVENT_MONITOR', false);
   const enableRecovery = options.enableRecovery ?? envBool('ENABLE_RECOVERY_ENGINE', false);
   const enableCctpRelay = options.enableCctpRelay ?? envBool('ENABLE_CCTP_RELAY', false);
+  const enableThorchainWorker =
+    options.railExecution?.[Rail.THORCHAIN] ?? envBool('ENABLE_THORCHAIN_WORKER', true);
+  const enableThorchainQuoteWorker = envBool('ENABLE_THORCHAIN_QUOTE_WORKER', true);
+  const enableThorchainCanary = envBool('ENABLE_THORCHAIN_CANARY', false);
+  const thorchainCanaryAllowlist = parseCsv(process.env.THORCHAIN_CANARY_ALLOWLIST);
   const enablePartnerApi = options.enablePartnerApi ?? envBool('ENABLE_PARTNER_API', false);
   const enablePostgres = options.enablePostgres ?? shouldEnablePostgres();
 
@@ -63,7 +71,14 @@ export async function buildRuntime(options: RuntimeOptions = {}): Promise<Runtim
   const postgres = enablePostgres ? createPostgresIntentStore() : undefined;
   const intentService = new IntentService(intentEngine, postgres?.repo);
   const quoteCache: QuoteCache = await createQuoteCacheFromEnv(process.env);
-  const quoteEngine = new QuoteEngine(quoteCache);
+  const quoteEngine = new QuoteEngine(quoteCache, {
+    thorchainQuoteWorker: enableThorchainQuoteWorker
+      ? new THORChainQuoteWorker(undefined, {
+        enableCanaryGuardrails: enableThorchainCanary,
+        canaryAllowlist: thorchainCanaryAllowlist,
+      })
+      : undefined,
+  });
   registerDexQuoteAdapters(quoteEngine, process.env);
 
   const rails = new RailSelector();
@@ -100,9 +115,11 @@ export async function buildRuntime(options: RuntimeOptions = {}): Promise<Runtim
   const railExecutions = await railExecutionManager.startAll({
     enabled: {
       [Rail.CCTP]: options.railExecution?.[Rail.CCTP] ?? enableCctpRelay,
+      [Rail.THORCHAIN]: enableThorchainWorker,
     },
   });
   const cctpRelayWorker = railExecutionManager.getInstance<CctpAttestationWorker>(Rail.CCTP);
+  const thorchainWorker = railExecutionManager.getInstance<THORChainMonitorWorker>(Rail.THORCHAIN);
 
   const apiKeyManager = enablePartnerApi ? new ApiKeyManager() : undefined;
   const partnerApiRouter = apiKeyManager
@@ -121,6 +138,7 @@ export async function buildRuntime(options: RuntimeOptions = {}): Promise<Runtim
     railExecutionManager,
     railExecutions,
     cctpRelayWorker,
+    thorchainWorker,
     postgres,
     apiKeyManager,
     partnerApiRouter,
@@ -152,4 +170,13 @@ export async function buildRuntime(options: RuntimeOptions = {}): Promise<Runtim
       }
     },
   };
+}
+
+function parseCsv(value: string | undefined): string[] | undefined {
+  if (!value) return undefined;
+  const parsed = value
+    .split(',')
+    .map((entry) => entry.trim())
+    .filter((entry) => entry.length > 0);
+  return parsed.length > 0 ? parsed : undefined;
 }

@@ -23,12 +23,17 @@ contract MockUSDC is ERC20 {
 }
 
 contract MockRailPlugin is ERC165, IRailPlugin {
-    IERC20 public immutable settlementToken;
+    IERC20 public immutable routeToken;
     bytes32 public lastIntentId;
     uint256 public lastAmount;
+    bytes32 public lastRouteAssetId;
+    address public lastExpectedDstRouteToken;
+    bytes32 public lastExpectedDstRouteAssetId;
+    uint256 public lastMinRouteAmount;
+    bytes public lastDstCalldata;
 
-    constructor(address settlementToken_) {
-        settlementToken = IERC20(settlementToken_);
+    constructor(address routeToken_) {
+        routeToken = IERC20(routeToken_);
     }
 
     function railId() external pure returns (bytes32) {
@@ -39,22 +44,26 @@ contract MockRailPlugin is ERC165, IRailPlugin {
         return true;
     }
 
-    function settlementTokenAddress(uint8) external view returns (address) {
-        return address(settlementToken);
-    }
-
-    function supportsSettlementToken(uint8 settlementTokenType) external pure returns (bool) {
-        return settlementTokenType == uint8(IntentTypes.SettlementToken.USDC);
-    }
-
-    function estimateFee(uint32, uint256, uint8) external pure returns (uint256 fee, uint256 eta) {
+    function estimateFee(
+        uint32,
+        uint256,
+        address,
+        bytes32,
+        uint256,
+        bytes calldata
+    ) external pure returns (uint256 fee, uint256 eta) {
         return (0, 60);
     }
 
     function bridge(IntentTypes.BridgeParams calldata params) external payable returns (bytes32 railTxId) {
-        settlementToken.transferFrom(msg.sender, address(this), params.amount);
+        routeToken.transferFrom(msg.sender, address(this), params.amount);
         lastIntentId = params.intentId;
         lastAmount = params.amount;
+        lastRouteAssetId = params.routeAssetId;
+        lastExpectedDstRouteToken = params.expectedDstRouteToken;
+        lastExpectedDstRouteAssetId = params.expectedDstRouteAssetId;
+        lastMinRouteAmount = params.minRouteAmount;
+        lastDstCalldata = params.dstCalldata;
         return keccak256(abi.encodePacked(params.intentId, params.amount));
     }
 
@@ -103,6 +112,59 @@ contract RouterV1Test {
 
         _assertEq(railPlugin.lastIntentId(), intent.intentId, "intent id mismatch");
         _assertEq(railPlugin.lastAmount(), intent.amountIn - intent.feeAmount, "bridged amount mismatch");
+        _assertEq(railPlugin.lastRouteAssetId(), intent.routeAssetId, "route asset id mismatch");
+        _assertEq(
+            railPlugin.lastExpectedDstRouteToken(),
+            intent.expectedDstRouteToken,
+            "expected dst route token mismatch"
+        );
+        _assertEq(
+            railPlugin.lastExpectedDstRouteAssetId(),
+            intent.expectedDstRouteAssetId,
+            "expected dst route asset id mismatch"
+        );
+        _assertEq(
+            railPlugin.lastMinRouteAmount(),
+            intent.minRouteAmount,
+            "min route amount mismatch"
+        );
+
+        (
+            bytes32 payloadIntentId,
+            address payloadUser,
+            address payloadTokenOut,
+            uint256 payloadMinAmountOut,
+            address payloadExpectedDstRouteToken,
+            bytes32 payloadExpectedDstRouteAssetId,
+            uint256 payloadMinRouteAmount,
+            bytes memory payloadSwapData,
+            bytes32 payloadSwapPluginId
+        ) = abi.decode(
+            railPlugin.lastDstCalldata(),
+            (bytes32, address, address, uint256, address, bytes32, uint256, bytes, bytes32)
+        );
+
+        _assertEq(payloadIntentId, intent.intentId, "payload intent id mismatch");
+        _assertEq(payloadUser, intent.user, "payload user mismatch");
+        _assertEq(payloadTokenOut, intent.tokenOut, "payload token out mismatch");
+        _assertEq(payloadMinAmountOut, intent.minAmountOut, "payload min amount out mismatch");
+        _assertEq(
+            payloadExpectedDstRouteToken,
+            intent.expectedDstRouteToken,
+            "payload expected route token mismatch"
+        );
+        _assertEq(
+            payloadExpectedDstRouteAssetId,
+            intent.expectedDstRouteAssetId,
+            "payload expected route asset id mismatch"
+        );
+        _assertEq(
+            payloadMinRouteAmount,
+            intent.minRouteAmount,
+            "payload min route amount mismatch"
+        );
+        _assertEq(payloadSwapData, intent.swapDataDst, "payload swap data mismatch");
+        _assertEq(payloadSwapPluginId, intent.dstSwapPluginId, "payload swap plugin mismatch");
         _assertTrue(router.executedIntents(intent.intentId), "intent not marked executed");
     }
 
@@ -134,14 +196,19 @@ contract RouterV1Test {
         intent.minSrcSwapOut = 0;
         intent.dstChainId = 84532;
         intent.rail = uint8(IntentTypes.Rail.CCTP);
-        intent.settlementToken = uint8(IntentTypes.SettlementToken.USDC);
+        intent.routeToken = address(usdc);
         intent.feeAmount = 1e6;
+        intent.routeAssetId = keccak256("USDC.BASE");
+        intent.expectedDstRouteToken = address(usdc);
+        intent.expectedDstRouteAssetId = keccak256("USDC.ARB");
+        intent.minRouteAmount = 99e6;
         intent.swapDataSrc = bytes("");
         intent.swapDataDst = bytes("");
         intent.swapPluginIdSrc = bytes32(0);
         intent.dstSwapPluginId = bytes32(0);
         intent.railPluginId = MOCK_RAIL_ID;
         intent.railData = bytes("");
+        intent.dstGasLimit = 200_000;
         intent.dstReceiver = address(0x3003);
         intent.nativeDstAddress = bytes("");
         intent.thorAssetIdentifier = "";
@@ -162,6 +229,14 @@ contract RouterV1Test {
 
     function _assertEq(bytes32 a, bytes32 b, string memory err) internal pure {
         require(a == b, err);
+    }
+
+    function _assertEq(address a, address b, string memory err) internal pure {
+        require(a == b, err);
+    }
+
+    function _assertEq(bytes memory a, bytes memory b, string memory err) internal pure {
+        require(keccak256(a) == keccak256(b), err);
     }
 
     function _assertTrue(bool ok, string memory err) internal pure {

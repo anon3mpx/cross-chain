@@ -13,6 +13,7 @@ export enum SettlementToken {
 export enum Rail {
   // ── Messaging rails (bridge-based, ReceiverV1 on destination) ─────────────
   CCTP      = 'CCTP',       // Free, native USDC, ~25s. EVM + Solana.
+  CCTP_FAST = 'CCTP_FAST',  // $5-10, native USDC, ~15s. EVM only, CCTP fast liquidity pool.
   AXELAR    = 'AXELAR',     // $0.50, 60+ chains, GMP + tokens
   LAYERZERO = 'LAYERZERO',  // $0.35, 80+ chains, configurable DVN
   VIA_LABS  = 'VIA_LABS',   // $0.25, 30+ chains, API-first
@@ -24,7 +25,7 @@ export enum Rail {
 
 // ── Rail category helpers ──────────────────────────────────────────────────────
 export const LIQUIDITY_RAILS = new Set([Rail.THORCHAIN]);
-export const MESSAGING_RAILS = new Set([Rail.CCTP, Rail.AXELAR, Rail.LAYERZERO, Rail.VIA_LABS, Rail.WORMHOLE]);
+export const MESSAGING_RAILS = new Set([Rail.CCTP, Rail.CCTP_FAST, Rail.AXELAR, Rail.LAYERZERO, Rail.VIA_LABS, Rail.WORMHOLE]);
 
 // ── Non-EVM pseudo chain IDs (used internally, never on-chain) ────────────────
 export const CHAIN_ID = {
@@ -102,7 +103,6 @@ export interface ChainConfig {
   rpcUrl:        string;
   rpcFallback:   string;
   routerV1?:     string;    // RouterV1 contract address (EVM only)
-  routerV1Abi:   'legacy' | 'current';
   receiverV1?:   string;    // ReceiverV1 contract address (EVM only, messaging rails only)
   hasAggregator: boolean;
   nativeStable:  SettlementToken;
@@ -153,6 +153,12 @@ export interface QuoteResult {
   rail:              Rail;
   railType:          'messaging' | 'liquidity';
   settlementToken:   SettlementToken;
+  routeAsset?:       RouteAssetRef;
+  settlementAssetId: string;    // bytes32-like provider/canonical asset id for source settlement
+  expectedDstSettlementToken: string; // destination settlement token expected by ReceiverV1
+  expectedDstSettlementAssetId: string; // bytes32-like expected destination settlement asset id
+  minSettlementAmount: bigint;  // min settlement amount required before destination execution
+  dstGasLimit:        number;   // destination execution gas budget for messaging rails
   etaSeconds:        number;
   expiresAt:         number;
   railPluginId:      string;
@@ -165,6 +171,80 @@ export interface QuoteResult {
   thorAsset?:        string;    // e.g. "BTC.BTC", "SOL.SOL"
   minThorOutput?:    bigint;    // 8-decimal THORChain units
   nativeDstAddress?: string;    // User's BTC/SOL/DOGE address
+  selectedByUser?:   boolean;   // true when intent came from explicit offer selection
+}
+
+export interface ProviderAssetRef {
+  canonicalAssetId: string;
+  providerAssetId: string;
+  tokenAddress?: string;
+  srcTokenAddress?: string;
+  dstTokenAddress?: string;
+  decimals: number;
+  assetKind: 'erc20' | 'native' | 'btc' | 'sol' | 'doge' | 'cosmos';
+  assetStandard?: 'erc20' | 'native' | 'oft' | 'oft_adapter' | 'stargate_pool' | 'stargate_oft' | 'thor_native';
+}
+
+export type RailOfferType =
+  | 'cctp_standard'
+  | 'cctp_fast'
+  | 'axelar_direct'
+  | 'axelar_dst_swap'
+  | 'lz_oft'
+  | 'lz_oft_adapter'
+  | 'lz_stargate_pool'
+  | 'lz_stargate_oft'
+  | 'thor_api_direct';
+
+export type DeliveryShape =
+  | 'direct'
+  | 'src_swap_required'
+  | 'dst_swap_required'
+  | 'src_and_dst_swap_required';
+
+export type ExecutionMode = 'router_intent' | 'provider_direct';
+
+export type RouteAssetRef = ProviderAssetRef;
+
+export interface OfferEconomics {
+  providerFeeUSD: number;
+  protocolFeeUSD: number;
+  sourceGasUSD: number;
+  destinationGasUSD?: number;
+  outboundFeeUSD?: number;
+  slippageBps?: number;
+  priceImpactPct?: number;
+  settlementTimeSeconds: number;
+  minimumInput?: string;
+}
+
+export interface RailOffer {
+  offerId: string;
+  rail: Rail;
+  offerType?: RailOfferType;
+  railType: 'messaging' | 'liquidity';
+  srcChainId: number;
+  dstChainId: number;
+  tokenIn: string;
+  tokenOut: string;
+  amountIn: bigint;
+  estimatedOut: bigint;
+  minAmountOut: bigint;
+  expiresAt: number;
+  deliveryShape?: DeliveryShape;
+  executionMode?: ExecutionMode;
+  routeAsset?: RouteAssetRef;
+  sourceSettlementAsset: ProviderAssetRef;
+  destinationSettlementAsset: ProviderAssetRef;
+  economics: OfferEconomics;
+  execution: Record<string, unknown>;
+}
+
+export interface OfferSet {
+  offerSetId: string;
+  expiresAt: number;
+  offers: RailOffer[];
+  bestOfferId?: string;
 }
 
 export interface Intent {
@@ -208,6 +288,7 @@ export interface RailScore {
   rail:              Rail;
   config:            RailConfig;
   score:             number;
+  routeAssetAlias:   string;
   settlementToken:   SettlementToken;
   requiresTokenHop:  boolean;
 }
@@ -234,6 +315,7 @@ export interface Hop {
   rail:               Rail;
   srcChainId:         number;
   dstChainId:         number;
+  routeAssetAlias:    string;
   /** Settlement token entering this bridge leg (output of prior hop or src swap). */
   settlementTokenIn:  SettlementToken;
   /** Settlement token exiting this bridge leg (may differ if hub has aggregator). */

@@ -1,20 +1,24 @@
 {
   "openapi": "3.0.3",
   "info": {
-    "title": "Empx Cross-chain VPS Public API",
+    "title": "Empx Cross-chain VPS API",
     "version": "1.0.0",
-    "description": "OpenAPI definition for the public Empx Cross-chain VPS HTTP API exposed by src/vps/api/StatusAPI.ts. Partner-specific endpoints under /partner are intentionally excluded."
+    "description": "OpenAPI definition for non-partner VPS HTTP endpoints exposed by StatusAPI and AdminAPI. Endpoints under /partner are intentionally excluded."
   },
   "servers": [
     {
       "url": "http://localhost:8787",
-      "description": "Default local Docker/API port from config/docker/docker-compose.testnet.yml"
+      "description": "Default local VPS API host/port"
     }
   ],
   "tags": [
     {
       "name": "Public",
-      "description": "Unauthenticated public status and quote endpoints"
+      "description": "Unauthenticated quote, intent, and health endpoints"
+    },
+    {
+      "name": "Admin",
+      "description": "Admin endpoints protected by x-admin-key"
     }
   ],
   "paths": {
@@ -23,9 +27,9 @@
         "tags": [
           "Public"
         ],
-        "operationId": "createQuote",
-        "summary": "Create a swap quote and intent",
-        "description": "Returns a quote, a pre-created intent ID, and RouterV1 integration calldata for the user transaction.",
+        "operationId": "createOfferSetQuote",
+        "summary": "Create quote offers",
+        "description": "Returns an offer set and optionally a legacy top-level quote snapshot.",
         "requestBody": {
           "required": true,
           "content": {
@@ -38,11 +42,11 @@
         },
         "responses": {
           "200": {
-            "description": "Quote created",
+            "description": "Quote offers created",
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/QuoteResponse"
+                  "$ref": "#/components/schemas/QuoteOfferSetResponse"
                 }
               }
             }
@@ -68,7 +72,89 @@
             }
           },
           "503": {
-            "description": "Router calldata could not be prepared",
+            "description": "Temporary quote/unavailable condition",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/quote/select": {
+      "post": {
+        "tags": [
+          "Public"
+        ],
+        "operationId": "selectQuoteOffer",
+        "summary": "Select offer and build integration",
+        "description": "Selects one offer from an offer set and returns intentId, quote, and executable integration payload.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/QuoteSelectRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Offer selected and integration prepared",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/QuoteSelectResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid selection payload",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Offer or offer set unavailable/expired",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Selected offer unavailable with fallback candidates",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OfferUnavailableResponse"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Rate limit exceeded",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Integration/calldata generation unavailable",
             "content": {
               "application/json": {
                 "schema": {
@@ -87,13 +173,12 @@
         ],
         "operationId": "getIntentStatus",
         "summary": "Get intent status",
-        "description": "Returns the current status and transaction identifiers for an intent.",
         "parameters": [
           {
             "name": "id",
             "in": "path",
             "required": true,
-            "description": "Intent ID returned by POST /quote.",
+            "description": "Intent ID",
             "schema": {
               "$ref": "#/components/schemas/IntentId"
             }
@@ -111,7 +196,7 @@
             }
           },
           "404": {
-            "description": "Intent was not found",
+            "description": "Intent not found",
             "content": {
               "application/json": {
                 "schema": {
@@ -129,6 +214,291 @@
                 }
               }
             }
+          },
+          "503": {
+            "description": "Status backend unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/intent/{id}/submitted": {
+      "post": {
+        "tags": [
+          "Public"
+        ],
+        "operationId": "markIntentSubmitted",
+        "summary": "Mark intent as submitted",
+        "description": "Requires a signed wallet message and source transaction hash.",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/IntentId"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/IntentSubmittedRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "202": {
+            "description": "Intent updated",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/IntentStatusResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid payload",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorWithMessageResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Invalid or expired signature",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorWithMessageResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Intent not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorWithMessageResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Intent state conflict",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorWithMessageResponse"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Unexpected server error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorWithMessageResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/intent/{id}/cancel": {
+      "post": {
+        "tags": [
+          "Public"
+        ],
+        "operationId": "cancelIntent",
+        "summary": "Cancel intent",
+        "description": "Cancels a quote-stage intent or records wallet-level cancellation for submitted intents.",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/IntentId"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/IntentCancelRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Intent updated",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/IntentStatusResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid payload",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorWithMessageResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Invalid or expired signature",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorWithMessageResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Intent not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorWithMessageResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Cancellation conflict (wallet replacement tx flow)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorWithMessageResponse"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Unexpected server error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorWithMessageResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/intent/{id}/refund": {
+      "post": {
+        "tags": [
+          "Public"
+        ],
+        "operationId": "requestIntentRefund",
+        "summary": "Request refund review",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/IntentId"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/IntentRefundRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "202": {
+            "description": "Refund review requested",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RefundRequestResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid payload",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorWithMessageResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Invalid or expired signature",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorWithMessageResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Intent not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorWithMessageResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Refund review not allowed for current intent status",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorWithMessageResponse"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Unexpected server error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorWithMessageResponse"
+                }
+              }
+            }
           }
         }
       }
@@ -140,10 +510,9 @@
         ],
         "operationId": "getHealth",
         "summary": "Get API health",
-        "description": "Returns process health and intent counts grouped by status.",
         "responses": {
           "200": {
-            "description": "API health",
+            "description": "Health payload",
             "content": {
               "application/json": {
                 "schema": {
@@ -164,13 +533,93 @@
           }
         }
       }
+    },
+    "/admin/intents/{id}/refund": {
+      "post": {
+        "tags": [
+          "Admin"
+        ],
+        "operationId": "adminUpdateIntentRefund",
+        "summary": "Admin refund case update",
+        "description": "Updates refund case fields for an intent. Requires x-admin-key header.",
+        "parameters": [
+          {
+            "name": "x-admin-key",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/IntentId"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AdminRefundUpdateRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Refund case updated",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AdminRefundUpdateResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid admin payload",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorWithMessageResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized admin key",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Unexpected server error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorWithMessageResponse"
+                }
+              }
+            }
+          }
+        }
+      }
     }
   },
   "components": {
     "schemas": {
       "Address": {
         "type": "string",
-        "description": "EVM address or token identifier accepted by the VPS quote engine."
+        "description": "Address-like token/user field accepted by the VPS."
       },
       "BigIntString": {
         "type": "string",
@@ -192,6 +641,7 @@
         "type": "string",
         "enum": [
           "CCTP",
+          "CCTP_FAST",
           "AXELAR",
           "LAYERZERO",
           "VIA_LABS",
@@ -221,6 +671,7 @@
         "enum": [
           "CREATED",
           "QUOTED",
+          "CANCELLED",
           "SUBMITTED",
           "IN_TRANSIT",
           "DESTINATION_RECEIVED",
@@ -228,6 +679,40 @@
           "STUCK",
           "RECOVERING",
           "FAILED"
+        ]
+      },
+      "RefundCaseStatus": {
+        "type": "string",
+        "enum": [
+          "REQUESTED",
+          "UNDER_REVIEW",
+          "APPROVED",
+          "REJECTED",
+          "PROCESSING",
+          "COMPLETED"
+        ]
+      },
+      "RefundCustodyLocation": {
+        "type": "string",
+        "enum": [
+          "UNKNOWN",
+          "ROUTER",
+          "RECEIVER",
+          "AXELAR_ADAPTER",
+          "LAYERZERO_ADAPTER",
+          "THORCHAIN_ROUTER",
+          "CCTP_PROTOCOL",
+          "AXELAR_PROTOCOL",
+          "LAYERZERO_PROTOCOL",
+          "EXTERNAL_PROTOCOL"
+        ]
+      },
+      "RefundResolutionKind": {
+        "type": "string",
+        "enum": [
+          "ONCHAIN_RESCUE",
+          "OFFCHAIN_COMPENSATION",
+          "PROTOCOL_RECOVERY"
         ]
       },
       "QuoteRequest": {
@@ -257,23 +742,19 @@
                 "type": "integer",
                 "minimum": 1
               }
-            ],
-            "description": "Input amount in the token's smallest units. The API accepts a positive integer number or base-10 string."
+            ]
           },
           "srcChainId": {
-            "type": "integer",
-            "description": "Source chain ID."
+            "type": "integer"
           },
           "dstChainId": {
-            "type": "integer",
-            "description": "Destination chain ID."
+            "type": "integer"
           },
           "userAddress": {
             "$ref": "#/components/schemas/Address"
           },
           "nativeDstAddress": {
-            "type": "string",
-            "description": "Native destination address for non-EVM destinations when required."
+            "type": "string"
           },
           "urgency": {
             "type": "string",
@@ -285,9 +766,45 @@
           }
         }
       },
+      "RouteAssetRef": {
+        "type": "object",
+        "additionalProperties": true,
+        "required": [
+          "canonicalAssetId",
+          "providerAssetId",
+          "decimals",
+          "assetKind"
+        ],
+        "properties": {
+          "canonicalAssetId": {
+            "type": "string"
+          },
+          "providerAssetId": {
+            "type": "string"
+          },
+          "tokenAddress": {
+            "$ref": "#/components/schemas/Address"
+          },
+          "srcTokenAddress": {
+            "$ref": "#/components/schemas/Address"
+          },
+          "dstTokenAddress": {
+            "$ref": "#/components/schemas/Address"
+          },
+          "decimals": {
+            "type": "integer"
+          },
+          "assetKind": {
+            "type": "string"
+          },
+          "assetStandard": {
+            "type": "string"
+          }
+        }
+      },
       "QuoteResult": {
         "type": "object",
-        "additionalProperties": false,
+        "additionalProperties": true,
         "required": [
           "intentId",
           "srcChainId",
@@ -355,13 +872,29 @@
           "settlementToken": {
             "$ref": "#/components/schemas/SettlementToken"
           },
+          "routeAsset": {
+            "$ref": "#/components/schemas/RouteAssetRef"
+          },
+          "settlementAssetId": {
+            "$ref": "#/components/schemas/Bytes32"
+          },
+          "expectedDstSettlementToken": {
+            "$ref": "#/components/schemas/Address"
+          },
+          "expectedDstSettlementAssetId": {
+            "$ref": "#/components/schemas/Bytes32"
+          },
+          "minSettlementAmount": {
+            "$ref": "#/components/schemas/BigIntString"
+          },
+          "dstGasLimit": {
+            "type": "integer"
+          },
           "etaSeconds": {
-            "type": "integer",
-            "minimum": 0
+            "type": "integer"
           },
           "expiresAt": {
-            "type": "integer",
-            "description": "Unix timestamp in seconds."
+            "type": "integer"
           },
           "railPluginId": {
             "$ref": "#/components/schemas/Bytes32"
@@ -381,14 +914,174 @@
           "swapDataDst": {
             "$ref": "#/components/schemas/Bytes"
           },
-          "thorAsset": {
-            "type": "string"
-          },
-          "minThorOutput": {
-            "$ref": "#/components/schemas/BigIntString"
-          },
           "nativeDstAddress": {
             "type": "string"
+          }
+        }
+      },
+      "OfferEconomics": {
+        "type": "object",
+        "additionalProperties": true,
+        "properties": {
+          "providerFeeUSD": {
+            "type": "number"
+          },
+          "protocolFeeUSD": {
+            "type": "number"
+          },
+          "sourceGasUSD": {
+            "type": "number"
+          },
+          "destinationGasUSD": {
+            "type": "number"
+          },
+          "outboundFeeUSD": {
+            "type": "number"
+          },
+          "settlementTimeSeconds": {
+            "type": "number"
+          }
+        }
+      },
+      "RailOffer": {
+        "type": "object",
+        "additionalProperties": true,
+        "required": [
+          "offerId",
+          "rail",
+          "railType",
+          "srcChainId",
+          "dstChainId",
+          "tokenIn",
+          "tokenOut",
+          "amountIn",
+          "estimatedOut",
+          "minAmountOut",
+          "expiresAt"
+        ],
+        "properties": {
+          "offerId": {
+            "$ref": "#/components/schemas/IntentId"
+          },
+          "offerType": {
+            "type": "string"
+          },
+          "rail": {
+            "$ref": "#/components/schemas/Rail"
+          },
+          "railType": {
+            "$ref": "#/components/schemas/RailType"
+          },
+          "srcChainId": {
+            "type": "integer"
+          },
+          "dstChainId": {
+            "type": "integer"
+          },
+          "tokenIn": {
+            "$ref": "#/components/schemas/Address"
+          },
+          "tokenOut": {
+            "$ref": "#/components/schemas/Address"
+          },
+          "amountIn": {
+            "$ref": "#/components/schemas/BigIntString"
+          },
+          "estimatedOut": {
+            "$ref": "#/components/schemas/BigIntString"
+          },
+          "minAmountOut": {
+            "$ref": "#/components/schemas/BigIntString"
+          },
+          "expiresAt": {
+            "type": "integer"
+          },
+          "deliveryShape": {
+            "type": "string"
+          },
+          "executionMode": {
+            "type": "string",
+            "enum": [
+              "router_intent",
+              "provider_direct"
+            ]
+          },
+          "routeAsset": {
+            "$ref": "#/components/schemas/RouteAssetRef"
+          },
+          "sourceSettlementAsset": {
+            "$ref": "#/components/schemas/RouteAssetRef"
+          },
+          "destinationSettlementAsset": {
+            "$ref": "#/components/schemas/RouteAssetRef"
+          },
+          "economics": {
+            "$ref": "#/components/schemas/OfferEconomics"
+          },
+          "execution": {
+            "type": "object",
+            "additionalProperties": true
+          }
+        }
+      },
+      "OfferSet": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "offerSetId",
+          "expiresAt",
+          "offers"
+        ],
+        "properties": {
+          "offerSetId": {
+            "$ref": "#/components/schemas/IntentId"
+          },
+          "expiresAt": {
+            "type": "integer"
+          },
+          "offers": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/RailOffer"
+            }
+          },
+          "bestOfferId": {
+            "$ref": "#/components/schemas/IntentId"
+          }
+        }
+      },
+      "QuoteOfferSetResponse": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "offerSet"
+        ],
+        "properties": {
+          "offerSet": {
+            "$ref": "#/components/schemas/OfferSet"
+          },
+          "quote": {
+            "$ref": "#/components/schemas/QuoteResult"
+          }
+        }
+      },
+      "QuoteSelectRequest": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "offerSetId",
+          "offerId",
+          "userAddress"
+        ],
+        "properties": {
+          "offerSetId": {
+            "$ref": "#/components/schemas/IntentId"
+          },
+          "offerId": {
+            "$ref": "#/components/schemas/IntentId"
+          },
+          "userAddress": {
+            "$ref": "#/components/schemas/Address"
           }
         }
       },
@@ -412,12 +1105,78 @@
             "$ref": "#/components/schemas/BigIntString"
           },
           "expiresAt": {
-            "type": "integer",
-            "description": "Unix timestamp in seconds."
+            "type": "integer"
           }
         }
       },
-      "QuoteResponse": {
+      "SelectedOfferIntegration": {
+        "oneOf": [
+          {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "mode",
+              "integration"
+            ],
+            "properties": {
+              "mode": {
+                "type": "string",
+                "enum": [
+                  "router_intent"
+                ]
+              },
+              "integration": {
+                "$ref": "#/components/schemas/RouterIntegration"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "mode",
+              "action"
+            ],
+            "properties": {
+              "mode": {
+                "type": "string",
+                "enum": [
+                  "provider_direct"
+                ]
+              },
+              "action": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "kind",
+                  "depositAddress",
+                  "memo",
+                  "expiresAt",
+                  "expectedAmountOut"
+                ],
+                "properties": {
+                  "kind": {
+                    "type": "string"
+                  },
+                  "depositAddress": {
+                    "type": "string"
+                  },
+                  "memo": {
+                    "type": "string"
+                  },
+                  "expiresAt": {
+                    "type": "integer"
+                  },
+                  "expectedAmountOut": {
+                    "type": "string"
+                  }
+                }
+              }
+            }
+          }
+        ]
+      },
+      "QuoteSelectResponse": {
         "type": "object",
         "additionalProperties": false,
         "required": [
@@ -433,7 +1192,98 @@
             "$ref": "#/components/schemas/IntentId"
           },
           "integration": {
-            "$ref": "#/components/schemas/RouterIntegration"
+            "$ref": "#/components/schemas/SelectedOfferIntegration"
+          }
+        }
+      },
+      "OfferUnavailableResponse": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "error",
+          "message",
+          "fallbackOfferSet"
+        ],
+        "properties": {
+          "error": {
+            "type": "string",
+            "enum": [
+              "OFFER_UNAVAILABLE"
+            ]
+          },
+          "message": {
+            "type": "string"
+          },
+          "fallbackOfferSet": {
+            "$ref": "#/components/schemas/OfferSet"
+          }
+        }
+      },
+      "IntentRefundCase": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "intentId",
+          "status",
+          "reason",
+          "requestedAt",
+          "updatedAt",
+          "custodyLocation"
+        ],
+        "properties": {
+          "intentId": {
+            "$ref": "#/components/schemas/IntentId"
+          },
+          "status": {
+            "$ref": "#/components/schemas/RefundCaseStatus"
+          },
+          "reason": {
+            "type": "string"
+          },
+          "requestedBy": {
+            "type": "string"
+          },
+          "requestedAt": {
+            "type": "integer"
+          },
+          "updatedAt": {
+            "type": "integer"
+          },
+          "reviewedBy": {
+            "type": "string"
+          },
+          "reviewedAt": {
+            "type": "integer"
+          },
+          "reviewNotes": {
+            "type": "string"
+          },
+          "adminNotes": {
+            "type": "string"
+          },
+          "custodyLocation": {
+            "$ref": "#/components/schemas/RefundCustodyLocation"
+          },
+          "resolutionKind": {
+            "$ref": "#/components/schemas/RefundResolutionKind"
+          },
+          "rescueContract": {
+            "type": "string"
+          },
+          "rescueToken": {
+            "type": "string"
+          },
+          "rescueAmount": {
+            "type": "string"
+          },
+          "rescueTxHash": {
+            "type": "string"
+          },
+          "payoutAddress": {
+            "type": "string"
+          },
+          "payoutTxHash": {
+            "type": "string"
           }
         }
       },
@@ -444,9 +1294,13 @@
           "intentId",
           "status",
           "rail",
+          "railVariant",
           "etaSeconds",
           "createdAt",
-          "updatedAt"
+          "updatedAt",
+          "canCancel",
+          "canCancelInWallet",
+          "canRequestRefund"
         ],
         "properties": {
           "intentId": {
@@ -467,20 +1321,192 @@
           "rail": {
             "$ref": "#/components/schemas/Rail"
           },
+          "railVariant": {
+            "type": "string"
+          },
           "etaSeconds": {
-            "type": "integer",
-            "minimum": 0
+            "type": "integer"
           },
           "createdAt": {
-            "type": "integer",
-            "description": "Unix timestamp in milliseconds."
+            "type": "integer"
           },
           "updatedAt": {
-            "type": "integer",
-            "description": "Unix timestamp in milliseconds."
+            "type": "integer"
           },
           "errorMessage": {
             "type": "string"
+          },
+          "canCancel": {
+            "type": "boolean"
+          },
+          "canCancelInWallet": {
+            "type": "boolean"
+          },
+          "canRequestRefund": {
+            "type": "boolean"
+          },
+          "refund": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/IntentRefundCase"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        }
+      },
+      "IntentActionSignedRequestBase": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "userAddress",
+          "signature",
+          "timestamp"
+        ],
+        "properties": {
+          "userAddress": {
+            "$ref": "#/components/schemas/Address"
+          },
+          "signature": {
+            "type": "string"
+          },
+          "timestamp": {
+            "type": "integer",
+            "description": "Unix timestamp in milliseconds used in signed payload."
+          },
+          "reason": {
+            "type": "string"
+          },
+          "srcTxHash": {
+            "type": "string"
+          },
+          "replacementTxHash": {
+            "type": "string"
+          }
+        }
+      },
+      "IntentSubmittedRequest": {
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/IntentActionSignedRequestBase"
+          },
+          {
+            "type": "object",
+            "required": [
+              "srcTxHash"
+            ]
+          }
+        ]
+      },
+      "IntentCancelRequest": {
+        "$ref": "#/components/schemas/IntentActionSignedRequestBase"
+      },
+      "IntentRefundRequest": {
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/IntentActionSignedRequestBase"
+          },
+          {
+            "type": "object",
+            "required": [
+              "reason"
+            ]
+          }
+        ]
+      },
+      "RefundRequestResponse": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "ok",
+          "refund",
+          "ts"
+        ],
+        "properties": {
+          "ok": {
+            "type": "boolean",
+            "enum": [
+              true
+            ]
+          },
+          "refund": {
+            "$ref": "#/components/schemas/IntentRefundCase"
+          },
+          "ts": {
+            "type": "integer"
+          }
+        }
+      },
+      "AdminRefundUpdateRequest": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "reason"
+        ],
+        "properties": {
+          "reason": {
+            "type": "string"
+          },
+          "status": {
+            "$ref": "#/components/schemas/RefundCaseStatus"
+          },
+          "reviewedBy": {
+            "type": "string"
+          },
+          "reviewNotes": {
+            "type": "string"
+          },
+          "adminNotes": {
+            "type": "string"
+          },
+          "custodyLocation": {
+            "$ref": "#/components/schemas/RefundCustodyLocation"
+          },
+          "resolutionKind": {
+            "$ref": "#/components/schemas/RefundResolutionKind"
+          },
+          "rescueContract": {
+            "type": "string"
+          },
+          "rescueToken": {
+            "type": "string"
+          },
+          "rescueAmount": {
+            "type": "string"
+          },
+          "rescueTxHash": {
+            "type": "string"
+          },
+          "payoutAddress": {
+            "type": "string"
+          },
+          "payoutTxHash": {
+            "type": "string"
+          }
+        }
+      },
+      "AdminRefundUpdateResponse": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "ok",
+          "refund",
+          "ts"
+        ],
+        "properties": {
+          "ok": {
+            "type": "boolean",
+            "enum": [
+              true
+            ]
+          },
+          "refund": {
+            "$ref": "#/components/schemas/IntentRefundCase"
+          },
+          "ts": {
+            "type": "integer"
           }
         }
       },
@@ -501,15 +1527,13 @@
           },
           "intents": {
             "type": "object",
-            "description": "Intent counts keyed by IntentStatus.",
             "additionalProperties": {
               "type": "integer",
               "minimum": 0
             }
           },
           "ts": {
-            "type": "integer",
-            "description": "Unix timestamp in milliseconds."
+            "type": "integer"
           }
         }
       },
@@ -518,6 +1542,19 @@
         "additionalProperties": true,
         "required": [
           "error"
+        ],
+        "properties": {
+          "error": {
+            "type": "string"
+          }
+        }
+      },
+      "ErrorWithMessageResponse": {
+        "type": "object",
+        "additionalProperties": true,
+        "required": [
+          "error",
+          "message"
         ],
         "properties": {
           "error": {

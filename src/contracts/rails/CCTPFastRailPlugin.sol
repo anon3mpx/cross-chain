@@ -40,7 +40,7 @@ contract CCTPFastRailPlugin is IRailPlugin, ERC165, Ownable2Step {
     );
 
     error UnsupportedRoute(uint32 dstChainId);
-    error UnsupportedSettlementToken(uint8 token);
+    error UnsupportedRouteToken(address token);
     error ReceiverNotConfigured(uint32 dstChainId);
     error MissingRailData();
     error InvalidFinalityThreshold(uint32 provided, uint32 maximum);
@@ -59,26 +59,21 @@ contract CCTPFastRailPlugin is IRailPlugin, ERC165, Ownable2Step {
         return chainToDomain[dstChainId] != 0 || dstChainId == 1; // ETH mainnet is domain 0
     }
 
-    function settlementTokenAddress(uint8 settlementToken)
-        external view override returns (address)
-    {
-        if (settlementToken != uint8(IntentTypes.SettlementToken.USDC)) {
-            revert UnsupportedSettlementToken(settlementToken);
-        }
-        return usdc;
-    }
-
-    function supportsSettlementToken(uint8 settlementToken)
-        external pure override returns (bool)
-    {
-        return settlementToken == uint8(IntentTypes.SettlementToken.USDC);
-    }
-
-    function estimateFee(uint32 dstChainId, uint256 /*amount*/, uint8 /*settlementToken*/)
+    function estimateFee(
+        uint32 dstChainId,
+        uint256 /*amount*/,
+        address routeToken,
+        bytes32 /*routeAssetId*/,
+        uint256 /*dstGasLimit*/,
+        bytes calldata /*railData*/
+    )
         external view override returns (uint256 fee, uint256 eta)
     {
         if (chainToDomain[dstChainId] == 0 && dstChainId != 1) {
             revert UnsupportedRoute(dstChainId);
+        }
+        if (routeToken != usdc) {
+            revert UnsupportedRouteToken(routeToken);
         }
         fee = 0;
         eta = 8; // Fast attestation target is seconds on supported source chains.
@@ -92,6 +87,7 @@ contract CCTPFastRailPlugin is IRailPlugin, ERC165, Ownable2Step {
         uint32 dstDomain = chainToDomain[params.dstChainId];
         bytes32 receiver = destinationReceivers[params.dstChainId];
         if (receiver == bytes32(0)) revert ReceiverNotConfigured(params.dstChainId);
+        if (params.routeTokenAddr != usdc) revert UnsupportedRouteToken(params.routeTokenAddr);
 
         (uint32 minFinalityThreshold, uint256 maxFee) = _decodeRailData(params.railData);
         if (minFinalityThreshold == 0 || minFinalityThreshold > FAST_FINALITY_THRESHOLD_MAX) {

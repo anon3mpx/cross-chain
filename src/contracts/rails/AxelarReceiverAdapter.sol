@@ -10,6 +10,18 @@ import "@openzeppelin/contracts/access/Ownable2Step.sol";
 contract AxelarReceiverAdapter is Ownable2Step {
     using SafeERC20 for IERC20;
 
+    struct ReceiverPayload {
+        bytes32 intentId;
+        address user;
+        address tokenOut;
+        uint256 minAmountOut;
+        address expectedRouteToken;
+        bytes32 expectedRouteAssetId;
+        uint256 minRouteAmount;
+        bytes swapData;
+        bytes32 swapPluginId;
+    }
+
     bytes32 public constant EXECUTE_SUCCESS = keccak256("its-execute-success");
 
     address public immutable interchainTokenService;
@@ -33,6 +45,8 @@ contract AxelarReceiverAdapter is Ownable2Step {
     error UnauthorizedInterchainTokenService(address caller);
     error UntrustedSource(bytes32 sourceKey);
     error UntrustedToken(bytes32 tokenId, address token, address expected);
+    error UnexpectedSettlementToken(address received, address expected);
+    error UnexpectedSettlementAsset(bytes32 received, bytes32 expected);
     error ZeroAddress(string field);
 
     constructor(address _interchainTokenService, address _receiver, address _owner) Ownable(_owner) {
@@ -65,8 +79,32 @@ contract AxelarReceiverAdapter is Ownable2Step {
             revert UntrustedToken(tokenId, token, expectedToken);
         }
 
+        bytes calldata receiverPayload = data;
+        if (receiverPayload.length >= 4 && bytes4(receiverPayload[0:4]) == bytes4(0)) {
+            receiverPayload = receiverPayload[4:];
+        }
+
+        ReceiverPayload memory decoded = _decodeReceiverPayload(receiverPayload);
+        decoded.intentId;
+        decoded.user;
+        decoded.tokenOut;
+        decoded.minAmountOut;
+        decoded.minRouteAmount;
+        decoded.swapData;
+        decoded.swapPluginId;
+
+        if (decoded.expectedRouteToken == address(0)) revert ZeroAddress("expectedRouteToken");
+        if (token != decoded.expectedRouteToken) {
+            revert UnexpectedSettlementToken(token, decoded.expectedRouteToken);
+        }
+
+        bytes32 receivedRouteAssetId = keccak256(abi.encode(block.chainid, token));
+        if (receivedRouteAssetId != decoded.expectedRouteAssetId) {
+            revert UnexpectedSettlementAsset(receivedRouteAssetId, decoded.expectedRouteAssetId);
+        }
+
         IERC20(token).safeTransfer(receiver, amount);
-        IReceiverExecutorAxelar(receiver).execute(token, amount, data);
+        IReceiverExecutorAxelar(receiver).execute(token, amount, receiverPayload);
 
         emit AxelarMessageForwarded(commandId, sourceKey, tokenId, token, amount);
         return EXECUTE_SUCCESS;
@@ -107,6 +145,27 @@ contract AxelarReceiverAdapter is Ownable2Step {
         returns (bytes32)
     {
         return keccak256(abi.encode(sourceChain, sourceAddress));
+    }
+
+    function _decodeReceiverPayload(bytes calldata receiverPayload)
+        internal
+        pure
+        returns (ReceiverPayload memory decoded)
+    {
+        (
+            decoded.intentId,
+            decoded.user,
+            decoded.tokenOut,
+            decoded.minAmountOut,
+            decoded.expectedRouteToken,
+            decoded.expectedRouteAssetId,
+            decoded.minRouteAmount,
+            decoded.swapData,
+            decoded.swapPluginId
+        ) = abi.decode(
+            receiverPayload,
+            (bytes32, address, address, uint256, address, bytes32, uint256, bytes, bytes32)
+        );
     }
 }
 

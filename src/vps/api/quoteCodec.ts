@@ -1,4 +1,4 @@
-import { QuoteRequest, QuoteResult } from '../types';
+import { OfferSet, QuoteRequest, QuoteResult } from '../types';
 
 type Json = null | boolean | number | string | Json[] | { [k: string]: Json };
 const EMPTY_TEXT_VALUES = new Set(['', 'undefined', 'null']);
@@ -50,6 +50,22 @@ export function parseQuoteRequest(input: any, defaultUrgency: 'fast' | 'normal' 
 
 export function serializeQuote(quote: QuoteResult): Json {
   return toJSONSafe(quote);
+}
+
+export function serializeOfferSet(offerSet: OfferSet): Json {
+  return toJSONSafe(offerSet);
+}
+
+export function parseOfferSelection(input: any): { offerSetId: string; offerId: string } {
+  if (!input || typeof input !== 'object') throw new Error('Invalid payload');
+
+  const offerSetId = parseOptionalText(input.offerSetId);
+  const offerId = parseOptionalText(input.offerId ?? input.selectedOfferId);
+
+  if (!offerSetId) throw new Error('offerSetId required');
+  if (!offerId) throw new Error('offerId required');
+
+  return { offerSetId, offerId };
 }
 
 export function toJSONSafe(value: unknown): Json {

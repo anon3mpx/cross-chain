@@ -5,20 +5,27 @@
 // ─────────────────────────────────────────────────────────
 
 import { Rail, RailConfig, RailScore, SettlementToken, ChainConfig, CHAIN_ID } from '../types';
+import { RAIL_SETTLEMENT_ASSET_ALLOWLISTS } from '../config/routeExecution';
+import { type DeploymentRegistry } from './DeploymentRegistry';
+import { StaticRouteAssetPolicy, type RouteAssetPolicy } from './RouteAssetPolicy';
 import {
   CHAIN_RAILS,
   PLUGIN_ID,
+  RAIL_PROVIDERS,
   getChainRails,
-  getRailConfig,
 } from '../rails/registry';
 
 export { CHAIN_RAILS, PLUGIN_ID };
-export const RAIL_CONFIGS: Record<Rail, RailConfig> = Object.values(Rail).reduce((acc, rail) => {
-  acc[rail] = getRailConfig(rail);
+export const RAIL_CONFIGS: Partial<Record<Rail, RailConfig>> = Object.values(RAIL_PROVIDERS).reduce((acc, provider) => {
+  acc[provider.rail] = provider.config;
   return acc;
-}, {} as Record<Rail, RailConfig>);
+}, {} as Partial<Record<Rail, RailConfig>>);
 
 export class RailSelector {
+  constructor(
+    private readonly routeAssetPolicy: RouteAssetPolicy = new StaticRouteAssetPolicy(RAIL_SETTLEMENT_ASSET_ALLOWLISTS),
+    private readonly deploymentRegistry?: DeploymentRegistry,
+  ) {}
 
   /// @notice Select the best rail + settlement token for a given chain pair.
   /// @param srcChainId Source EVM chain ID
@@ -41,42 +48,82 @@ export class RailSelector {
     const candidates = [...srcRails].filter(r => dstRails.has(r));
     if (candidates.length === 0) return [];
 
-    const scores: RailScore[] = candidates.map(rail => {
+    const scores: RailScore[] = [];
+    for (const rail of candidates) {
+      if (this.deploymentRegistry && !this.deploymentRegistry.isExecutable(rail, srcChainId, dstChainId)) {
+        continue;
+      }
+
       const config = RAIL_CONFIGS[rail];
-      const settlementToken = this._pickSettlementToken(rail, config, dstChain);
-      const requiresTokenHop = settlementToken !== SettlementToken.USDC || !config.nativeUSDC;
+      if (!config) continue;
+      for (const routeAssetAlias of this.routeAssetPolicy.allowedAssets(rail)) {
+        const settlementToken = this._settlementTokenForRouteAssetAlias(routeAssetAlias);
+        if (!settlementToken) continue;
+        if (!this._supportsRouteAssetAlias(config, routeAssetAlias, dstChain)) continue;
 
-      return {
-        rail,
-        config,
-        settlementToken,
-        requiresTokenHop,
-        score: this._scoreRail(config, settlementToken, amountUSD, urgency),
-      };
+        scores.push({
+          rail,
+          config,
+          routeAssetAlias,
+          settlementToken,
+          requiresTokenHop: routeAssetAlias.toUpperCase() !== 'USDC' || !config.nativeUSDC,
+          score: this._scoreRail(config, routeAssetAlias, amountUSD, urgency),
+        });
+      }
+    }
+
+    // Sort descending for display/routing order while preserving every viable rail.
+    return scores.sort((a, b) => {
+      if (a.score !== b.score) return b.score - a.score;
+      if (a.config.etaSeconds !== b.config.etaSeconds) return a.config.etaSeconds - b.config.etaSeconds;
+      return a.config.fee - b.config.fee;
     });
-
-    // Sort descending by score
-    return scores.sort((a, b) => b.score - a.score);
   }
 
-  /// @notice Pick the most appropriate settlement token for a given rail + destination.
-  private _pickSettlementToken(
-    rail: Rail,
+  private _supportsRouteAssetAlias(
     config: RailConfig,
+    routeAssetAlias: string,
     dstChain: ChainConfig,
-  ): SettlementToken {
+  ): boolean {
+    const normalized = routeAssetAlias.trim().toUpperCase();
+
     // Native BTC/SOL destinations — settlement IS the native asset
-    if (dstChain.chainId === CHAIN_ID.BTC  && config.supportsBTC) return SettlementToken.BTC;
-    if (dstChain.chainId === CHAIN_ID.SOL  && config.supportsSOL) return SettlementToken.SOL;
-    if (dstChain.chainId === CHAIN_ID.DOGE) return SettlementToken.ETH; // THORChain uses ETH→DOGE
-    // Destination prefers USDT (e.g. Plasma, Tron-adjacent)
-    if (dstChain.nativeStable === SettlementToken.USDT && config.supportsUSDT) return SettlementToken.USDT;
-    // CCTP: USDC only
-    if (rail === Rail.CCTP) return SettlementToken.USDC;
-    // Default preference: USDC > ETH
-    if (config.supportsUSDC) return SettlementToken.USDC;
-    if (config.supportsETH)  return SettlementToken.ETH;
-    return SettlementToken.USDC;
+    if (normalized === 'BTC' || normalized === 'BTC.BTC') {
+      return dstChain.chainId === CHAIN_ID.BTC ? config.supportsBTC : config.supportsBTC;
+    }
+    if (normalized === 'SOL' || normalized === 'SOL.SOL') {
+      return dstChain.chainId === CHAIN_ID.SOL ? config.supportsSOL : config.supportsSOL;
+    }
+    if (normalized === 'DOGE' || normalized === 'DOGE.DOGE') {
+      return config.supportsETH;
+    }
+    if (normalized === 'USDT') return config.supportsUSDT;
+    if (normalized === 'ETH' || normalized === 'WETH' || normalized === 'ETH.ETH') return config.supportsETH;
+    if (normalized === 'USDC') return config.supportsUSDC;
+    return false;
+  }
+
+  private _settlementTokenForRouteAssetAlias(routeAssetAlias: string): SettlementToken | null {
+    switch (routeAssetAlias.trim().toUpperCase()) {
+      case 'USDC':
+        return SettlementToken.USDC;
+      case 'USDT':
+        return SettlementToken.USDT;
+      case 'ETH':
+      case 'WETH':
+      case 'ETH.ETH':
+      case 'DOGE':
+      case 'DOGE.DOGE':
+        return SettlementToken.ETH;
+      case 'BTC':
+      case 'BTC.BTC':
+        return SettlementToken.BTC;
+      case 'SOL':
+      case 'SOL.SOL':
+        return SettlementToken.SOL;
+      default:
+        return null;
+    }
   }
 
   // ── TODO: Implement your scoring logic here ────────────────────────────────
@@ -102,7 +149,7 @@ export class RailSelector {
   //
   _scoreRail(
     config: RailConfig,
-    token: SettlementToken,
+    routeAssetAlias: string,
     amountUSD: number,
     urgency: 'fast' | 'normal',
   ): number {
@@ -120,7 +167,7 @@ export class RailSelector {
     const speedScore = 1000 / config.etaSeconds;
 
     // ── Native USDC bonus: avoid wrapped token risk (axlUSDC has depegged before) ──
-    const nativeBonus = (config.nativeUSDC && token === SettlementToken.USDC) ? 1.30 : 1.0;
+    const nativeBonus = (config.nativeUSDC && routeAssetAlias.trim().toUpperCase() === 'USDC') ? 1.30 : 1.0;
 
     // ── Reliability amplifier: doubles in weight above $5k (SLA protection) ─
     const reliabilityWeight = amountUSD > 5_000 ? config.reliabilityScore ** 3 : config.reliabilityScore;

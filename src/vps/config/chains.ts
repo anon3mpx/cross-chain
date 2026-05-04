@@ -8,19 +8,16 @@
 // ─────────────────────────────────────────────────────────
 
 import { ChainConfig, SettlementToken, CHAIN_ID } from '../types';
+import {
+  getReceiverAddressFromDeploymentRegistry,
+  getRouterAddressFromDeploymentRegistry,
+} from './deploymentRegistry';
 
 function env(key: string): string | undefined {
   const value = process.env[key];
   if (!value) return undefined;
   const trimmed = value.trim();
   return trimmed.length > 0 ? trimmed : undefined;
-}
-
-function routerV1Abi(chainId: number): 'legacy' | 'current' {
-  const raw = (env(`CHAIN_${chainId}_ROUTER_V1_ABI`) ?? env('ROUTER_V1_ABI') ?? 'legacy').toLowerCase();
-  if (['current', 'v2', 'new'].includes(raw)) return 'current';
-  if (['legacy', 'v1', 'old'].includes(raw)) return 'legacy';
-  throw new Error(`invalid CHAIN_${chainId}_ROUTER_V1_ABI: ${raw}`);
 }
 
 const cfg = (
@@ -41,9 +38,8 @@ const cfg = (
   chainId, name,
   rpcUrl: env(`CHAIN_${chainId}_RPC_URL`) ?? '',
   rpcFallback: env(`CHAIN_${chainId}_RPC_FALLBACK`) ?? env(`CHAIN_${chainId}_RPC_URL`) ?? '',
-  routerV1: env(`CHAIN_${chainId}_ROUTER_V1`),
-  routerV1Abi: routerV1Abi(chainId),
-  receiverV1: env(`CHAIN_${chainId}_RECEIVER_V1`),
+  routerV1: getRouterAddressFromDeploymentRegistry(chainId) ?? env(`CHAIN_${chainId}_ROUTER_V1`),
+  receiverV1: getReceiverAddressFromDeploymentRegistry(chainId) ?? env(`CHAIN_${chainId}_RECEIVER_V1`),
   nativeStable,
   blockTimeMs,
   isEVM,

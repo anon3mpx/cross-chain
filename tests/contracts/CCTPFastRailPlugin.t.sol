@@ -94,8 +94,12 @@ contract CCTPFastRailPluginTest {
 
         IntentTypes.BridgeParams memory params = IntentTypes.BridgeParams({
             intentId: keccak256("intent-fast-1"),
-            settlementTokenAddr: address(usdc),
+            routeTokenAddr: address(usdc),
             amount: amount,
+            routeAssetId: bytes32(0),
+            expectedDstRouteToken: address(0),
+            expectedDstRouteAssetId: bytes32(0),
+            minRouteAmount: 0,
             dstChainId: DST_CHAIN,
             railData: abi.encode(uint32(1000), maxFee),
             dstReceiver: address(0xBEEF),
@@ -124,8 +128,12 @@ contract CCTPFastRailPluginTest {
         usdc.approve(address(plugin), 10e6);
         IntentTypes.BridgeParams memory params = IntentTypes.BridgeParams({
             intentId: keccak256("intent-fast-2"),
-            settlementTokenAddr: address(usdc),
+            routeTokenAddr: address(usdc),
             amount: 10e6,
+            routeAssetId: bytes32(0),
+            expectedDstRouteToken: address(0),
+            expectedDstRouteAssetId: bytes32(0),
+            minRouteAmount: 0,
             dstChainId: DST_CHAIN,
             railData: bytes(""),
             dstReceiver: address(0xBEEF),
@@ -148,8 +156,12 @@ contract CCTPFastRailPluginTest {
 
         IntentTypes.BridgeParams memory params = IntentTypes.BridgeParams({
             intentId: keccak256("intent-fast-3"),
-            settlementTokenAddr: address(usdc),
+            routeTokenAddr: address(usdc),
             amount: amount,
+            routeAssetId: bytes32(0),
+            expectedDstRouteToken: address(0),
+            expectedDstRouteAssetId: bytes32(0),
+            minRouteAmount: 0,
             dstChainId: DST_CHAIN,
             railData: abi.encode(uint32(1000), tooHighMaxFee),
             dstReceiver: address(0xBEEF),
@@ -177,4 +189,3 @@ contract CCTPFastRailPluginTest {
         require(ok, err);
     }
 }
-

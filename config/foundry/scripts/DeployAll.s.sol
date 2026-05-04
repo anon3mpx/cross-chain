@@ -115,21 +115,18 @@ contract DeployAll is ScriptBase {
         }
 
         {
-            address axelarUsdc = vm.envOr("AXELAR_USDC", usdc);
             address axelarGasService = vm.envOr("AXELAR_GAS_SERVICE", address(0));
             address axelarIts = vm.envOr("AXELAR_ITS", address(0));
-            if (axelarUsdc != address(0) && axelarGasService != address(0) && axelarIts != address(0)) {
-                AxelarRailPlugin axelar = new AxelarRailPlugin(axelarUsdc, axelarGasService, axelarIts, owner);
+            if (axelarGasService != address(0) && axelarIts != address(0)) {
+                AxelarRailPlugin axelar = new AxelarRailPlugin(axelarGasService, axelarIts, owner);
                 emit ScriptLogAddress("AxelarRailPlugin", address(axelar));
             }
         }
 
         {
-            address layerZeroUsdc = vm.envOr("LAYERZERO_USDC", vm.envOr("LZ_USDC", usdc));
             address lzEndpoint = vm.envOr("LZ_ENDPOINT", address(0));
-            address lzOft = vm.envOr("LZ_OFT", address(0));
-            if (layerZeroUsdc != address(0) && lzEndpoint != address(0) && lzOft != address(0)) {
-                LayerZeroRailPlugin layerZero = new LayerZeroRailPlugin(layerZeroUsdc, lzEndpoint, lzOft, owner);
+            if (lzEndpoint != address(0)) {
+                LayerZeroRailPlugin layerZero = new LayerZeroRailPlugin(lzEndpoint, owner);
                 emit ScriptLogAddress("LayerZeroRailPlugin", address(layerZero));
             }
         }
@@ -153,14 +150,9 @@ contract DeployAll is ScriptBase {
         }
 
         address lzEndpoint = vm.envOr("LZ_ENDPOINT", address(0));
-        address lzOft = vm.envOr("LZ_OFT", address(0));
-        address layerZeroUsdc = vm.envOr(
-            "LAYERZERO_USDC",
-            vm.envOr("LZ_USDC", vm.envOr("USDC", address(0)))
-        );
-        if (lzEndpoint != address(0) && lzOft != address(0) && layerZeroUsdc != address(0)) {
+        if (lzEndpoint != address(0)) {
             LayerZeroReceiverAdapter lzAdapter =
-                new LayerZeroReceiverAdapter(lzEndpoint, lzOft, layerZeroUsdc, receiver, owner);
+                new LayerZeroReceiverAdapter(lzEndpoint, receiver, owner);
             emit ScriptLogAddress("LayerZeroReceiverAdapter", address(lzAdapter));
         }
     }

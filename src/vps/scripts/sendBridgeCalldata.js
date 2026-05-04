@@ -5,7 +5,7 @@ const path = require('path');
 const { Interface, JsonRpcProvider, Wallet } = require('ethers');
 
 const ROUTER_INITIATE_IFACE = new Interface([
-  'function initiateSwap((address user,address tokenIn,address tokenOut,uint256 amountIn,uint256 minAmountOut,uint256 minSrcSwapOut,uint32 dstChainId,uint8 rail,uint8 settlementToken,uint256 feeAmount,bytes swapDataSrc,bytes swapDataDst,bytes32 swapPluginIdSrc,bytes32 dstSwapPluginId,bytes32 railPluginId,bytes railData,address dstReceiver,bytes nativeDstAddress,string thorAssetIdentifier,uint256 minThorOutput,bytes32 intentId,uint256 deadline) intent,bytes signature)',
+  'function initiateSwap((address user,address tokenIn,address tokenOut,uint256 amountIn,uint256 minAmountOut,uint256 minSrcSwapOut,uint32 dstChainId,uint8 rail,address routeToken,bytes32 routeAssetId,address expectedDstRouteToken,bytes32 expectedDstRouteAssetId,uint256 minRouteAmount,uint256 feeAmount,bytes swapDataSrc,bytes swapDataDst,bytes32 swapPluginIdSrc,bytes32 dstSwapPluginId,bytes32 railPluginId,bytes railData,uint256 dstGasLimit,address dstReceiver,bytes nativeDstAddress,string thorAssetIdentifier,uint256 minThorOutput,bytes32 intentId,uint256 deadline) intent,bytes signature)',
 ]);
 
 const ROUTER_INITIATE_LEGACY_IFACE = new Interface([
@@ -33,7 +33,7 @@ const AXELAR_ERRORS_IFACE = new Interface([
   'error UnsupportedRoute(uint32 dstChainId)',
   'error ReceiverNotConfigured(uint32 dstChainId)',
   'error DestinationTokenNotConfigured(uint32 dstChainId)',
-  'error SettlementTokenMismatch(address provided, address expected)',
+  'error RouteTokenMismatch(address provided, address expected)',
   'error EmptyDestinationCalldata()',
   'error InsufficientGasPayment(uint256 provided, uint256 required)',
   'error InterchainTokenServiceMismatch(address tokenService, address expectedService)',
@@ -42,7 +42,7 @@ const AXELAR_ERRORS_IFACE = new Interface([
 const LAYERZERO_ERRORS_IFACE = new Interface([
   'error UnsupportedRoute(uint32 dstChainId)',
   'error ReceiverNotConfigured(uint32 dstChainId)',
-  'error SettlementTokenMismatch(address provided, address expected)',
+  'error RouteTokenMismatch(address provided, address expected)',
   'error InsufficientNativeFee(uint256 provided, uint256 required)',
   'error UnsupportedLzTokenFee(uint256 lzTokenFee)',
 ]);
@@ -338,8 +338,8 @@ function describeAxelarCustomError(revertData) {
         return `AxelarRailPlugin.ReceiverNotConfigured: dstChainId=${decoded.args.dstChainId.toString()}.`;
       case 'DestinationTokenNotConfigured':
         return `AxelarRailPlugin.DestinationTokenNotConfigured: dstChainId=${decoded.args.dstChainId.toString()}.`;
-      case 'SettlementTokenMismatch':
-        return `AxelarRailPlugin.SettlementTokenMismatch: provided=${decoded.args.provided}, expected=${decoded.args.expected}.`;
+      case 'RouteTokenMismatch':
+        return `AxelarRailPlugin.RouteTokenMismatch: provided=${decoded.args.provided}, expected=${decoded.args.expected}.`;
       case 'EmptyDestinationCalldata':
         return 'AxelarRailPlugin.EmptyDestinationCalldata: dstCalldata is required for Axelar receiver execution.';
       case 'InterchainTokenServiceMismatch':
@@ -364,8 +364,8 @@ function describeLayerZeroCustomError(revertData) {
         return `LayerZeroRailPlugin.UnsupportedRoute: dstChainId=${decoded.args.dstChainId.toString()}.`;
       case 'ReceiverNotConfigured':
         return `LayerZeroRailPlugin.ReceiverNotConfigured: dstChainId=${decoded.args.dstChainId.toString()}.`;
-      case 'SettlementTokenMismatch':
-        return `LayerZeroRailPlugin.SettlementTokenMismatch: provided=${decoded.args.provided}, expected=${decoded.args.expected}.`;
+      case 'RouteTokenMismatch':
+        return `LayerZeroRailPlugin.RouteTokenMismatch: provided=${decoded.args.provided}, expected=${decoded.args.expected}.`;
       case 'UnsupportedLzTokenFee':
         return `LayerZeroRailPlugin.UnsupportedLzTokenFee: lzTokenFee=${decoded.args.lzTokenFee.toString()}.`;
       default:

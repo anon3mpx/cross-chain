@@ -1,10 +1,12 @@
 import { IntentRepository, IntentTransitionOptions, RefundCaseUpsert } from '../db/IntentRepository';
+import { randomBytes } from 'crypto';
 import {
   Intent,
   IntentRefundCase,
   IntentStatus,
   QuoteResult,
   Rail,
+  RailOffer,
   RefundCaseStatus,
 } from '../types';
 import { IntentEngine } from './IntentEngine';
@@ -64,6 +66,11 @@ export class IntentService {
     return intent;
   }
 
+  async createQuotedIntentFromOffer(offer: RailOffer, userAddress: string, partnerApiKey?: string): Promise<Intent> {
+    const quote = this.materializeSelectedOfferQuote(offer);
+    return this.createQuotedIntent(quote, userAddress, partnerApiKey);
+  }
+
   async getIntent(intentId: string): Promise<Intent | null> {
     if (this.intentRepo) {
       const persisted = await this.intentRepo.getIntent(intentId);
@@ -82,6 +89,26 @@ export class IntentService {
       acc[status] = this.intentEngine.getByStatus(status).length;
       return acc;
     }, {} as Record<IntentStatus, number>);
+  }
+
+  async listIntentsByStatuses(statuses: IntentStatus[], limit = 500): Promise<Intent[]> {
+    const uniqueStatuses = [...new Set(statuses)];
+    if (uniqueStatuses.length === 0 || limit <= 0) return [];
+
+    if (this.intentRepo) {
+      const groups = await Promise.all(
+        uniqueStatuses.map((status) => this.intentRepo!.listIntentsByStatus(status, limit)),
+      );
+      return groups
+        .flat()
+        .sort((a, b) => b.updatedAt - a.updatedAt)
+        .slice(0, limit);
+    }
+
+    return uniqueStatuses
+      .flatMap((status) => this.intentEngine.getByStatus(status))
+      .sort((a, b) => b.updatedAt - a.updatedAt)
+      .slice(0, limit);
   }
 
   async markSubmitted(intentId: string, srcTxHash: string, options: IntentTransitionOptions = {}): Promise<Intent> {
@@ -236,6 +263,26 @@ export class IntentService {
 
   canRequestRefund(status: IntentStatus): boolean {
     return ![IntentStatus.CREATED, IntentStatus.QUOTED, IntentStatus.CANCELLED, IntentStatus.SETTLED].includes(status);
+  }
+
+  private materializeSelectedOfferQuote(offer: RailOffer): QuoteResult {
+    const executionQuote = offer.execution?.quote;
+    if (!executionQuote || typeof executionQuote !== 'object') {
+      throw new IntentLifecycleError(
+        'INVALID_OFFER_SELECTION',
+        `Selected offer ${offer.offerId} is missing its execution quote payload.`,
+      );
+    }
+
+    return {
+      ...(executionQuote as QuoteResult),
+      intentId: this.makeIntentId(),
+      selectedByUser: true,
+    };
+  }
+
+  private makeIntentId(): string {
+    return `0x${randomBytes(32).toString('hex')}`;
   }
 
   private async transition(

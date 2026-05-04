@@ -16,7 +16,7 @@ import { getCctpDomain, getRailEnumValue } from '../rails/registry';
 
 const ROUTER_ABI = [
   'event IntentInitiated(bytes32 indexed intentId, address indexed user, address tokenIn, uint256 amountIn, uint32 dstChainId, bytes32 railTxId)',
-  'function initiateSwap((address user,address tokenIn,address tokenOut,uint256 amountIn,uint256 minAmountOut,uint256 minSrcSwapOut,uint32 dstChainId,uint8 rail,uint8 settlementToken,uint256 feeAmount,bytes swapDataSrc,bytes swapDataDst,bytes32 swapPluginIdSrc,bytes32 dstSwapPluginId,bytes32 railPluginId,bytes railData,address dstReceiver,bytes nativeDstAddress,string thorAssetIdentifier,uint256 minThorOutput,bytes32 intentId,uint256 deadline) intent,bytes signature)',
+  'function initiateSwap((address user,address tokenIn,address tokenOut,uint256 amountIn,uint256 minAmountOut,uint256 minSrcSwapOut,uint32 dstChainId,uint8 rail,address routeToken,bytes32 routeAssetId,address expectedDstRouteToken,bytes32 expectedDstRouteAssetId,uint256 minRouteAmount,uint256 feeAmount,bytes swapDataSrc,bytes swapDataDst,bytes32 swapPluginIdSrc,bytes32 dstSwapPluginId,bytes32 railPluginId,bytes railData,uint256 dstGasLimit,address dstReceiver,bytes nativeDstAddress,string thorAssetIdentifier,uint256 minThorOutput,bytes32 intentId,uint256 deadline) intent,bytes signature)',
 ];
 const ROUTER_LEGACY_ABI = [
   'function initiateSwap((address user,address tokenIn,address tokenOut,uint256 amountIn,uint256 minAmountOut,uint256 minSrcSwapOut,uint32 dstChainId,uint8 rail,uint8 settlementToken,uint256 feeAmount,bytes swapDataSrc,bytes swapDataDst,bytes32 dstSwapPluginId,address dstReceiver,bytes nativeDstAddress,string thorAssetIdentifier,uint256 minThorOutput,bytes32 intentId,uint256 deadline) intent,bytes32 swapPluginId,bytes32 railPluginId)',
@@ -505,7 +505,7 @@ export class CctpAttestationWorker {
   private async _pollAttestation(job: RelayJob): Promise<AttestationResult> {
     const base = this._readEnv('CCTP_ATTESTATION_BASE_URL') || 'https://iris-api-sandbox.circle.com';
     const pollMs = this._readIntEnv('CCTP_ATTESTATION_POLL_MS', 4000);
-    const timeoutMs = this._readIntEnv('CCTP_ATTESTATION_TIMEOUT_MS', 10 * 60_000);
+    const timeoutMs = this._readIntEnv('CCTP_ATTESTATION_TIMEOUT_MS', 10 * 60_000); // 10 min
     const deadline = Date.now() + timeoutMs;
 
     const normalizedBase = base.replace(/\/$/, '');
