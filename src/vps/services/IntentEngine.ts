@@ -13,6 +13,7 @@ const STUCK_THRESHOLDS_MS: Record<Rail, number> = {
   [Rail.AXELAR]:    30 * 60 * 1000,  // 30 min (normally 90s)
   [Rail.LAYERZERO]: 10 * 60 * 1000,  // 10 min (normally 2 min)
   [Rail.WORMHOLE]:  10 * 60 * 1000,  // 10 min
+  [Rail.GASZIP]:    10 * 60 * 1000,  // provider-direct status polling
   [Rail.THORCHAIN]: 20 * 60 * 1000,  // 20 min incl. native-chain confirmation latency
 };
 

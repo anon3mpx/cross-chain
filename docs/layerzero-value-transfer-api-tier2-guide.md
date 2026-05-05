@@ -165,6 +165,35 @@ When enabled, runtime starts:
 - LayerZero Value Transfer API quote worker
 - LayerZero Value Transfer API monitor worker
 
+## Production Readiness Status
+
+Implemented:
+
+- LayerZero Value Transfer API client support for all documented endpoints:
+  - `GET /chains`
+  - `GET /tokens`
+  - `GET /metadata`
+  - `POST /quotes`
+  - `POST /build-user-steps`
+  - `POST /submit-signature`
+  - `GET /status/{quoteId}`
+- provider-direct quote generation through `QuoteEngine`
+- explicit `lz_api_direct` offer metadata
+- selected-offer execution metadata for EVM and Solana user steps
+- Solana route flagging for fresh `/build-user-steps`
+- signature route flagging for `/submit-signature`
+- intent status polling through the LayerZero status endpoint
+- existing DB-backed intent status transitions through `IntentService` when Postgres is enabled
+- focused unit tests for client, quote worker, monitor worker, quote engine, and selected-offer integration
+
+Remaining production hardening:
+
+- run live smoke tests with a real LayerZero API key
+- expose backend endpoints for frontend discovery and execution helpers
+- add dedicated provider-transfer persistence for richer provider status tracking
+- wire this into `PartnerAPI` when partner-facing exposure is approved
+- resolve unrelated CCTP/THOR economics test expectation failures in the broader VPS suite
+
 ## Configuration
 
 ```text
@@ -287,6 +316,69 @@ Longer-term, Ruflo can move from simple symbol allowlists to a data-driven provi
 ```
 
 That registry should still be curated. Discovery should not mean automatic exposure.
+
+## Frontend and API Surface
+
+The frontend should not call LayerZero directly for production routing.
+
+Backend should expose Ruflo-normalized endpoints for:
+
+- supported LayerZero Value Transfer API chains
+- supported LayerZero Value Transfer API tokens
+- route validation from source asset to destination asset
+- selected-offer execution details
+- fresh Solana user steps through `/build-user-steps`
+- signature submission through `/submit-signature`
+- user-submitted source tx hash or Solana signature for status tracking
+
+Frontend responsibilities:
+
+- display backend-normalized chains and assets
+- ask the user to sign the returned `userSteps`
+- call backend for fresh Solana user steps immediately before signing
+- submit EIP-712 signatures when a `SIGNATURE` step exists
+- report the submitted tx hash or Solana signature back to Ruflo
+
+## Provider Transfer Persistence
+
+Current implementation stores LayerZero API tracking on the intent quote using:
+
+```text
+layerZeroValueTransferApiQuoteId
+```
+
+Status transitions are persisted through the existing intent tables when Postgres is enabled.
+
+For production observability, add a provider-transfer record or table with:
+
+- `intent_id`
+- `provider = layerzero_value_transfer_api`
+- provider quote id
+- source tx hash or Solana signature
+- destination tx hash
+- latest provider status
+- route step types
+- last poll time
+- raw provider error payload
+
+This avoids overloading the quote JSON and makes THORChain, LayerZero, and future provider-direct rails easier to monitor consistently.
+
+## Live Smoke Test Checklist
+
+Run this only after receiving the real API key.
+
+Minimum checks:
+
+1. `GET /chains` returns expected EVM and Solana chains.
+2. `GET /tokens` returns curated assets for configured chains.
+3. `GET /metadata` returns transfer delegate and multicall metadata for EVM chains.
+4. `POST /quotes` returns at least one EVM route for a small curated asset amount.
+5. EVM quote `userSteps` can be signed and submitted from a test wallet.
+6. Solana quote is rebuilt with `/build-user-steps` immediately before signing.
+7. `POST /submit-signature` works for a route that returns a `SIGNATURE` step.
+8. `GET /status/{quoteId}` moves from pending/processing to succeeded or failed.
+9. Ruflo intent status updates match the provider status.
+10. Failed/rejected quotes are normalized into a user-safe error.
 
 ## Tests
 

@@ -1,6 +1,6 @@
 {
   "scripts": {
-    "db:migrate": "psql \"$DATABASE_URL\" -f src/vps/db/schema.sql",
+    "db:migrate": "tsx src/vps/db/migrate.ts",
     "sol:build": "forge build --config-path config/foundry.toml",
     "sol:test": "forge test --config-path config/foundry.toml -vv",
     "sol:deploy:all": "set -a; [ -f .env ] && . ./.env; set +a; test -n \"$RPC_URL\" || (echo \"RPC_URL is required (set env or .env)\" && exit 1); forge script config/foundry/scripts/DeployAll.s.sol:DeployAll --config-path config/foundry.toml --rpc-url \"$RPC_URL\" --broadcast -vvv",

@@ -18,6 +18,7 @@ export enum Rail {
   LAYERZERO = 'LAYERZERO',  // $0.35, 80+ chains, configurable DVN
   VIA_LABS  = 'VIA_LABS',   // $0.25, 30+ chains, API-first
   WORMHOLE  = 'WORMHOLE',   // EVM↔SVM SPL tokens + NTT, 30+ chains
+  GASZIP    = 'GASZIP',     // Provider-direct destination native gas delivery via Gas.zip API
 
   // ── Liquidity rail (AMM-based, direct native delivery, no ReceiverV1) ─────
   THORCHAIN = 'THORCHAIN',  // Free+slip, native BTC/ETH/SOL/DOGE/AVAX/BSC/BASE
@@ -25,7 +26,7 @@ export enum Rail {
 
 // ── Rail category helpers ──────────────────────────────────────────────────────
 export const LIQUIDITY_RAILS = new Set([Rail.THORCHAIN]);
-export const MESSAGING_RAILS = new Set([Rail.CCTP, Rail.CCTP_FAST, Rail.AXELAR, Rail.LAYERZERO, Rail.VIA_LABS, Rail.WORMHOLE]);
+export const MESSAGING_RAILS = new Set([Rail.CCTP, Rail.CCTP_FAST, Rail.AXELAR, Rail.LAYERZERO, Rail.VIA_LABS, Rail.WORMHOLE, Rail.GASZIP]);
 
 // ── Non-EVM pseudo chain IDs (used internally, never on-chain) ────────────────
 export const CHAIN_ID = {
@@ -135,7 +136,15 @@ export interface QuoteRequest {
   dstChainId:   number;
   userAddress:  string;
   nativeDstAddress?: string;  // Required for BTC/SOL destinations
+  destinationGas?: DestinationGasRequest[];
   urgency?:     'fast' | 'normal';
+}
+
+export interface DestinationGasRequest {
+  provider?: 'gaszip';
+  chainId: number;
+  amountWei: string;
+  recipient?: string;
 }
 
 export interface QuoteResult {
@@ -196,6 +205,7 @@ export type RailOfferType =
   | 'lz_stargate_pool'
   | 'lz_stargate_oft'
   | 'lz_api_direct'
+  | 'gaszip_api_direct'
   | 'thor_api_direct';
 
 export type DeliveryShape =

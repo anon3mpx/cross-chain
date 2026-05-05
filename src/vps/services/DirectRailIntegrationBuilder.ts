@@ -34,6 +34,21 @@ export type SelectedOfferIntegration =
       requiresFreshUserSteps: boolean;
       submitSignatureRequired: boolean;
     };
+  }
+  | {
+    mode: 'provider_direct';
+    action: {
+      kind: 'gaszip_transfer';
+      recipient: string;
+      expectedAmountOut: string;
+      expiresAt: number;
+    };
+    tx?: {
+      to: string;
+      data: string;
+      value: string;
+      chainId: number;
+    };
   };
 
 function materializeSelectedOfferQuote(offer: RailOffer): QuoteResult {
@@ -60,6 +75,14 @@ function isLayerZeroValueTransferApiProviderDirectOffer(offer: RailOffer): boole
     : '';
   if (provider === 'layerzero_value_transfer_api') return true;
   return offer.rail === 'LAYERZERO' && offer.offerType === 'lz_api_direct';
+}
+
+function isGasZipProviderDirectOffer(offer: RailOffer): boolean {
+  const provider = typeof offer.execution?.provider === 'string'
+    ? offer.execution.provider.toLowerCase()
+    : '';
+  if (provider === 'gaszip') return true;
+  return offer.rail === 'GASZIP' || offer.offerType === 'gaszip_api_direct';
 }
 
 function readLayerZeroValueTransferApiUserSteps(offer: RailOffer): LayerZeroValueTransferApiUserStep[] {
@@ -164,6 +187,34 @@ export async function buildSelectedOfferIntegration(
         requiresFreshUserSteps: requiresFreshLayerZeroValueTransferApiUserSteps(userSteps),
         submitSignatureRequired: hasLayerZeroValueTransferApiStepType(userSteps, 'SIGNATURE'),
       },
+    };
+  }
+
+  if (isGasZipProviderDirectOffer(offer)) {
+    const execution = offer.execution as Record<string, unknown>;
+    const quote = execution.quote as Record<string, unknown> | undefined;
+    const rawTx = execution.tx as Record<string, unknown> | undefined;
+    const recipient = String(execution.recipient ?? quote?.nativeDstAddress ?? '');
+    const expectedAmountOut = String(execution.expectedAmountWei ?? quote?.estimatedOut ?? '');
+    const expiresAt = Number(execution.expiresAt ?? quote?.expiresAt ?? 0);
+    const tx = rawTx && typeof rawTx === 'object'
+      ? {
+        to: String(rawTx.to ?? execution.directDepositAddress ?? ''),
+        data: String(rawTx.data ?? execution.calldata ?? '0x'),
+        value: String(rawTx.value ?? execution.sourceValueWei ?? ''),
+        chainId: Number(rawTx.chainId ?? quote?.srcChainId ?? 0),
+      }
+      : undefined;
+
+    return {
+      mode: 'provider_direct',
+      action: {
+        kind: 'gaszip_transfer',
+        recipient,
+        expectedAmountOut,
+        expiresAt,
+      },
+      ...(tx && tx.to ? { tx } : {}),
     };
   }
 

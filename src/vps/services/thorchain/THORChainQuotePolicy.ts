@@ -115,7 +115,7 @@ export function shouldReuseCachedOfferSet(offerSet: OfferSet): boolean {
 }
 
 export function isQuoteCacheable(quote: QuoteResult): boolean {
-  return quote.rail !== Rail.THORCHAIN && !quote.layerZeroValueTransferApiQuoteId;
+  return quote.rail !== Rail.THORCHAIN && quote.rail !== Rail.GASZIP && !quote.layerZeroValueTransferApiQuoteId;
 }
 
 async function resolveTHORChainAsset(chainId: number, token: string): Promise<ResolvedTHORChainAsset | null> {

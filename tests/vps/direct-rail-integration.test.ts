@@ -205,3 +205,35 @@ test('provider_direct LayerZero Value Transfer API offers mark Solana execution 
   assert.equal(integration.action.requiresFreshUserSteps, true);
   assert.equal(integration.action.userSteps[0]?.chainType, 'SOLANA');
 });
+
+test('provider_direct Gas.zip offers return normalized direct-deposit transaction helpers', async () => {
+  const integration = await buildSelectedOfferIntegration('0x' + '88'.repeat(32), {
+    rail: 'GASZIP',
+    offerType: 'gaszip_api_direct',
+    executionMode: 'provider_direct',
+    execution: {
+      provider: 'gaszip',
+      expectedAmountWei: '800000000000000',
+      recipient: '0x3333333333333333333333333333333333333333',
+      expiresAt: 1_900_000_123,
+      directDepositAddress: '0x391E7C679d29bD940d63be94AD22A25d25b5A604',
+      quote: {
+        srcChainId: 8453,
+      },
+      tx: {
+        to: '0x391E7C679d29bD940d63be94AD22A25d25b5A604',
+        data: '0x010039',
+        value: '805000000000000',
+        chainId: 8453,
+      },
+    },
+  } as any, '0x3333333333333333333333333333333333333333');
+
+  assert.equal(integration.mode, 'provider_direct');
+  assert.equal(integration.action.kind, 'gaszip_transfer');
+  assert.equal(integration.action.expectedAmountOut, '800000000000000');
+  assert.equal(integration.tx?.to, '0x391E7C679d29bD940d63be94AD22A25d25b5A604');
+  assert.equal(integration.tx?.data, '0x010039');
+  assert.equal(integration.tx?.value, '805000000000000');
+  assert.equal(integration.tx?.chainId, 8453);
+});

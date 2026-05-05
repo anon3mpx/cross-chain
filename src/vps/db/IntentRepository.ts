@@ -8,6 +8,7 @@ import {
   RefundResolutionKind,
 } from '../types';
 import { reviveQuote, toDbJson, toIntentRow } from './json';
+import { toFriendlyIntentPersistenceError } from './schemaCompatibility';
 
 export interface IntentEventWrite {
   intentId: string;
@@ -340,52 +341,61 @@ export class IntentRepository {
 
   private async upsertIntentWithClient(client: Pool | PoolClient, intent: Intent): Promise<void> {
     const row = toIntentRow(intent);
-    await client.query(
-      `INSERT INTO intents (
-         intent_id, status, user_address, src_chain_id, dst_chain_id,
-         rail, fallback_rail, quote, src_tx_hash, rail_tx_id, dst_tx_hash,
-         retry_count, error_message, partner_api_key, created_at, updated_at
-       ) VALUES (
-         $1, $2, $3, $4, $5,
-         $6, $7, $8::jsonb, $9, $10, $11,
-         $12, $13, $14, $15, $16
-       )
-       ON CONFLICT (intent_id)
-       DO UPDATE SET
-         status = EXCLUDED.status,
-         user_address = EXCLUDED.user_address,
-         src_chain_id = EXCLUDED.src_chain_id,
-         dst_chain_id = EXCLUDED.dst_chain_id,
-         rail = EXCLUDED.rail,
-         fallback_rail = EXCLUDED.fallback_rail,
-         quote = EXCLUDED.quote,
-         src_tx_hash = EXCLUDED.src_tx_hash,
-         rail_tx_id = EXCLUDED.rail_tx_id,
-         dst_tx_hash = EXCLUDED.dst_tx_hash,
-         retry_count = EXCLUDED.retry_count,
-         error_message = EXCLUDED.error_message,
-         partner_api_key = EXCLUDED.partner_api_key,
-         updated_at = EXCLUDED.updated_at,
-         version = intents.version + 1`,
-      [
-        row.intent_id,
-        row.status,
-        row.user_address,
-        row.src_chain_id,
-        row.dst_chain_id,
-        row.rail,
-        row.fallback_rail,
-        JSON.stringify(row.quote),
-        row.src_tx_hash,
-        row.rail_tx_id,
-        row.dst_tx_hash,
-        row.retry_count,
-        row.error_message,
-        row.partner_api_key,
-        row.created_at,
-        row.updated_at,
-      ],
-    );
+    try {
+      await client.query(
+        `INSERT INTO intents (
+           intent_id, status, user_address, src_chain_id, dst_chain_id,
+           rail, fallback_rail, quote, src_tx_hash, rail_tx_id, dst_tx_hash,
+           retry_count, error_message, partner_api_key, created_at, updated_at
+         ) VALUES (
+           $1, $2, $3, $4, $5,
+           $6, $7, $8::jsonb, $9, $10, $11,
+           $12, $13, $14, $15, $16
+         )
+         ON CONFLICT (intent_id)
+         DO UPDATE SET
+           status = EXCLUDED.status,
+           user_address = EXCLUDED.user_address,
+           src_chain_id = EXCLUDED.src_chain_id,
+           dst_chain_id = EXCLUDED.dst_chain_id,
+           rail = EXCLUDED.rail,
+           fallback_rail = EXCLUDED.fallback_rail,
+           quote = EXCLUDED.quote,
+           src_tx_hash = EXCLUDED.src_tx_hash,
+           rail_tx_id = EXCLUDED.rail_tx_id,
+           dst_tx_hash = EXCLUDED.dst_tx_hash,
+           retry_count = EXCLUDED.retry_count,
+           error_message = EXCLUDED.error_message,
+           partner_api_key = EXCLUDED.partner_api_key,
+           updated_at = EXCLUDED.updated_at,
+           version = intents.version + 1`,
+        [
+          row.intent_id,
+          row.status,
+          row.user_address,
+          row.src_chain_id,
+          row.dst_chain_id,
+          row.rail,
+          row.fallback_rail,
+          JSON.stringify(row.quote),
+          row.src_tx_hash,
+          row.rail_tx_id,
+          row.dst_tx_hash,
+          row.retry_count,
+          row.error_message,
+          row.partner_api_key,
+          row.created_at,
+          row.updated_at,
+        ],
+      );
+    } catch (error) {
+      const friendly = toFriendlyIntentPersistenceError(error, {
+        rail: row.rail,
+        fallbackRail: row.fallback_rail,
+      });
+      if (friendly) throw friendly;
+      throw error;
+    }
   }
 
   private async appendIntentEventWithClient(client: Pool | PoolClient, event: IntentEventWrite): Promise<void> {

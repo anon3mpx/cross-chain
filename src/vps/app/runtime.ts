@@ -1,5 +1,6 @@
 import { CHAIN_CONFIGS } from '../config/chains';
 import { createPostgresIntentStore, PostgresIntentStore } from '../db/bootstrap';
+import { assertPostgresRailSchemaCompatibility } from '../db/schemaCompatibility';
 import { buildPartnerAPI, setupWebhookPush } from '../api/PartnerAPI';
 import { ApiKeyManager } from '../services/ApiKeyManager';
 import { EventMonitor } from '../services/EventMonitor';
@@ -73,6 +74,9 @@ export async function buildRuntime(options: RuntimeOptions = {}): Promise<Runtim
 
   const intentEngine = new IntentEngine();
   const postgres = enablePostgres ? createPostgresIntentStore() : undefined;
+  if (postgres) {
+    await assertPostgresRailSchemaCompatibility(postgres.pool);
+  }
   const intentService = new IntentService(intentEngine, postgres?.repo);
   const quoteCache: QuoteCache = await createQuoteCacheFromEnv(process.env);
   const quoteEngine = new QuoteEngine(quoteCache, {

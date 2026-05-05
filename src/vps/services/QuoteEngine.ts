@@ -50,6 +50,10 @@ import {
   LayerZeroValueTransferApiQuoteWorker,
   type LayerZeroValueTransferApiQuoteResult,
 } from './layerzero/LayerZeroValueTransferApiQuoteWorker';
+import {
+  GasZipQuoteWorker,
+  type GasZipQuoteResult,
+} from './gaszip/GasZipQuoteWorker';
 import { RailSelector } from './RailSelector';
 import {
   ZERO_PLUGIN_ID,
@@ -122,6 +126,7 @@ export interface QuoteEngineDependencies {
   axelarAssetCatalog?: Pick<AxelarAssetCatalog, 'listRoutes'>;
   layerZeroRouteCatalog?: Pick<LayerZeroRouteCatalog, 'listRoutes'>;
   layerZeroValueTransferApiQuoteWorker?: Pick<LayerZeroValueTransferApiQuoteWorker, 'quoteLayerZeroValueTransferApi'>;
+  gasZipQuoteWorker?: Pick<GasZipQuoteWorker, 'quoteDirectDeposit'>;
 }
 
 export class QuoteEngine {
@@ -134,6 +139,7 @@ export class QuoteEngine {
   private readonly axelarAssetCatalog: Pick<AxelarAssetCatalog, 'listRoutes'>;
   private readonly layerZeroRouteCatalog: Pick<LayerZeroRouteCatalog, 'listRoutes'>;
   private readonly layerZeroValueTransferApiQuoteWorker?: Pick<LayerZeroValueTransferApiQuoteWorker, 'quoteLayerZeroValueTransferApi'>;
+  private readonly gasZipQuoteWorker?: Pick<GasZipQuoteWorker, 'quoteDirectDeposit'>;
   private readonly thorchainQuoteWorker?: Pick<THORChainQuoteWorker, 'quote'>;
   private readonly routeAssetPolicy: RouteAssetPolicy;
   private readonly destinationGasPolicy: DestinationGasPolicy;
@@ -159,6 +165,12 @@ export class QuoteEngine {
       ? deps.layerZeroValueTransferApiQuoteWorker
       : this._readBoolEnv('ENABLE_LAYERZERO_TRANSFER_API', false)
         ? new LayerZeroValueTransferApiQuoteWorker()
+        : undefined;
+    const hasExplicitGasZipWorker = Object.prototype.hasOwnProperty.call(deps, 'gasZipQuoteWorker');
+    this.gasZipQuoteWorker = hasExplicitGasZipWorker
+      ? deps.gasZipQuoteWorker
+      : this._readBoolEnv('ENABLE_GASZIP_DIRECT_DEPOSIT', false)
+        ? new GasZipQuoteWorker()
         : undefined;
     const hasExplicitThorchainWorker = Object.prototype.hasOwnProperty.call(deps, 'thorchainQuoteWorker');
     if (hasExplicitThorchainWorker) {
@@ -642,6 +654,10 @@ export class QuoteEngine {
     if (layerZeroValueTransferApiOffer) {
       offers.push(layerZeroValueTransferApiOffer);
     }
+    const gasZipOffer = await this._buildGasZipProviderDirectOffer(req);
+    if (gasZipOffer) {
+      offers.push(gasZipOffer);
+    }
     if (offers.length === 0) return null;
 
     const offerSet = this._toOfferSet(offers);
@@ -890,6 +906,103 @@ export class QuoteEngine {
     };
   }
 
+  private async _buildGasZipProviderDirectOffer(
+    req: QuoteRequest,
+  ): Promise<RailOffer | null> {
+    if (!this.gasZipQuoteWorker) return null;
+
+    let result: GasZipQuoteResult | null;
+    try {
+      result = await this.gasZipQuoteWorker.quoteDirectDeposit(req);
+    } catch {
+      return null;
+    }
+    if (!result) return null;
+
+    const amountIn = this._parseBigInt(result.sourceValueWei);
+    const estimatedOut = this._parseBigInt(result.expectedAmountWei);
+    if (!amountIn || amountIn <= 0n || !estimatedOut || estimatedOut <= 0n) return null;
+
+    const intentId = this._makeIntentId();
+    const nativePlaceholder = '0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee';
+    const settlementToken = this._inferSettlementTokenFromSymbol(result.destinationSymbol);
+    const sourceAsset = this._toGasZipProviderAssetRef(result.srcChainId, result.sourceSymbol);
+    const destinationAsset = this._toGasZipProviderAssetRef(result.dstChainId, result.destinationSymbol);
+
+    const quote: QuoteResult = {
+      intentId,
+      srcChainId: req.srcChainId,
+      dstChainId: req.dstChainId,
+      tokenIn: nativePlaceholder,
+      tokenOut: nativePlaceholder,
+      amountIn,
+      estimatedOut,
+      minAmountOut: estimatedOut,
+      minSrcSwapOut: 0n,
+      feeAmountUSD: result.providerFeeUsd,
+      feeAmountToken: 0n,
+      rail: Rail.GASZIP,
+      railType: 'messaging',
+      settlementToken,
+      routeAsset: sourceAsset,
+      settlementAssetId: this._zeroBytes32(),
+      expectedDstSettlementToken: nativePlaceholder,
+      expectedDstSettlementAssetId: this._zeroBytes32(),
+      minSettlementAmount: estimatedOut,
+      dstGasLimit: 0,
+      etaSeconds: result.settlementTimeSeconds,
+      expiresAt: result.expiresAt,
+      railPluginId: ZERO_PLUGIN_ID,
+      railData: '0x',
+      swapPluginIdSrc: ZERO_PLUGIN_ID,
+      swapPluginIdDst: ZERO_PLUGIN_ID,
+      swapDataSrc: '0x',
+      swapDataDst: '0x',
+      nativeDstAddress: result.recipient,
+    };
+
+    return {
+      offerId: intentId,
+      rail: Rail.GASZIP,
+      offerType: 'gaszip_api_direct',
+      railType: 'messaging',
+      srcChainId: req.srcChainId,
+      dstChainId: req.dstChainId,
+      tokenIn: quote.tokenIn,
+      tokenOut: quote.tokenOut,
+      amountIn,
+      estimatedOut,
+      minAmountOut: estimatedOut,
+      expiresAt: result.expiresAt,
+      deliveryShape: 'direct',
+      executionMode: 'provider_direct',
+      routeAsset: sourceAsset,
+      sourceSettlementAsset: sourceAsset,
+      destinationSettlementAsset: destinationAsset,
+      economics: {
+        providerFeeUSD: result.providerFeeUsd,
+        protocolFeeUSD: 0,
+        sourceGasUSD: 0,
+        settlementTimeSeconds: result.settlementTimeSeconds,
+      },
+      execution: {
+        provider: 'gaszip',
+        quote,
+        directDepositAddress: result.directDepositAddress,
+        calldata: result.calldata,
+        requestedAmountWei: result.requestedAmountWei,
+        expectedAmountWei: result.expectedAmountWei,
+        sourceValueWei: result.sourceValueWei,
+        tx: {
+          to: result.directDepositAddress,
+          data: result.calldata,
+          value: result.sourceValueWei,
+          chainId: result.srcChainId,
+        },
+      },
+    };
+  }
+
   private _toProviderAssetRef(
     chainId: number,
     canonicalAssetId: string,
@@ -923,6 +1036,20 @@ export class QuoteEngine {
       decimals: token.decimals,
       assetKind: canonicalAssetId === 'ETH' ? 'native' : 'erc20',
       assetStandard: canonicalAssetId === 'ETH' ? 'native' : 'erc20',
+    };
+  }
+
+  private _toGasZipProviderAssetRef(chainId: number, symbol: string): ProviderAssetRef {
+    const canonicalAssetId = symbol.trim().toUpperCase();
+    return {
+      canonicalAssetId,
+      providerAssetId: `gaszip:${chainId}:native`,
+      tokenAddress: '0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee',
+      srcTokenAddress: '0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee',
+      dstTokenAddress: '0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee',
+      decimals: 18,
+      assetKind: 'native',
+      assetStandard: 'native',
     };
   }
 
@@ -1015,7 +1142,7 @@ export class QuoteEngine {
   }
 
   private _executionModeFor(rail: Rail): ExecutionMode {
-    return rail === Rail.THORCHAIN ? 'provider_direct' : 'router_intent';
+    return rail === Rail.THORCHAIN || rail === Rail.GASZIP ? 'provider_direct' : 'router_intent';
   }
 
   private _deliveryShapeFor(quote: QuoteResult): DeliveryShape {
