@@ -73,7 +73,7 @@ test('GasZipQuoteWorker maps direct-deposit quotes into provider-direct executio
   assert.equal(result!.recipient, USER);
 });
 
-test('GasZipQuoteWorker returns null when destination gas is absent or the route is not native-to-native', async () => {
+test('GasZipQuoteWorker returns null when destination gas is absent', async () => {
   const worker = new GasZipQuoteWorker(
     {
       listChains: async () => ({ chains: [] }),
@@ -95,9 +95,45 @@ test('GasZipQuoteWorker returns null when destination gas is absent or the route
     dstChainId: 42161,
     userAddress: USER,
   });
-  const nonNativeRoute = await worker.quoteDirectDeposit({
+
+  assert.equal(noGasRequest, null);
+});
+
+test('GasZipQuoteWorker can quote destination gas for non-native primary transfer requests', async () => {
+  const worker = new GasZipQuoteWorker(
+    {
+      listChains: async () => ({
+        chains: [
+          { name: 'Base', chain: 8453, short: 1, gas: '21000', gwei: '1', bal: '1', rpcs: [], symbol: 'ETH', price: 2500 },
+          { name: 'Arbitrum', chain: 42161, short: 2, gas: '21000', gwei: '0.1', bal: '1', rpcs: [], symbol: 'ETH', price: 2500 },
+        ],
+      }),
+      getQuoteReverse: async () => ({
+        chain: 8453,
+        required: 805000000000000,
+        gas: 5000000000000,
+        speed: 7,
+        usd: 2.01,
+      }),
+      getCalldataQuote: async () => ({
+        calldata: '0x010039',
+        quotes: [
+          {
+            chain: 42161,
+            expected: '800000000000000',
+            gas: '5000000000000',
+            speed: 7,
+            usd: 2.01,
+          },
+        ],
+      }),
+    },
+    { enabled: true },
+  );
+
+  const result = await worker.quoteDirectDeposit({
     tokenIn: '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913',
-    tokenOut: NATIVE,
+    tokenOut: '0xaf88d065e77c8cC2239327C5EDb3A432268e5831',
     amountIn: 1_000_000n,
     srcChainId: 8453,
     dstChainId: 42161,
@@ -105,6 +141,6 @@ test('GasZipQuoteWorker returns null when destination gas is absent or the route
     destinationGas: [{ chainId: 42161, amountWei: '800000000000000' }],
   });
 
-  assert.equal(noGasRequest, null);
-  assert.equal(nonNativeRoute, null);
+  assert.ok(result);
+  assert.equal(result!.expectedAmountWei, '800000000000000');
 });

@@ -1,4 +1,4 @@
-import { DestinationGasRequest, OfferSet, QuoteRequest, QuoteResult } from '../types';
+import { DestinationGasRequest, GasZipOfferComposition, OfferSet, QuoteRequest, QuoteResult } from '../types';
 
 type Json = null | boolean | number | string | Json[] | { [k: string]: Json };
 const EMPTY_TEXT_VALUES = new Set(['', 'undefined', 'null']);
@@ -79,6 +79,10 @@ export function serializeQuote(quote: QuoteResult): Json {
 
 export function serializeOfferSet(offerSet: OfferSet): Json {
   return toJSONSafe(offerSet);
+}
+
+export function serializeGasZipComposition(composition: GasZipOfferComposition): Json {
+  return toJSONSafe(composition);
 }
 
 export function parseOfferSelection(input: any): { offerSetId: string; offerId: string } {

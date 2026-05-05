@@ -11,8 +11,8 @@ import { CHAIN_CONFIGS } from '../config/chains';
 import { IntentService, IntentLifecycleError } from '../services/IntentService';
 import { QuoteEngine } from '../services/QuoteEngine';
 import { buildSelectedOfferIntegration } from '../services/DirectRailIntegrationBuilder';
-import { Intent, IntentStatus } from '../types';
-import { parseOfferSelection, parseQuoteRequest, serializeOfferSet, serializeQuote } from './quoteCodec';
+import { ComposedIntentStatus, Intent, IntentStatus, Rail } from '../types';
+import { parseOfferSelection, parseQuoteRequest, serializeGasZipComposition, serializeOfferSet, serializeQuote } from './quoteCodec';
 import { buildIntentActionMessage, IntentAction, SIGNATURE_WINDOW_MS } from '../utils/intentActionAuth';
 import { getRailVariantLabel } from '../rails/registry';
 
@@ -232,9 +232,11 @@ export function buildStatusAPI(
       if (!offerSet) return res.status(400).json({ error: 'No route available for this pair' });
 
       const quote = await quoteEngine.getQuote(quoteReq);
+      const gasZipComposition = quoteEngine.buildGasZipComposition(quoteReq, offerSet);
       res.json({
         offerSet: serializeOfferSet(offerSet),
         ...(quote ? { quote: serializeQuote(quote) } : {}),
+        ...(gasZipComposition ? { gasZipComposition: serializeGasZipComposition(gasZipComposition) } : {}),
       });
     } catch (err) {
       const msg = String(err);
@@ -276,6 +278,84 @@ export function buildStatusAPI(
     }
   });
 
+  app.post('/quote/select-composed', async (req: Request, res: Response) => {
+    try {
+      const {
+        offerSetId,
+        primaryTransferOfferId,
+        gasZipDestinationGasOfferId,
+      } = parseComposedOfferSelection(req.body);
+      const userAddress = typeof req.body?.userAddress === 'string' ? req.body.userAddress.trim() : '';
+      if (!userAddress) {
+        return res.status(400).json({ error: 'userAddress is required' });
+      }
+
+      const [primaryTransferOffer, gasZipDestinationGasOffer] = await Promise.all([
+        quoteEngine.getOfferBySelection(offerSetId, primaryTransferOfferId),
+        quoteEngine.getOfferBySelection(offerSetId, gasZipDestinationGasOfferId),
+      ]);
+      if (!primaryTransferOffer || !gasZipDestinationGasOffer) {
+        return res.status(404).json({
+          error: 'OFFER_NOT_FOUND',
+          message: 'One or more composed offers are unavailable or expired.',
+        });
+      }
+      if (primaryTransferOffer.rail === Rail.GASZIP) {
+        return res.status(400).json({ error: 'primaryTransferOfferId must reference a non-GASZIP offer' });
+      }
+      if (gasZipDestinationGasOffer.rail !== Rail.GASZIP) {
+        return res.status(400).json({ error: 'gasZipDestinationGasOfferId must reference a GASZIP offer' });
+      }
+
+      const [primaryTransferIntent, gasZipDestinationGasIntent] = await Promise.all([
+        intentService.createQuotedIntentFromOffer(primaryTransferOffer, userAddress),
+        intentService.createQuotedIntentFromOffer(gasZipDestinationGasOffer, userAddress),
+      ]);
+      const [primaryTransferIntegration, gasZipDestinationGasIntegration] = await Promise.all([
+        buildSelectedOfferIntegration(primaryTransferIntent.intentId, primaryTransferOffer, userAddress),
+        buildSelectedOfferIntegration(gasZipDestinationGasIntent.intentId, gasZipDestinationGasOffer, userAddress),
+      ]);
+      const tracking = buildComposedTracking(
+        primaryTransferIntent.intentId,
+        gasZipDestinationGasIntent.intentId,
+      );
+
+      res.json({
+        composedIntentId: tracking.composedIntentId,
+        status: 'QUOTED' satisfies ComposedIntentStatus,
+        executionPlan: [
+          {
+            step: 1,
+            label: 'primary_transfer',
+            intentId: primaryTransferIntent.intentId,
+            rail: primaryTransferIntent.quote.rail,
+          },
+          {
+            step: 2,
+            label: 'gaszip_destination_gas',
+            intentId: gasZipDestinationGasIntent.intentId,
+            rail: gasZipDestinationGasIntent.quote.rail,
+          },
+        ],
+        primaryTransfer: {
+          intentId: primaryTransferIntent.intentId,
+          quote: serializeQuote(primaryTransferIntent.quote),
+          integration: primaryTransferIntegration,
+        },
+        gasZipDestinationGas: {
+          intentId: gasZipDestinationGasIntent.intentId,
+          quote: serializeQuote(gasZipDestinationGasIntent.quote),
+          integration: gasZipDestinationGasIntegration,
+        },
+        tracking,
+      });
+    } catch (err) {
+      const msg = String(err);
+      const code = msg.toLowerCase().includes('calldata') || msg.toLowerCase().includes('routerv1') ? 503 : 400;
+      res.status(code).json({ error: msg });
+    }
+  });
+
   // ── GET /intent/:id ────────────────────────────────────────────────────────
   // Poll this for intent status. Frontend shows progress to user.
   app.get('/intent/:id', async (req: Request, res: Response) => {
@@ -287,6 +367,54 @@ export function buildStatusAPI(
     if (!intent) return res.status(404).json({ error: 'Intent not found' });
 
     res.json(await serializeIntent(intent));
+  });
+
+  app.get('/intent/composed/:primaryIntentId/:gasZipIntentId', async (req: Request, res: Response) => {
+    const primaryIntentId = String(req.params.primaryIntentId);
+    const gasZipIntentId = String(req.params.gasZipIntentId);
+    const [primaryIntent, gasZipIntent] = await Promise.all([
+      loadIntent(primaryIntentId),
+      loadIntent(gasZipIntentId),
+    ]);
+    if (primaryIntent === 'unavailable' || gasZipIntent === 'unavailable') {
+      return res.status(503).json({ error: 'STATUS_UNAVAILABLE' });
+    }
+    if (!primaryIntent || !gasZipIntent) {
+      return res.status(404).json({ error: 'Intent not found' });
+    }
+    if (gasZipIntent.quote.rail !== Rail.GASZIP) {
+      return res.status(400).json({ error: 'gasZipIntentId must reference a GASZIP intent' });
+    }
+
+    const primaryTransfer = await serializeIntent(primaryIntent);
+    const gasZipDestinationGas = await serializeIntent(gasZipIntent);
+    const tracking = buildComposedTracking(primaryIntentId, gasZipIntentId);
+
+    res.json({
+      composedIntentId: tracking.composedIntentId,
+      status: composeIntentStatus(primaryIntent.status, gasZipIntent.status),
+      createdAt: Math.min(primaryIntent.createdAt, gasZipIntent.createdAt),
+      updatedAt: Math.max(primaryIntent.updatedAt, gasZipIntent.updatedAt),
+      executionPlan: [
+        {
+          step: 1,
+          label: 'primary_transfer',
+          intentId: primaryIntent.intentId,
+          rail: primaryIntent.quote.rail,
+        },
+        {
+          step: 2,
+          label: 'gaszip_destination_gas',
+          intentId: gasZipIntent.intentId,
+          rail: gasZipIntent.quote.rail,
+        },
+      ],
+      primaryTransfer,
+      gasZipDestinationGas,
+      canCancel: intentService.canCancel(primaryIntent.status) && intentService.canCancel(gasZipIntent.status),
+      canRequestRefund: intentService.canRequestRefund(primaryIntent.status) || intentService.canRequestRefund(gasZipIntent.status),
+      tracking,
+    });
   });
 
   app.post('/intent/:id/submitted', async (req: Request, res: Response) => {
@@ -429,6 +557,27 @@ export function buildStatusAPI(
     }
   }
 
+  function parseComposedOfferSelection(input: any): {
+    offerSetId: string;
+    primaryTransferOfferId: string;
+    gasZipDestinationGasOfferId: string;
+  } {
+    if (!input || typeof input !== 'object') throw new Error('Invalid payload');
+    const offerSetId = typeof input.offerSetId === 'string' ? input.offerSetId.trim() : '';
+    const primaryTransferOfferId = typeof input.primaryTransferOfferId === 'string' ? input.primaryTransferOfferId.trim() : '';
+    const gasZipDestinationGasOfferId = typeof input.gasZipDestinationGasOfferId === 'string'
+      ? input.gasZipDestinationGasOfferId.trim()
+      : '';
+    if (!offerSetId || !primaryTransferOfferId || !gasZipDestinationGasOfferId) {
+      throw new Error('offerSetId, primaryTransferOfferId and gasZipDestinationGasOfferId are required');
+    }
+    return {
+      offerSetId,
+      primaryTransferOfferId,
+      gasZipDestinationGasOfferId,
+    };
+  }
+
   async function cancelSubmittedIntent(
     intent: Intent,
     userAddress: string,
@@ -541,6 +690,36 @@ export function buildStatusAPI(
     });
     providers.set(chainId, provider);
     return provider;
+  }
+
+  function buildComposedTracking(primaryIntentId: string, gasZipIntentId: string) {
+    const composedIntentId = ethers.keccak256(
+      ethers.solidityPacked(['bytes32', 'bytes32'], [primaryIntentId, gasZipIntentId]),
+    );
+    return {
+      composedIntentId,
+      primaryTransferIntentId: primaryIntentId,
+      gasZipDestinationGasIntentId: gasZipIntentId,
+      statusPath: `/intent/composed/${primaryIntentId}/${gasZipIntentId}`,
+    };
+  }
+
+  function composeIntentStatus(
+    primaryStatus: IntentStatus,
+    gasZipStatus: IntentStatus,
+  ): ComposedIntentStatus {
+    const statuses = [primaryStatus, gasZipStatus];
+    if (statuses.every((status) => status === IntentStatus.CANCELLED)) return 'CANCELLED';
+    if (statuses.includes(IntentStatus.RECOVERING)) return 'RECOVERING';
+    if (statuses.includes(IntentStatus.STUCK)) return 'STUCK';
+    if (statuses.every((status) => status === IntentStatus.SETTLED)) return 'SETTLED';
+    if (statuses.includes(IntentStatus.FAILED)) {
+      return statuses.includes(IntentStatus.SETTLED) ? 'PARTIALLY_FAILED' : 'FAILED';
+    }
+    if (statuses.includes(IntentStatus.SETTLED)) return 'PARTIALLY_SETTLED';
+    if (statuses.includes(IntentStatus.IN_TRANSIT) || statuses.includes(IntentStatus.DESTINATION_RECEIVED)) return 'IN_TRANSIT';
+    if (statuses.includes(IntentStatus.SUBMITTED)) return 'SUBMITTED';
+    return 'QUOTED';
   }
 
   function handleLifecycleError(res: Response, err: unknown): void {

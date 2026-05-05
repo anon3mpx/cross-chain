@@ -40,6 +40,46 @@ export interface GasZipCalldataParams {
   from?: string;
 }
 
+export type GasZipSearchStatus =
+  | 'SEEN'
+  | 'PENDING'
+  | 'CONFIRMED'
+  | 'PRIORITY'
+  | 'CANCELLED';
+
+export interface GasZipSearchDeposit {
+  block: number;
+  chain: number;
+  hash: string;
+  log: number;
+  sender: string;
+  shorts: number[];
+  status: GasZipSearchStatus;
+  time: number;
+  to: string;
+  usd: number;
+  value: string;
+}
+
+export interface GasZipSearchTransaction {
+  chain: number;
+  hash: string;
+  nonce: number;
+  refund: boolean;
+  cancelled: boolean;
+  signer: string;
+  status: GasZipSearchStatus;
+  time: number;
+  to: string;
+  usd: number;
+  value: number;
+}
+
+export interface GasZipSearchResponse {
+  deposit: GasZipSearchDeposit;
+  txs: GasZipSearchTransaction[];
+}
+
 export interface GasZipClientLike {
   listChains(): Promise<GasZipChainsResponse>;
   getQuoteReverse(
@@ -53,6 +93,7 @@ export interface GasZipClientLike {
     outboundChains: number[],
     params: GasZipCalldataParams,
   ): Promise<GasZipCalldataResponse>;
+  searchTransaction(hash: string): Promise<GasZipSearchResponse | null>;
 }
 
 export interface GasZipClientOptions {
@@ -97,6 +138,20 @@ export class GasZipClient implements GasZipClientLike {
     return this._request<GasZipCalldataResponse>(
       `/quotes/${depositChain}/${depositWei}/${outboundChains.join(',')}?${query.toString()}`,
     );
+  }
+
+  async searchTransaction(hash: string): Promise<GasZipSearchResponse | null> {
+    const response = await this.fetchFn(`${this.baseUrl}/search/${hash}`);
+    if (!response.ok) {
+      throw new Error(`GasZipClient request failed: ${response.status}`);
+    }
+    const payload = await response.json() as GasZipSearchResponse | { error?: string };
+    if (payload && typeof payload === 'object' && 'error' in payload) {
+      const error = typeof payload.error === 'string' ? payload.error : 'Unknown Gas.zip search error';
+      if (error.toLowerCase().includes('no data found')) return null;
+      throw new Error(`GasZipClient search failed: ${error}`);
+    }
+    return payload as GasZipSearchResponse;
   }
 
   private async _request<T>(path: string): Promise<T> {

@@ -10,6 +10,7 @@ import {
   ExecutionMode,
   OfferEconomics,
   OfferSet,
+  GasZipOfferComposition,
   ProviderAssetRef,
   QuoteRequest,
   QuoteResult,
@@ -260,6 +261,55 @@ export class QuoteEngine {
   async getOfferBySelection(offerSetId: string, offerId: string): Promise<RailOffer | null> {
     const selection = await this.selectOffer(offerSetId, offerId);
     return selection.offer;
+  }
+
+  buildGasZipComposition(
+    req: QuoteRequest,
+    offerSet: OfferSet,
+  ): GasZipOfferComposition | null {
+    if (!req.destinationGas || req.destinationGas.length === 0) return null;
+
+    const gasZipDestinationGasOffer = offerSet.offers.find((offer) =>
+      offer.rail === Rail.GASZIP && offer.offerType === 'gaszip_api_direct',
+    );
+    if (!gasZipDestinationGasOffer) return null;
+
+    const preferredPrimary = offerSet.bestOfferId
+      ? offerSet.offers.find((offer) => offer.offerId === offerSet.bestOfferId && offer.rail !== Rail.GASZIP)
+      : undefined;
+    const primaryTransferOffer = preferredPrimary
+      ?? offerSet.offers.find((offer) => offer.rail !== Rail.GASZIP);
+    if (!primaryTransferOffer) return null;
+
+    return {
+      kind: 'primary_transfer_with_gaszip_destination_gas',
+      primaryTransferOfferId: primaryTransferOffer.offerId,
+      gasZipDestinationGasOfferId: gasZipDestinationGasOffer.offerId,
+      primaryTransferOffer,
+      gasZipDestinationGasOffer,
+      executionPlan: [
+        {
+          step: 1,
+          offerId: primaryTransferOffer.offerId,
+          rail: primaryTransferOffer.rail,
+          executionMode: primaryTransferOffer.executionMode,
+          label: 'primary_transfer',
+        },
+        {
+          step: 2,
+          offerId: gasZipDestinationGasOffer.offerId,
+          rail: gasZipDestinationGasOffer.rail,
+          executionMode: gasZipDestinationGasOffer.executionMode,
+          label: 'gaszip_destination_gas',
+        },
+      ],
+      uxHints: {
+        destinationGasProvider: 'gaszip',
+        destinationGasIncluded: true,
+        recommendedExecution: 'primary_then_gas',
+        atomic: false,
+      },
+    };
   }
 
   async getQuote(req: QuoteRequest): Promise<QuoteResult | null> {
@@ -1412,6 +1462,14 @@ export class QuoteEngine {
       req.amountIn.toString(),
       req.userAddress.toLowerCase(),
       req.nativeDstAddress?.toLowerCase() ?? '',
+      JSON.stringify(
+        (req.destinationGas ?? []).map((item) => ({
+          provider: item.provider ?? '',
+          chainId: item.chainId,
+          amountWei: item.amountWei,
+          recipient: item.recipient?.toLowerCase() ?? '',
+        })),
+      ),
       req.urgency ?? 'normal',
     ].join(':');
   }

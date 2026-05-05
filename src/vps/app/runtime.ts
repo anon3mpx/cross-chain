@@ -128,6 +128,7 @@ export async function buildRuntime(options: RuntimeOptions = {}): Promise<Runtim
       [Rail.CCTP]: options.railExecution?.[Rail.CCTP] ?? enableCctpRelay,
       [Rail.THORCHAIN]: enableThorchainWorker,
       [Rail.LAYERZERO]: options.railExecution?.[Rail.LAYERZERO] ?? enableLayerZeroValueTransferApi,
+      [Rail.GASZIP]: options.railExecution?.[Rail.GASZIP] ?? envBool('ENABLE_GASZIP_DIRECT_DEPOSIT', false),
     },
   });
   const cctpRelayWorker = railExecutionManager.getInstance<CctpAttestationWorker>(Rail.CCTP);

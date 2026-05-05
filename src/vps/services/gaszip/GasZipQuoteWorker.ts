@@ -4,11 +4,6 @@ import { GasZipClient, type GasZipClientLike } from './GasZipClient';
 
 const DEFAULT_DIRECT_DEPOSIT_ADDRESS = '0x391E7C679d29bD940d63be94AD22A25d25b5A604';
 const DEFAULT_EXPIRY_SECONDS = 90;
-const NATIVE_TOKEN_ALIASES = new Set([
-  '0x0000000000000000000000000000000000000000',
-  '0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee',
-]);
-
 export interface GasZipQuoteResult {
   srcChainId: number;
   dstChainId: number;
@@ -54,7 +49,6 @@ export class GasZipQuoteWorker {
 
     const gasRequest = this._pickGasRequest(input.destinationGas, input.dstChainId);
     if (!gasRequest) return null;
-    if (!this._isNativeTokenLike(input.tokenIn) || !this._isNativeTokenLike(input.tokenOut)) return null;
 
     const srcChain = getChainConfig(input.srcChainId);
     const dstChain = getChainConfig(input.dstChainId);
@@ -112,10 +106,6 @@ export class GasZipQuoteWorker {
       && request.chainId === dstChainId,
     );
     return match ?? null;
-  }
-
-  private _isNativeTokenLike(value: string): boolean {
-    return NATIVE_TOKEN_ALIASES.has(value.trim().toLowerCase());
   }
 
   private _readBoolEnv(name: string, fallback: boolean): boolean {

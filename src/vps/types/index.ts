@@ -259,6 +259,41 @@ export interface OfferSet {
   bestOfferId?: string;
 }
 
+export interface GasZipCompositionStep {
+  step: number;
+  offerId: string;
+  rail: Rail;
+  executionMode?: ExecutionMode;
+  label: 'primary_transfer' | 'gaszip_destination_gas';
+}
+
+export interface GasZipOfferComposition {
+  kind: 'primary_transfer_with_gaszip_destination_gas';
+  primaryTransferOfferId: string;
+  gasZipDestinationGasOfferId: string;
+  primaryTransferOffer: RailOffer;
+  gasZipDestinationGasOffer: RailOffer;
+  executionPlan: GasZipCompositionStep[];
+  uxHints: {
+    destinationGasProvider: 'gaszip';
+    destinationGasIncluded: true;
+    recommendedExecution: 'primary_then_gas';
+    atomic: false;
+  };
+}
+
+export type ComposedIntentStatus =
+  | 'QUOTED'
+  | 'SUBMITTED'
+  | 'IN_TRANSIT'
+  | 'PARTIALLY_SETTLED'
+  | 'SETTLED'
+  | 'STUCK'
+  | 'RECOVERING'
+  | 'PARTIALLY_FAILED'
+  | 'FAILED'
+  | 'CANCELLED';
+
 export interface Intent {
   intentId:         string;
   status:           IntentStatus;
