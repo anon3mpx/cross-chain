@@ -918,6 +918,8 @@ export class QuoteEngine {
       swapDataDst: '0x',
       nativeDstAddress: req.nativeDstAddress,
       layerZeroValueTransferApiQuoteId: result.quote.id,
+      layerZeroValueTransferApiRouteSteps: result.quote.routeSteps ?? [],
+      layerZeroValueTransferApiUserSteps: result.userSteps,
     };
 
     return {

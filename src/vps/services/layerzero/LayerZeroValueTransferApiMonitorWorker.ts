@@ -76,6 +76,24 @@ export class LayerZeroValueTransferApiMonitorWorker {
           continue;
         }
 
+        const deliveredTxHash = this._extractDeliveredTxHash(status);
+        await this.intentService.upsertProviderTransfer({
+          intentId: intent.intentId,
+          provider: 'layerzero_value_transfer_api',
+          providerQuoteId: quoteId,
+          status: this._providerTransferStatus(status),
+          sourceTxHash: txHash,
+          destinationTxHash: deliveredTxHash,
+          latestProviderStatus: status.status,
+          routeStepTypes: this._routeStepTypes(intent.quote as unknown as Record<string, unknown>),
+          metadata: {
+            explorerUrl: status.explorerUrl,
+            executionHistoryLength: status.executionHistory?.length ?? 0,
+          },
+          rawErrorPayload: this._isFailed(status) ? status : undefined,
+          lastPolledAt: Date.now(),
+        });
+
         if (intent.status === IntentStatus.SUBMITTED && this._hasSent(status)) {
           try {
             await this.intentService.markInTransit(intent.intentId, txHash ?? quoteId, {
@@ -89,9 +107,9 @@ export class LayerZeroValueTransferApiMonitorWorker {
         }
 
         if (this._isSucceeded(status)) {
-          const deliveredTxHash = this._extractDeliveredTxHash(status) ?? txHash ?? quoteId;
+          const settledTxHash = deliveredTxHash ?? txHash ?? quoteId;
           try {
-            await this.intentService.markSettled(intent.intentId, deliveredTxHash, {
+            await this.intentService.markSettled(intent.intentId, settledTxHash, {
               actor: 'system',
               eventSource: 'layerzero-value-transfer-api-monitor',
               allowedFrom: [IntentStatus.SUBMITTED, IntentStatus.IN_TRANSIT, IntentStatus.DESTINATION_RECEIVED],
@@ -140,6 +158,23 @@ export class LayerZeroValueTransferApiMonitorWorker {
     if (!hash) return undefined;
     const normalized = hash.trim();
     return normalized.length > 0 ? normalized : undefined;
+  }
+
+  private _providerTransferStatus(status: LayerZeroValueTransferApiStatusResponse): 'IN_TRANSIT' | 'SETTLED' | 'FAILED' | 'EXPIRED' {
+    if (this._isSucceeded(status)) return 'SETTLED';
+    const normalized = status.status.trim().toUpperCase();
+    if (normalized === 'EXPIRED') return 'EXPIRED';
+    if (this._isFailed(status)) return 'FAILED';
+    return 'IN_TRANSIT';
+  }
+
+  private _routeStepTypes(quote: Record<string, unknown>): string[] {
+    const raw = quote.layerZeroValueTransferApiRouteSteps;
+    if (!Array.isArray(raw)) return [];
+    return raw
+      .map((step) => step && typeof step === 'object' ? String((step as Record<string, unknown>).type ?? '').trim() : '')
+      .filter(Boolean)
+      .slice(0, 16);
   }
 
   private _readIntEnv(name: string, fallback: number): number {

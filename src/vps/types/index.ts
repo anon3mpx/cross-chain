@@ -180,6 +180,8 @@ export interface QuoteResult {
   thorAsset?:        string;    // e.g. "BTC.BTC", "SOL.SOL"
   minThorOutput?:    bigint;    // 8-decimal THORChain units
   layerZeroValueTransferApiQuoteId?: string; // LayerZero Value Transfer API quote/transfer id
+  layerZeroValueTransferApiRouteSteps?: unknown[];
+  layerZeroValueTransferApiUserSteps?: unknown[];
   nativeDstAddress?: string;    // User's BTC/SOL/DOGE address
   selectedByUser?:   boolean;   // true when intent came from explicit offer selection
 }
@@ -330,6 +332,41 @@ export interface IntentRefundCase {
   payoutAddress?: string;
   payoutTxHash?: string;
 }
+
+export type ProviderTransferProvider = 'layerzero_value_transfer_api' | 'thorchain_api';
+
+export type ProviderTransferStatus =
+  | 'CREATED'
+  | 'USER_STEPS_BUILT'
+  | 'SUBMITTED'
+  | 'IN_TRANSIT'
+  | 'SETTLED'
+  | 'FAILED'
+  | 'EXPIRED';
+
+export interface ProviderTransfer {
+  intentId: string;
+  provider: ProviderTransferProvider;
+  providerQuoteId: string;
+  status: ProviderTransferStatus;
+  sourceTxHash?: string;
+  sourceSignature?: string;
+  destinationTxHash?: string;
+  latestProviderStatus?: string;
+  routeStepTypes: string[];
+  metadata: Record<string, unknown>;
+  rawErrorPayload?: unknown;
+  lastPolledAt?: number;
+  createdAt: number;
+  updatedAt: number;
+}
+
+export type ProviderTransferUpsert = Omit<Partial<ProviderTransfer>, 'intentId' | 'provider' | 'providerQuoteId' | 'createdAt' | 'updatedAt'> & {
+  intentId: string;
+  provider: ProviderTransferProvider;
+  providerQuoteId: string;
+  status: ProviderTransferStatus;
+};
 
 export interface RailScore {
   rail:              Rail;

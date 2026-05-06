@@ -15,6 +15,15 @@ import { ComposedIntentStatus, Intent, IntentStatus, Rail } from '../types';
 import { parseOfferSelection, parseQuoteRequest, serializeGasZipComposition, serializeOfferSet, serializeQuote } from './quoteCodec';
 import { buildIntentActionMessage, IntentAction, SIGNATURE_WINDOW_MS } from '../utils/intentActionAuth';
 import { getRailVariantLabel } from '../rails/registry';
+import {
+  LayerZeroValueTransferApiBuildUserStepsRequest,
+  LayerZeroValueTransferApiClient,
+  LayerZeroValueTransferApiChainsResponse,
+  LayerZeroValueTransferApiSubmitSignatureRequest,
+  LayerZeroValueTransferApiTokensRequest,
+  LayerZeroValueTransferApiTokensResponse,
+  LayerZeroValueTransferApiBuildUserStepsResponse,
+} from '../services/layerzero/LayerZeroValueTransferApiClient';
 
 interface RateLimitOptions {
   windowMs: number;
@@ -30,6 +39,17 @@ interface RateLimitBucket {
 interface RateLimitStore {
   increment(key: string, windowMs: number): Promise<RateLimitBucket>;
   prune?(): void;
+}
+
+interface LayerZeroValueTransferApiHttpClient {
+  listLayerZeroValueTransferApiChains(): Promise<LayerZeroValueTransferApiChainsResponse>;
+  listLayerZeroValueTransferApiTokens(request: LayerZeroValueTransferApiTokensRequest): Promise<LayerZeroValueTransferApiTokensResponse>;
+  buildLayerZeroValueTransferApiUserSteps(request: LayerZeroValueTransferApiBuildUserStepsRequest): Promise<LayerZeroValueTransferApiBuildUserStepsResponse>;
+  submitLayerZeroValueTransferApiSignature(request: LayerZeroValueTransferApiSubmitSignatureRequest): Promise<Record<string, never>>;
+}
+
+interface StatusApiOptions {
+  layerZeroValueTransferApiClient?: LayerZeroValueTransferApiHttpClient;
 }
 
 class MemoryRateLimitStore implements RateLimitStore {
@@ -184,9 +204,12 @@ function rateLimit(
 export function buildStatusAPI(
   intentService: IntentService,
   quoteEngine: QuoteEngine,
+  options: StatusApiOptions = {},
 ): express.Application {
   const app = express();
   const providers = new Map<number, ethers.JsonRpcProvider>();
+  const layerZeroValueTransferApiClient =
+    options.layerZeroValueTransferApiClient ?? new LayerZeroValueTransferApiClient();
 
   app.use((req, res, next) => {
     res.setHeader('Access-Control-Allow-Origin', process.env.VPS_CORS_ORIGIN ?? '*');
@@ -275,6 +298,108 @@ export function buildStatusAPI(
       const msg = String(err);
       const code = msg.toLowerCase().includes('calldata') || msg.toLowerCase().includes('routerv1') ? 503 : 400;
       res.status(code).json({ error: msg });
+    }
+  });
+
+  app.get('/layerzero-value-transfer-api/chains', quoteRateLimit, async (_req: Request, res: Response) => {
+    try {
+      const response = await layerZeroValueTransferApiClient.listLayerZeroValueTransferApiChains();
+      res.json(response);
+    } catch (err) {
+      res.status(502).json({ error: 'LAYERZERO_VALUE_TRANSFER_API_UNAVAILABLE', message: String(err) });
+    }
+  });
+
+  app.get('/layerzero-value-transfer-api/tokens', quoteRateLimit, async (req: Request, res: Response) => {
+    try {
+      const tokenRequest = parseLayerZeroValueTransferApiTokensRequest(req.query);
+      const response = await layerZeroValueTransferApiClient.listLayerZeroValueTransferApiTokens(tokenRequest);
+      res.json(response);
+    } catch (err) {
+      const status = err instanceof IntentLifecycleError ? err.statusCode : 502;
+      const error = err instanceof IntentLifecycleError ? err.code : 'LAYERZERO_VALUE_TRANSFER_API_UNAVAILABLE';
+      res.status(status).json({ error, message: String(err instanceof Error ? err.message : err) });
+    }
+  });
+
+  app.post('/layerzero-value-transfer-api/intents/:id/build-user-steps', async (req: Request, res: Response) => {
+    try {
+      const intent = await requireLayerZeroValueTransferApiIntent(req.params.id);
+      const quoteId = requireLayerZeroValueTransferApiQuoteId(intent);
+      const response = await layerZeroValueTransferApiClient.buildLayerZeroValueTransferApiUserSteps({ quoteId });
+      await intentService.upsertProviderTransfer?.({
+        intentId: intent.intentId,
+        provider: 'layerzero_value_transfer_api',
+        providerQuoteId: quoteId,
+        status: 'USER_STEPS_BUILT',
+        latestProviderStatus: 'USER_STEPS_BUILT',
+        routeStepTypes: extractLayerZeroValueTransferApiRouteStepTypes(intent),
+        metadata: { userStepCount: response.userSteps.length },
+      });
+      res.json(response);
+    } catch (err) {
+      writeLayerZeroValueTransferApiError(res, err);
+    }
+  });
+
+  app.post('/layerzero-value-transfer-api/intents/:id/submitted', async (req: Request, res: Response) => {
+    try {
+      const intent = await requireLayerZeroValueTransferApiIntent(req.params.id);
+      const quoteId = requireLayerZeroValueTransferApiQuoteId(intent);
+      const submission = parseLayerZeroValueTransferApiSubmission(req.body);
+      if (submission.userAddress.toLowerCase() !== intent.userAddress.toLowerCase()) {
+        throw new IntentLifecycleError('UNAUTHORIZED_INTENT', 'Intent does not belong to the provided wallet.', 403);
+      }
+
+      await intentService.upsertProviderTransfer({
+        intentId: intent.intentId,
+        provider: 'layerzero_value_transfer_api',
+        providerQuoteId: quoteId,
+        status: 'SUBMITTED',
+        sourceTxHash: submission.sourceTxHash,
+        latestProviderStatus: 'SOURCE_SUBMITTED',
+        routeStepTypes: extractLayerZeroValueTransferApiRouteStepTypes(intent),
+      });
+
+      const updated = intent.status === IntentStatus.SUBMITTED
+        ? intent
+        : await intentService.markSubmitted(intent.intentId, submission.sourceTxHash, {
+          actor: submission.userAddress,
+          eventSource: 'layerzero-value-transfer-api-submitted',
+          allowedFrom: [IntentStatus.QUOTED, IntentStatus.SUBMITTED],
+        });
+      res.status(202).json(await serializeIntent(updated));
+    } catch (err) {
+      writeLayerZeroValueTransferApiError(res, err);
+    }
+  });
+
+  app.post('/layerzero-value-transfer-api/intents/:id/submit-signature', async (req: Request, res: Response) => {
+    try {
+      const intent = await requireLayerZeroValueTransferApiIntent(req.params.id);
+      const quoteId = requireLayerZeroValueTransferApiQuoteId(intent);
+      const signatures = parseLayerZeroValueTransferApiSignatures(req.body);
+      await layerZeroValueTransferApiClient.submitLayerZeroValueTransferApiSignature({ quoteId, signatures });
+      await intentService.upsertProviderTransfer?.({
+        intentId: intent.intentId,
+        provider: 'layerzero_value_transfer_api',
+        providerQuoteId: quoteId,
+        status: 'SUBMITTED',
+        sourceSignature: signatures[0],
+        latestProviderStatus: 'SIGNATURE_SUBMITTED',
+        routeStepTypes: extractLayerZeroValueTransferApiRouteStepTypes(intent),
+        metadata: { signatureCount: signatures.length },
+      });
+      const updated = intent.status === IntentStatus.SUBMITTED
+        ? intent
+        : await intentService.markSubmitted(intent.intentId, quoteId, {
+          actor: 'layerzero-value-transfer-api',
+          eventSource: 'layerzero-value-transfer-api-submit-signature',
+          allowedFrom: [IntentStatus.QUOTED, IntentStatus.SUBMITTED],
+        });
+      res.json({ ok: true, intent: await serializeIntent(updated) });
+    } catch (err) {
+      writeLayerZeroValueTransferApiError(res, err);
     }
   });
 
@@ -555,6 +680,120 @@ export function buildStatusAPI(
       if (err instanceof IntentLifecycleError) throw err;
       throw new IntentLifecycleError('INVALID_SIGNATURE', 'Unable to verify wallet signature.', 401);
     }
+  }
+
+  function parseLayerZeroValueTransferApiTokensRequest(query: Request['query']): LayerZeroValueTransferApiTokensRequest {
+    const transferrableFromChainKey = parseShortText(query.transferrableFromChainKey, 'transferrableFromChainKey', 80, false);
+    const transferrableFromTokenAddress = parseShortText(query.transferrableFromTokenAddress, 'transferrableFromTokenAddress', 160, false);
+    const nextToken = parseShortText(query.nextToken, 'nextToken', 512, false);
+    return {
+      ...(transferrableFromChainKey ? { transferrableFromChainKey } : {}),
+      ...(transferrableFromTokenAddress ? { transferrableFromTokenAddress } : {}),
+      ...(nextToken ? { nextToken } : {}),
+    };
+  }
+
+  function parseLayerZeroValueTransferApiSignatures(body: unknown): string[] {
+    const input = body && typeof body === 'object' ? body as Record<string, unknown> : {};
+    const raw = input.signatures;
+    if (!Array.isArray(raw) || raw.length === 0 || raw.length > 8) {
+      throw new IntentLifecycleError(
+        'INVALID_LAYERZERO_VALUE_TRANSFER_API_SIGNATURES',
+        'signatures must be a non-empty array with at most 8 entries.',
+      );
+    }
+
+    return raw.map((signature, index) =>
+      parseShortText(signature, `signatures[${index}]`, 10_000, true)
+    );
+  }
+
+  function parseLayerZeroValueTransferApiSubmission(body: unknown): { userAddress: string; sourceTxHash: string } {
+    const input = body && typeof body === 'object' ? body as Record<string, unknown> : {};
+    const userAddress = parseShortText(input.userAddress, 'userAddress', 160, true);
+    const sourceTxHash = parseShortText(
+      input.sourceTxHash ?? input.sourceSignature,
+      'sourceTxHash',
+      512,
+      true,
+    );
+    return { userAddress, sourceTxHash };
+  }
+
+  function parseShortText(value: unknown, name: string, maxLength: number, required: true): string;
+  function parseShortText(value: unknown, name: string, maxLength: number, required: false): string | undefined;
+  function parseShortText(value: unknown, name: string, maxLength: number, required: boolean): string | undefined {
+    if (Array.isArray(value)) {
+      throw new IntentLifecycleError('INVALID_LAYERZERO_VALUE_TRANSFER_API_REQUEST', `${name} must be a string.`);
+    }
+    if (typeof value !== 'string') {
+      if (required) {
+        throw new IntentLifecycleError('INVALID_LAYERZERO_VALUE_TRANSFER_API_REQUEST', `${name} is required.`);
+      }
+      return undefined;
+    }
+    const trimmed = value.trim();
+    if (!trimmed) {
+      if (required) {
+        throw new IntentLifecycleError('INVALID_LAYERZERO_VALUE_TRANSFER_API_REQUEST', `${name} is required.`);
+      }
+      return undefined;
+    }
+    if (trimmed.length > maxLength) {
+      throw new IntentLifecycleError('INVALID_LAYERZERO_VALUE_TRANSFER_API_REQUEST', `${name} is too long.`);
+    }
+    return trimmed;
+  }
+
+  async function requireLayerZeroValueTransferApiIntent(intentId: unknown): Promise<Intent> {
+    const normalizedIntentId = typeof intentId === 'string' ? intentId.trim() : '';
+    if (!/^0x[0-9a-fA-F]{64}$/.test(normalizedIntentId)) {
+      throw new IntentLifecycleError('INVALID_INTENT_ID', 'Invalid intent id.');
+    }
+
+    const intent = await intentService.getIntent(normalizedIntentId);
+    if (!intent) throw new IntentLifecycleError('INTENT_NOT_FOUND', 'Intent not found.', 404);
+    if (intent.quote.rail !== Rail.LAYERZERO || !intent.quote.layerZeroValueTransferApiQuoteId) {
+      throw new IntentLifecycleError(
+        'NOT_LAYERZERO_VALUE_TRANSFER_API_INTENT',
+        'Intent is not a LayerZero Value Transfer API provider-direct intent.',
+        409,
+      );
+    }
+    return intent;
+  }
+
+  function requireLayerZeroValueTransferApiQuoteId(intent: Intent): string {
+    const quoteId = intent.quote.layerZeroValueTransferApiQuoteId?.trim();
+    if (!quoteId) {
+      throw new IntentLifecycleError(
+        'MISSING_LAYERZERO_VALUE_TRANSFER_API_QUOTE_ID',
+        'Intent is missing LayerZero Value Transfer API quote id.',
+        409,
+      );
+    }
+    return quoteId;
+  }
+
+  function extractLayerZeroValueTransferApiRouteStepTypes(intent: Intent): string[] {
+    const execution = intent.quote as unknown as Record<string, unknown>;
+    const rawSteps = execution.layerZeroValueTransferApiRouteSteps;
+    if (!Array.isArray(rawSteps)) return [];
+    return rawSteps
+      .map((step) => step && typeof step === 'object' ? String((step as Record<string, unknown>).type ?? '').trim() : '')
+      .filter(Boolean)
+      .slice(0, 16);
+  }
+
+  function writeLayerZeroValueTransferApiError(res: Response, err: unknown): void {
+    if (err instanceof IntentLifecycleError) {
+      res.status(err.statusCode).json({ error: err.code, message: err.message });
+      return;
+    }
+    res.status(502).json({
+      error: 'LAYERZERO_VALUE_TRANSFER_API_UNAVAILABLE',
+      message: String(err instanceof Error ? err.message : err),
+    });
   }
 
   function parseComposedOfferSelection(input: any): {

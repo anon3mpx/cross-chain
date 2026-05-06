@@ -184,13 +184,13 @@ Implemented:
 - signature route flagging for `/submit-signature`
 - intent status polling through the LayerZero status endpoint
 - existing DB-backed intent status transitions through `IntentService` when Postgres is enabled
-- focused unit tests for client, quote worker, monitor worker, quote engine, and selected-offer integration
+- frontend-facing backend helper endpoints for discovery, fresh user steps, and signature submission
+- provider-transfer persistence through `intent_provider_transfers`
+- focused unit tests for client, quote worker, monitor worker, quote engine, selected-offer integration, HTTP API, and provider-transfer tracking
 
 Remaining production hardening:
 
 - run live smoke tests with a real LayerZero API key
-- expose backend endpoints for frontend discovery and execution helpers
-- add dedicated provider-transfer persistence for richer provider status tracking
 - wire this into `PartnerAPI` when partner-facing exposure is approved
 - resolve unrelated CCTP/THOR economics test expectation failures in the broader VPS suite
 
@@ -321,15 +321,27 @@ That registry should still be curated. Discovery should not mean automatic expos
 
 The frontend should not call LayerZero directly for production routing.
 
-Backend should expose Ruflo-normalized endpoints for:
+Backend exposes Ruflo-normalized endpoints for:
 
-- supported LayerZero Value Transfer API chains
-- supported LayerZero Value Transfer API tokens
+- supported LayerZero Value Transfer API chains:
+  - `GET /layerzero-value-transfer-api/chains`
+- supported LayerZero Value Transfer API tokens:
+  - `GET /layerzero-value-transfer-api/tokens`
+- fresh Solana user steps:
+  - `POST /layerzero-value-transfer-api/intents/:id/build-user-steps`
+- signature submission:
+  - `POST /layerzero-value-transfer-api/intents/:id/submit-signature`
+- provider-direct source submission tracking:
+  - `POST /layerzero-value-transfer-api/intents/:id/submitted`
+
+Existing quote endpoints handle:
+
 - route validation from source asset to destination asset
-- selected-offer execution details
-- fresh Solana user steps through `/build-user-steps`
-- signature submission through `/submit-signature`
-- user-submitted source tx hash or Solana signature for status tracking
+- selected-offer execution details:
+  - `POST /quote`
+  - `POST /quote/select`
+- user-submitted EVM source tx hash for router/direct EVM flows:
+  - `POST /intent/:id/submitted`
 
 Frontend responsibilities:
 
@@ -337,11 +349,11 @@ Frontend responsibilities:
 - ask the user to sign the returned `userSteps`
 - call backend for fresh Solana user steps immediately before signing
 - submit EIP-712 signatures when a `SIGNATURE` step exists
-- report the submitted tx hash or Solana signature back to Ruflo
+- report the submitted tx hash or Solana signature back to Ruflo through the LayerZero-specific submitted endpoint for provider-direct LZ routes
 
 ## Provider Transfer Persistence
 
-Current implementation stores LayerZero API tracking on the intent quote using:
+Current implementation stores the LayerZero API quote id on the intent quote using:
 
 ```text
 layerZeroValueTransferApiQuoteId
@@ -349,17 +361,18 @@ layerZeroValueTransferApiQuoteId
 
 Status transitions are persisted through the existing intent tables when Postgres is enabled.
 
-For production observability, add a provider-transfer record or table with:
+Provider-direct transfer snapshots are persisted in `intent_provider_transfers` with:
 
 - `intent_id`
 - `provider = layerzero_value_transfer_api`
-- provider quote id
-- source tx hash or Solana signature
-- destination tx hash
-- latest provider status
-- route step types
-- last poll time
-- raw provider error payload
+- `provider_quote_id`
+- `source_tx_hash`
+- `source_signature`
+- `destination_tx_hash`
+- `latest_provider_status`
+- `route_step_types`
+- `last_polled_at`
+- `raw_error_payload`
 
 This avoids overloading the quote JSON and makes THORChain, LayerZero, and future provider-direct rails easier to monitor consistently.
 
@@ -387,9 +400,12 @@ Current coverage:
 ```text
 tests/vps/layerzero-value-transfer-api-client.test.ts
 tests/vps/layerzero-value-transfer-api-quote-worker.test.ts
+tests/vps/layerzero-value-transfer-api-status-api.test.ts
 tests/vps/quote-engine-layerzero-transfer-api.test.ts
 tests/vps/layerzero-value-transfer-api-monitor-worker.test.ts
 tests/vps/direct-rail-integration.test.ts
+tests/vps/provider-transfer-service.test.ts
+tests/vps/db-schema-idempotency.test.ts
 ```
 
 These verify:
@@ -400,6 +416,8 @@ These verify:
 - quotes map into provider-direct results
 - asset allowlist is enforced
 - QuoteEngine emits `lz_api_direct` offers
+- StatusAPI exposes LayerZero Value Transfer API discovery and intent-bound execution helpers
 - monitor maps LayerZero delivery status into Ruflo settled intent state
+- provider-transfer snapshots are stored in memory and in the Postgres schema
 - selected-offer integration returns EVM user steps
 - selected-offer integration marks Solana routes for fresh user-step rebuilds

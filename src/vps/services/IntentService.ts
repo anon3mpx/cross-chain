@@ -4,6 +4,9 @@ import {
   Intent,
   IntentRefundCase,
   IntentStatus,
+  ProviderTransfer,
+  ProviderTransferProvider,
+  ProviderTransferUpsert,
   QuoteResult,
   Rail,
   RailOffer,
@@ -39,6 +42,8 @@ export class IntentLifecycleError extends Error {
 }
 
 export class IntentService {
+  private readonly providerTransfers = new Map<string, ProviderTransfer>();
+
   constructor(
     private readonly intentEngine: IntentEngine,
     private readonly intentRepo?: IntentRepository,
@@ -245,6 +250,46 @@ export class IntentService {
     return this.intentRepo.upsertRefundCase(input);
   }
 
+  async upsertProviderTransfer(input: ProviderTransferUpsert): Promise<ProviderTransfer> {
+    if (this.intentRepo) return this.intentRepo.upsertProviderTransfer(input);
+
+    const key = this.providerTransferKey(input.intentId, input.provider, input.providerQuoteId);
+    const now = Date.now();
+    const current = this.providerTransfers.get(key);
+    const transfer: ProviderTransfer = {
+      intentId: input.intentId,
+      provider: input.provider,
+      providerQuoteId: input.providerQuoteId,
+      status: input.status,
+      sourceTxHash: input.sourceTxHash ?? current?.sourceTxHash,
+      sourceSignature: input.sourceSignature ?? current?.sourceSignature,
+      destinationTxHash: input.destinationTxHash ?? current?.destinationTxHash,
+      latestProviderStatus: input.latestProviderStatus ?? current?.latestProviderStatus,
+      routeStepTypes: input.routeStepTypes ?? current?.routeStepTypes ?? [],
+      metadata: {
+        ...(current?.metadata ?? {}),
+        ...(input.metadata ?? {}),
+      },
+      rawErrorPayload: input.rawErrorPayload ?? current?.rawErrorPayload,
+      lastPolledAt: input.lastPolledAt ?? current?.lastPolledAt,
+      createdAt: current?.createdAt ?? now,
+      updatedAt: now,
+    };
+    this.providerTransfers.set(key, transfer);
+    return transfer;
+  }
+
+  async getProviderTransfer(input: {
+    intentId: string;
+    provider: ProviderTransferProvider;
+    providerQuoteId: string;
+  }): Promise<ProviderTransfer | null> {
+    if (this.intentRepo) return this.intentRepo.getProviderTransfer(input);
+    return this.providerTransfers.get(
+      this.providerTransferKey(input.intentId, input.provider, input.providerQuoteId),
+    ) ?? null;
+  }
+
   async findStuckIntents(limit = 500): Promise<Intent[]> {
     const now = Date.now();
     const intents = this.intentRepo
@@ -335,6 +380,10 @@ export class IntentService {
         throw new IntentLifecycleError('UNSUPPORTED_TRANSITION', `Unsupported transition ${newStatus}`);
     }
     return updated;
+  }
+
+  private providerTransferKey(intentId: string, provider: ProviderTransferProvider, providerQuoteId: string): string {
+    return `${intentId}:${provider}:${providerQuoteId}`;
   }
 
   private async requireIntent(intentId: string): Promise<Intent> {

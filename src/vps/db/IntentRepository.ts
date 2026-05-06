@@ -3,6 +3,9 @@ import {
   Intent,
   IntentRefundCase,
   IntentStatus,
+  ProviderTransfer,
+  ProviderTransferProvider,
+  ProviderTransferUpsert,
   RefundCaseStatus,
   RefundCustodyLocation,
   RefundResolutionKind,
@@ -308,6 +311,76 @@ export class IntentRepository {
     return this.rowToRefundCase(rows[0]);
   }
 
+  async upsertProviderTransfer(input: ProviderTransferUpsert): Promise<ProviderTransfer> {
+    const { rows } = await this.pool.query(
+      `INSERT INTO intent_provider_transfers (
+         intent_id, provider, provider_quote_id, status,
+         source_tx_hash, source_signature, destination_tx_hash,
+         latest_provider_status, route_step_types, metadata,
+         raw_error_payload, last_polled_at
+       ) VALUES (
+         $1, $2, $3, $4,
+         $5, $6, $7,
+         $8, $9, $10::jsonb,
+         $11::jsonb, $12
+       )
+       ON CONFLICT (intent_id, provider, provider_quote_id)
+       DO UPDATE SET
+         status = EXCLUDED.status,
+         source_tx_hash = COALESCE(EXCLUDED.source_tx_hash, intent_provider_transfers.source_tx_hash),
+         source_signature = COALESCE(EXCLUDED.source_signature, intent_provider_transfers.source_signature),
+         destination_tx_hash = COALESCE(EXCLUDED.destination_tx_hash, intent_provider_transfers.destination_tx_hash),
+         latest_provider_status = COALESCE(EXCLUDED.latest_provider_status, intent_provider_transfers.latest_provider_status),
+         route_step_types = CASE
+           WHEN cardinality(EXCLUDED.route_step_types) > 0 THEN EXCLUDED.route_step_types
+           ELSE intent_provider_transfers.route_step_types
+         END,
+         metadata = intent_provider_transfers.metadata || EXCLUDED.metadata,
+         raw_error_payload = COALESCE(EXCLUDED.raw_error_payload, intent_provider_transfers.raw_error_payload),
+         last_polled_at = COALESCE(EXCLUDED.last_polled_at, intent_provider_transfers.last_polled_at),
+         updated_at = NOW()
+       RETURNING intent_id, provider, provider_quote_id, status,
+                 source_tx_hash, source_signature, destination_tx_hash,
+                 latest_provider_status, route_step_types, metadata,
+                 raw_error_payload, last_polled_at, created_at, updated_at`,
+      [
+        input.intentId,
+        input.provider,
+        input.providerQuoteId,
+        input.status,
+        input.sourceTxHash ?? null,
+        input.sourceSignature ?? null,
+        input.destinationTxHash ?? null,
+        input.latestProviderStatus ?? null,
+        input.routeStepTypes ?? [],
+        JSON.stringify(toDbJson(input.metadata ?? {})),
+        input.rawErrorPayload === undefined ? null : JSON.stringify(toDbJson(input.rawErrorPayload)),
+        input.lastPolledAt ? new Date(input.lastPolledAt) : null,
+      ],
+    );
+
+    return this.rowToProviderTransfer(rows[0]);
+  }
+
+  async getProviderTransfer(input: {
+    intentId: string;
+    provider: ProviderTransferProvider;
+    providerQuoteId: string;
+  }): Promise<ProviderTransfer | null> {
+    const { rows } = await this.pool.query(
+      `SELECT intent_id, provider, provider_quote_id, status,
+              source_tx_hash, source_signature, destination_tx_hash,
+              latest_provider_status, route_step_types, metadata,
+              raw_error_payload, last_polled_at, created_at, updated_at
+       FROM intent_provider_transfers
+       WHERE intent_id = $1 AND provider = $2 AND provider_quote_id = $3`,
+      [input.intentId, input.provider, input.providerQuoteId],
+    );
+
+    if (rows.length === 0) return null;
+    return this.rowToProviderTransfer(rows[0]);
+  }
+
   private async withTransaction<T>(fn: (client: PoolClient) => Promise<T>): Promise<T> {
     const client = await this.pool.connect();
     try {
@@ -462,6 +535,25 @@ export class IntentRepository {
       rescueTxHash: row.rescue_tx_hash ?? undefined,
       payoutAddress: row.payout_address ?? undefined,
       payoutTxHash: row.payout_tx_hash ?? undefined,
+    };
+  }
+
+  private rowToProviderTransfer(row: any): ProviderTransfer {
+    return {
+      intentId: row.intent_id,
+      provider: row.provider as ProviderTransferProvider,
+      providerQuoteId: row.provider_quote_id,
+      status: row.status,
+      sourceTxHash: row.source_tx_hash ?? undefined,
+      sourceSignature: row.source_signature ?? undefined,
+      destinationTxHash: row.destination_tx_hash ?? undefined,
+      latestProviderStatus: row.latest_provider_status ?? undefined,
+      routeStepTypes: Array.isArray(row.route_step_types) ? row.route_step_types.map(String) : [],
+      metadata: row.metadata && typeof row.metadata === 'object' ? row.metadata : {},
+      rawErrorPayload: row.raw_error_payload ?? undefined,
+      lastPolledAt: row.last_polled_at ? new Date(row.last_polled_at).getTime() : undefined,
+      createdAt: new Date(row.created_at).getTime(),
+      updatedAt: new Date(row.updated_at).getTime(),
     };
   }
 

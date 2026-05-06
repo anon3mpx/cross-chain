@@ -65,4 +65,13 @@ test('LayerZeroValueTransferApiMonitorWorker settles provider-direct intents fro
   const settled = await intentService.getIntent(intent.intentId);
   assert.equal(settled?.status, IntentStatus.SETTLED);
   assert.equal(settled?.dstTxHash, '0xdestination');
+  const transfer = await intentService.getProviderTransfer({
+    intentId: intent.intentId,
+    provider: 'layerzero_value_transfer_api',
+    providerQuoteId: 'quote_lz_direct',
+  });
+  assert.equal(transfer?.status, 'SETTLED');
+  assert.equal(transfer?.sourceTxHash, '0xsource');
+  assert.equal(transfer?.destinationTxHash, '0xdestination');
+  assert.equal(transfer?.latestProviderStatus, 'SUCCEEDED');
 });
