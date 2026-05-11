@@ -9,6 +9,7 @@ const BASE_ETH = '0x0000000000000000000000000000000000001003';
 const ARB_USDC = '0x0000000000000000000000000000000000002001';
 const ARB_AXLUSDC = '0x0000000000000000000000000000000000002002';
 const ARB_ETH = '0x0000000000000000000000000000000000002003';
+const API_PREFIX = '/api/v1';
 
 const TEST_ENV: Record<string, string> = {
   CHAIN_8453_TOKEN_CCTP_USDC: BASE_USDC,
@@ -114,7 +115,7 @@ test('status /quote returns explicit Gas.zip composition for primary transfer pl
     const server = await listen(buildStatusAPI(intentService, quoteEngine));
 
     try {
-      const quoteRes = await fetch(`${server.baseUrl}/quote`, {
+      const quoteRes = await fetch(`${server.baseUrl}${API_PREFIX}/quote`, {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify(QUOTE_REQUEST),
@@ -138,4 +139,3 @@ test('status /quote returns explicit Gas.zip composition for primary transfer pl
     }
   });
 });
-

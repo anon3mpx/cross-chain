@@ -3,7 +3,7 @@
   "info": {
     "title": "Empx Cross-chain VPS API",
     "version": "1.0.0",
-    "description": "OpenAPI definition for non-partner VPS HTTP endpoints exposed by StatusAPI and AdminAPI. Endpoints under /partner are intentionally excluded."
+    "description": "OpenAPI definition for non-partner VPS HTTP endpoints exposed by StatusAPI and AdminAPI. Public StatusAPI endpoints are documented under /api/v1. Endpoints under /partner are intentionally excluded."
   },
   "servers": [
     {
@@ -22,41 +22,100 @@
     }
   ],
   "paths": {
-    "/quote": {
+    "/admin/intents/{id}/refund": {
       "post": {
         "tags": [
-          "Public"
+          "Admin"
         ],
-        "operationId": "createOfferSetQuote",
-        "summary": "Create quote offers",
-        "description": "Returns an offer set and optionally a legacy top-level quote snapshot.",
+        "operationId": "adminUpdateIntentRefund",
+        "summary": "Admin refund case update",
+        "description": "Updates refund case fields for an intent. Requires x-admin-key header.",
+        "parameters": [
+          {
+            "name": "x-admin-key",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/IntentId"
+            }
+          }
+        ],
         "requestBody": {
           "required": true,
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/QuoteRequest"
+                "$ref": "#/components/schemas/AdminRefundUpdateRequest"
               }
             }
           }
         },
         "responses": {
           "200": {
-            "description": "Quote offers created",
+            "description": "Refund case updated",
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/QuoteOfferSetResponse"
+                  "$ref": "#/components/schemas/AdminRefundUpdateResponse"
                 }
               }
             }
           },
           "400": {
-            "description": "Invalid request or no available route",
+            "description": "Invalid admin payload",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorWithMessageResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized admin key",
             "content": {
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Unexpected server error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorWithMessageResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/health": {
+      "get": {
+        "tags": [
+          "Public"
+        ],
+        "operationId": "getHealth",
+        "summary": "Get API health",
+        "responses": {
+          "200": {
+            "description": "Health payload",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HealthResponse"
                 }
               }
             }
@@ -70,51 +129,49 @@
                 }
               }
             }
-          },
-          "503": {
-            "description": "Temporary quote/unavailable condition",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            }
           }
         }
       }
     },
-    "/quote/select": {
-      "post": {
+    "/api/v1/intent/composed/{primaryIntentId}/{gasZipIntentId}": {
+      "get": {
         "tags": [
           "Public"
         ],
-        "operationId": "selectQuoteOffer",
-        "summary": "Select offer and build integration",
-        "description": "Selects one offer from an offer set and returns intentId, quote, and executable integration payload.",
-        "requestBody": {
-          "required": true,
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/QuoteSelectRequest"
-              }
+        "operationId": "getComposedIntentStatus",
+        "summary": "Get composed intent status",
+        "description": "Returns aggregated status for a primary transfer intent paired with a Gas.zip destination gas intent.",
+        "parameters": [
+          {
+            "name": "primaryIntentId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/IntentId"
+            }
+          },
+          {
+            "name": "gasZipIntentId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/IntentId"
             }
           }
-        },
+        ],
         "responses": {
           "200": {
-            "description": "Offer selected and integration prepared",
+            "description": "Composed intent status",
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/QuoteSelectResponse"
+                  "$ref": "#/components/schemas/ComposedIntentStatusResponse"
                 }
               }
             }
           },
           "400": {
-            "description": "Invalid selection payload",
+            "description": "Invalid composed intent pair",
             "content": {
               "application/json": {
                 "schema": {
@@ -124,21 +181,11 @@
             }
           },
           "404": {
-            "description": "Offer or offer set unavailable/expired",
+            "description": "Intent not found",
             "content": {
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            }
-          },
-          "409": {
-            "description": "Selected offer unavailable with fallback candidates",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/OfferUnavailableResponse"
                 }
               }
             }
@@ -154,7 +201,7 @@
             }
           },
           "503": {
-            "description": "Integration/calldata generation unavailable",
+            "description": "Status backend unavailable",
             "content": {
               "application/json": {
                 "schema": {
@@ -166,7 +213,7 @@
         }
       }
     },
-    "/intent/{id}": {
+    "/api/v1/intent/{id}": {
       "get": {
         "tags": [
           "Public"
@@ -228,99 +275,7 @@
         }
       }
     },
-    "/intent/{id}/submitted": {
-      "post": {
-        "tags": [
-          "Public"
-        ],
-        "operationId": "markIntentSubmitted",
-        "summary": "Mark intent as submitted",
-        "description": "Requires a signed wallet message and source transaction hash.",
-        "parameters": [
-          {
-            "name": "id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "$ref": "#/components/schemas/IntentId"
-            }
-          }
-        ],
-        "requestBody": {
-          "required": true,
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/IntentSubmittedRequest"
-              }
-            }
-          }
-        },
-        "responses": {
-          "202": {
-            "description": "Intent updated",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/IntentStatusResponse"
-                }
-              }
-            }
-          },
-          "400": {
-            "description": "Invalid payload",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorWithMessageResponse"
-                }
-              }
-            }
-          },
-          "401": {
-            "description": "Invalid or expired signature",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorWithMessageResponse"
-                }
-              }
-            }
-          },
-          "404": {
-            "description": "Intent not found",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorWithMessageResponse"
-                }
-              }
-            }
-          },
-          "409": {
-            "description": "Intent state conflict",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorWithMessageResponse"
-                }
-              }
-            }
-          },
-          "500": {
-            "description": "Unexpected server error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorWithMessageResponse"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/intent/{id}/cancel": {
+    "/api/v1/intent/{id}/cancel": {
       "post": {
         "tags": [
           "Public"
@@ -412,7 +367,7 @@
         }
       }
     },
-    "/intent/{id}/refund": {
+    "/api/v1/intent/{id}/refund": {
       "post": {
         "tags": [
           "Public"
@@ -503,54 +458,15 @@
         }
       }
     },
-    "/health": {
-      "get": {
+    "/api/v1/intent/{id}/submitted": {
+      "post": {
         "tags": [
           "Public"
         ],
-        "operationId": "getHealth",
-        "summary": "Get API health",
-        "responses": {
-          "200": {
-            "description": "Health payload",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HealthResponse"
-                }
-              }
-            }
-          },
-          "429": {
-            "description": "Rate limit exceeded",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/admin/intents/{id}/refund": {
-      "post": {
-        "tags": [
-          "Admin"
-        ],
-        "operationId": "adminUpdateIntentRefund",
-        "summary": "Admin refund case update",
-        "description": "Updates refund case fields for an intent. Requires x-admin-key header.",
+        "operationId": "markIntentSubmitted",
+        "summary": "Mark intent as submitted",
+        "description": "Requires a signed wallet message and source transaction hash.",
         "parameters": [
-          {
-            "name": "x-admin-key",
-            "in": "header",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          },
           {
             "name": "id",
             "in": "path",
@@ -565,24 +481,24 @@
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/AdminRefundUpdateRequest"
+                "$ref": "#/components/schemas/IntentSubmittedRequest"
               }
             }
           }
         },
         "responses": {
-          "200": {
-            "description": "Refund case updated",
+          "202": {
+            "description": "Intent updated",
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/AdminRefundUpdateResponse"
+                  "$ref": "#/components/schemas/IntentStatusResponse"
                 }
               }
             }
           },
           "400": {
-            "description": "Invalid admin payload",
+            "description": "Invalid payload",
             "content": {
               "application/json": {
                 "schema": {
@@ -592,11 +508,31 @@
             }
           },
           "401": {
-            "description": "Unauthorized admin key",
+            "description": "Invalid or expired signature",
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/ErrorResponse"
+                  "$ref": "#/components/schemas/ErrorWithMessageResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Intent not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorWithMessageResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Intent state conflict",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorWithMessageResponse"
                 }
               }
             }
@@ -607,6 +543,603 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/ErrorWithMessageResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/layerzero-value-transfer-api/chains": {
+      "get": {
+        "tags": [
+          "Public"
+        ],
+        "operationId": "listLayerZeroValueTransferApiChains",
+        "summary": "List LayerZero Value Transfer API chains",
+        "responses": {
+          "200": {
+            "description": "Supported chains",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LayerZeroValueTransferApiChainsResponse"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Rate limit exceeded",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "502": {
+            "description": "LayerZero Value Transfer API unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorWithMessageResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/layerzero-value-transfer-api/intents/{id}/build-user-steps": {
+      "post": {
+        "tags": [
+          "Public"
+        ],
+        "operationId": "buildLayerZeroValueTransferApiUserSteps",
+        "summary": "Build LayerZero Value Transfer API user steps",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/IntentId"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "User steps built",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LayerZeroValueTransferApiBuildUserStepsResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorWithMessageResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Wallet does not own intent",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorWithMessageResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Intent not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorWithMessageResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Intent is not eligible for this LayerZero Value Transfer API action",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorWithMessageResponse"
+                }
+              }
+            }
+          },
+          "502": {
+            "description": "LayerZero Value Transfer API unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorWithMessageResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/layerzero-value-transfer-api/intents/{id}/submit-signature": {
+      "post": {
+        "tags": [
+          "Public"
+        ],
+        "operationId": "submitLayerZeroValueTransferApiSignature",
+        "summary": "Submit LayerZero Value Transfer API signature",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/IntentId"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/LayerZeroValueTransferApiSubmitSignatureRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Signature submitted",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LayerZeroValueTransferApiSubmitSignatureResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorWithMessageResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Wallet does not own intent",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorWithMessageResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Intent not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorWithMessageResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Intent is not eligible for this LayerZero Value Transfer API action",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorWithMessageResponse"
+                }
+              }
+            }
+          },
+          "502": {
+            "description": "LayerZero Value Transfer API unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorWithMessageResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/layerzero-value-transfer-api/intents/{id}/submitted": {
+      "post": {
+        "tags": [
+          "Public"
+        ],
+        "operationId": "markLayerZeroValueTransferApiIntentSubmitted",
+        "summary": "Mark LayerZero Value Transfer API intent as submitted",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "$ref": "#/components/schemas/IntentId"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/LayerZeroValueTransferApiSubmittedRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "202": {
+            "description": "Intent submitted",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/IntentStatusResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorWithMessageResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Wallet does not own intent",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorWithMessageResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Intent not found",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorWithMessageResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Intent is not eligible for this LayerZero Value Transfer API action",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorWithMessageResponse"
+                }
+              }
+            }
+          },
+          "502": {
+            "description": "LayerZero Value Transfer API unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorWithMessageResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/layerzero-value-transfer-api/tokens": {
+      "get": {
+        "tags": [
+          "Public"
+        ],
+        "operationId": "listLayerZeroValueTransferApiTokens",
+        "summary": "List LayerZero Value Transfer API tokens",
+        "parameters": [
+          {
+            "name": "transferrableFromChainKey",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "transferrableFromTokenAddress",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "nextToken",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Supported tokens",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LayerZeroValueTransferApiTokensResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid token discovery request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorWithMessageResponse"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Rate limit exceeded",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "502": {
+            "description": "LayerZero Value Transfer API unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorWithMessageResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/quote": {
+      "post": {
+        "tags": [
+          "Public"
+        ],
+        "operationId": "createOfferSetQuote",
+        "summary": "Create quote offers",
+        "description": "Returns an offer set and optionally a legacy top-level quote snapshot.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/QuoteRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Quote offers created",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/QuoteOfferSetResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request or no available route",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Rate limit exceeded",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Temporary quote/unavailable condition",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/quote/select": {
+      "post": {
+        "tags": [
+          "Public"
+        ],
+        "operationId": "selectQuoteOffer",
+        "summary": "Select offer and build integration",
+        "description": "Selects one offer from an offer set and returns intentId, quote, and executable integration payload.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/QuoteSelectRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Offer selected and integration prepared",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/QuoteSelectResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid selection payload",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Offer or offer set unavailable/expired",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Selected offer unavailable with fallback candidates",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OfferUnavailableResponse"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Rate limit exceeded",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Integration/calldata generation unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/quote/select-composed": {
+      "post": {
+        "tags": [
+          "Public"
+        ],
+        "operationId": "selectComposedQuoteOffer",
+        "summary": "Select composed primary transfer and Gas.zip destination gas offers",
+        "description": "Creates two quoted intents from one offer set: one for the primary transfer and one for Gas.zip destination gas.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ComposedQuoteSelectRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Composed offer selected and integrations prepared",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ComposedQuoteSelectResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid composed selection payload",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "One or more selected offers are unavailable or expired",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorWithMessageResponse"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Rate limit exceeded",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Integration/calldata generation unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
                 }
               }
             }
@@ -646,7 +1179,8 @@
           "LAYERZERO",
           "VIA_LABS",
           "WORMHOLE",
-          "THORCHAIN"
+          "THORCHAIN",
+          "GASZIP"
         ]
       },
       "RailType": {
@@ -763,6 +1297,12 @@
               "normal"
             ],
             "default": "normal"
+          },
+          "destinationGas": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/DestinationGasRequest"
+            }
           }
         }
       },
@@ -1062,6 +1602,9 @@
           },
           "quote": {
             "$ref": "#/components/schemas/QuoteResult"
+          },
+          "gasZipComposition": {
+            "$ref": "#/components/schemas/GasZipComposition"
           }
         }
       },
@@ -1562,6 +2105,386 @@
           },
           "message": {
             "type": "string"
+          }
+        }
+      },
+      "DestinationGasRequest": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "provider",
+          "chainId",
+          "amountWei"
+        ],
+        "properties": {
+          "provider": {
+            "type": "string",
+            "enum": [
+              "gaszip"
+            ]
+          },
+          "chainId": {
+            "type": "integer"
+          },
+          "amountWei": {
+            "$ref": "#/components/schemas/BigIntString"
+          }
+        }
+      },
+      "GasZipComposition": {
+        "type": "object",
+        "additionalProperties": true
+      },
+      "ComposedQuoteSelectRequest": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "offerSetId",
+          "primaryTransferOfferId",
+          "gasZipDestinationGasOfferId",
+          "userAddress"
+        ],
+        "properties": {
+          "offerSetId": {
+            "$ref": "#/components/schemas/IntentId"
+          },
+          "primaryTransferOfferId": {
+            "$ref": "#/components/schemas/IntentId"
+          },
+          "gasZipDestinationGasOfferId": {
+            "$ref": "#/components/schemas/IntentId"
+          },
+          "userAddress": {
+            "$ref": "#/components/schemas/Address"
+          }
+        }
+      },
+      "ComposedIntentTracking": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "composedIntentId",
+          "primaryTransferIntentId",
+          "gasZipDestinationGasIntentId",
+          "statusPath"
+        ],
+        "properties": {
+          "composedIntentId": {
+            "$ref": "#/components/schemas/IntentId"
+          },
+          "primaryTransferIntentId": {
+            "$ref": "#/components/schemas/IntentId"
+          },
+          "gasZipDestinationGasIntentId": {
+            "$ref": "#/components/schemas/IntentId"
+          },
+          "statusPath": {
+            "type": "string",
+            "example": "/api/v1/intent/composed/0x.../0x..."
+          }
+        }
+      },
+      "ComposedIntentStatus": {
+        "type": "string",
+        "enum": [
+          "QUOTED",
+          "SUBMITTED",
+          "IN_TRANSIT",
+          "PARTIALLY_SETTLED",
+          "SETTLED",
+          "FAILED",
+          "PARTIALLY_FAILED",
+          "CANCELLED",
+          "STUCK",
+          "RECOVERING"
+        ]
+      },
+      "ComposedExecutionPlanStep": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "step",
+          "label",
+          "intentId",
+          "rail"
+        ],
+        "properties": {
+          "step": {
+            "type": "integer"
+          },
+          "label": {
+            "type": "string"
+          },
+          "intentId": {
+            "$ref": "#/components/schemas/IntentId"
+          },
+          "rail": {
+            "$ref": "#/components/schemas/Rail"
+          }
+        }
+      },
+      "ComposedQuoteSelectResponse": {
+        "type": "object",
+        "additionalProperties": true,
+        "required": [
+          "composedIntentId",
+          "status",
+          "executionPlan",
+          "primaryTransfer",
+          "gasZipDestinationGas",
+          "tracking"
+        ],
+        "properties": {
+          "composedIntentId": {
+            "$ref": "#/components/schemas/IntentId"
+          },
+          "status": {
+            "$ref": "#/components/schemas/ComposedIntentStatus"
+          },
+          "executionPlan": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ComposedExecutionPlanStep"
+            }
+          },
+          "primaryTransfer": {
+            "$ref": "#/components/schemas/ComposedIntentLegSelection"
+          },
+          "gasZipDestinationGas": {
+            "$ref": "#/components/schemas/ComposedIntentLegSelection"
+          },
+          "tracking": {
+            "$ref": "#/components/schemas/ComposedIntentTracking"
+          }
+        }
+      },
+      "ComposedIntentLegSelection": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "intentId",
+          "quote",
+          "integration"
+        ],
+        "properties": {
+          "intentId": {
+            "$ref": "#/components/schemas/IntentId"
+          },
+          "quote": {
+            "$ref": "#/components/schemas/QuoteResult"
+          },
+          "integration": {
+            "$ref": "#/components/schemas/SelectedOfferIntegration"
+          }
+        }
+      },
+      "ComposedIntentStatusResponse": {
+        "type": "object",
+        "additionalProperties": true,
+        "required": [
+          "composedIntentId",
+          "status",
+          "createdAt",
+          "updatedAt",
+          "executionPlan",
+          "primaryTransfer",
+          "gasZipDestinationGas",
+          "canCancel",
+          "canRequestRefund",
+          "tracking"
+        ],
+        "properties": {
+          "composedIntentId": {
+            "$ref": "#/components/schemas/IntentId"
+          },
+          "status": {
+            "$ref": "#/components/schemas/ComposedIntentStatus"
+          },
+          "createdAt": {
+            "type": "integer"
+          },
+          "updatedAt": {
+            "type": "integer"
+          },
+          "executionPlan": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ComposedExecutionPlanStep"
+            }
+          },
+          "primaryTransfer": {
+            "$ref": "#/components/schemas/IntentStatusResponse"
+          },
+          "gasZipDestinationGas": {
+            "$ref": "#/components/schemas/IntentStatusResponse"
+          },
+          "canCancel": {
+            "type": "boolean"
+          },
+          "canRequestRefund": {
+            "type": "boolean"
+          },
+          "tracking": {
+            "$ref": "#/components/schemas/ComposedIntentTracking"
+          }
+        }
+      },
+      "LayerZeroValueTransferApiChain": {
+        "type": "object",
+        "additionalProperties": true,
+        "required": [
+          "chainKey",
+          "chainType"
+        ],
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "shortName": {
+            "type": "string"
+          },
+          "chainKey": {
+            "type": "string"
+          },
+          "chainType": {
+            "type": "string"
+          },
+          "chainId": {
+            "type": "integer"
+          }
+        }
+      },
+      "LayerZeroValueTransferApiChainsResponse": {
+        "type": "object",
+        "additionalProperties": true,
+        "required": [
+          "chains"
+        ],
+        "properties": {
+          "chains": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/LayerZeroValueTransferApiChain"
+            }
+          }
+        }
+      },
+      "LayerZeroValueTransferApiToken": {
+        "type": "object",
+        "additionalProperties": true,
+        "required": [
+          "chainKey",
+          "address",
+          "decimals",
+          "symbol"
+        ],
+        "properties": {
+          "isSupported": {
+            "type": "boolean"
+          },
+          "chainKey": {
+            "type": "string"
+          },
+          "address": {
+            "type": "string"
+          },
+          "decimals": {
+            "type": "integer"
+          },
+          "symbol": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          }
+        }
+      },
+      "LayerZeroValueTransferApiTokensResponse": {
+        "type": "object",
+        "additionalProperties": true,
+        "required": [
+          "tokens"
+        ],
+        "properties": {
+          "tokens": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/LayerZeroValueTransferApiToken"
+            }
+          },
+          "nextToken": {
+            "type": "string"
+          }
+        }
+      },
+      "LayerZeroValueTransferApiUserStep": {
+        "type": "object",
+        "additionalProperties": true
+      },
+      "LayerZeroValueTransferApiBuildUserStepsResponse": {
+        "type": "object",
+        "additionalProperties": true,
+        "required": [
+          "userSteps"
+        ],
+        "properties": {
+          "userSteps": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/LayerZeroValueTransferApiUserStep"
+            }
+          }
+        }
+      },
+      "LayerZeroValueTransferApiSubmittedRequest": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "userAddress",
+          "sourceTxHash"
+        ],
+        "properties": {
+          "userAddress": {
+            "$ref": "#/components/schemas/Address"
+          },
+          "sourceTxHash": {
+            "type": "string"
+          }
+        }
+      },
+      "LayerZeroValueTransferApiSubmitSignatureRequest": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "signatures"
+        ],
+        "properties": {
+          "signatures": {
+            "type": "array",
+            "minItems": 1,
+            "maxItems": 8,
+            "items": {
+              "type": "string"
+            }
+          }
+        }
+      },
+      "LayerZeroValueTransferApiSubmitSignatureResponse": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "ok",
+          "intent"
+        ],
+        "properties": {
+          "ok": {
+            "type": "boolean",
+            "enum": [
+              true
+            ]
+          },
+          "intent": {
+            "$ref": "#/components/schemas/IntentStatusResponse"
           }
         }
       }

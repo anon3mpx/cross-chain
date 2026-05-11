@@ -25,6 +25,8 @@ import {
   LayerZeroValueTransferApiBuildUserStepsResponse,
 } from '../services/layerzero/LayerZeroValueTransferApiClient';
 
+const STATUS_API_VERSION_PREFIX = '/api/v1';
+
 interface RateLimitOptions {
   windowMs: number;
   max: number;
@@ -240,9 +242,11 @@ export function buildStatusAPI(
     rateLimitStore.prune?.();
   }, readIntEnv('VPS_RATE_LIMIT_PRUNE_MS', 60_000)).unref?.();
 
-  // ── GET /quote ─────────────────────────────────────────────────────────────
+  const router = express.Router();
+
+  // ── POST /api/v1/quote ────────────────────────────────────────────────────
   // Returns an offer set. Client selects one offer, then requests integration.
-  app.post('/quote', quoteRateLimit, async (req: Request, res: Response) => {
+  router.post('/quote', quoteRateLimit, async (req: Request, res: Response) => {
     try {
       const quoteReq = parseQuoteRequest(req.body, 'normal');
       if (!quoteReq.tokenIn || !quoteReq.tokenOut || !quoteReq.userAddress) {
@@ -254,7 +258,7 @@ export function buildStatusAPI(
       const offerSet = await quoteEngine.getOffers(quoteReq);
       if (!offerSet) return res.status(400).json({ error: 'No route available for this pair' });
 
-      const quote = await quoteEngine.getQuote(quoteReq);
+      const quote = offerSetHasProviderDirectOffer(offerSet) ? null : await quoteEngine.getQuote(quoteReq);
       const gasZipComposition = quoteEngine.buildGasZipComposition(quoteReq, offerSet);
       res.json({
         offerSet: serializeOfferSet(offerSet),
@@ -268,7 +272,7 @@ export function buildStatusAPI(
     }
   });
 
-  app.post('/quote/select', async (req: Request, res: Response) => {
+  router.post('/quote/select', async (req: Request, res: Response) => {
     try {
       const { offerSetId, offerId } = parseOfferSelection(req.body);
       const userAddress = typeof req.body?.userAddress === 'string' ? req.body.userAddress.trim() : '';
@@ -301,7 +305,7 @@ export function buildStatusAPI(
     }
   });
 
-  app.get('/layerzero-value-transfer-api/chains', quoteRateLimit, async (_req: Request, res: Response) => {
+  router.get('/layerzero-value-transfer-api/chains', quoteRateLimit, async (_req: Request, res: Response) => {
     try {
       const response = await layerZeroValueTransferApiClient.listLayerZeroValueTransferApiChains();
       res.json(response);
@@ -310,7 +314,7 @@ export function buildStatusAPI(
     }
   });
 
-  app.get('/layerzero-value-transfer-api/tokens', quoteRateLimit, async (req: Request, res: Response) => {
+  router.get('/layerzero-value-transfer-api/tokens', quoteRateLimit, async (req: Request, res: Response) => {
     try {
       const tokenRequest = parseLayerZeroValueTransferApiTokensRequest(req.query);
       const response = await layerZeroValueTransferApiClient.listLayerZeroValueTransferApiTokens(tokenRequest);
@@ -322,7 +326,7 @@ export function buildStatusAPI(
     }
   });
 
-  app.post('/layerzero-value-transfer-api/intents/:id/build-user-steps', async (req: Request, res: Response) => {
+  router.post('/layerzero-value-transfer-api/intents/:id/build-user-steps', async (req: Request, res: Response) => {
     try {
       const intent = await requireLayerZeroValueTransferApiIntent(req.params.id);
       const quoteId = requireLayerZeroValueTransferApiQuoteId(intent);
@@ -342,7 +346,7 @@ export function buildStatusAPI(
     }
   });
 
-  app.post('/layerzero-value-transfer-api/intents/:id/submitted', async (req: Request, res: Response) => {
+  router.post('/layerzero-value-transfer-api/intents/:id/submitted', async (req: Request, res: Response) => {
     try {
       const intent = await requireLayerZeroValueTransferApiIntent(req.params.id);
       const quoteId = requireLayerZeroValueTransferApiQuoteId(intent);
@@ -374,7 +378,7 @@ export function buildStatusAPI(
     }
   });
 
-  app.post('/layerzero-value-transfer-api/intents/:id/submit-signature', async (req: Request, res: Response) => {
+  router.post('/layerzero-value-transfer-api/intents/:id/submit-signature', async (req: Request, res: Response) => {
     try {
       const intent = await requireLayerZeroValueTransferApiIntent(req.params.id);
       const quoteId = requireLayerZeroValueTransferApiQuoteId(intent);
@@ -403,7 +407,7 @@ export function buildStatusAPI(
     }
   });
 
-  app.post('/quote/select-composed', async (req: Request, res: Response) => {
+  router.post('/quote/select-composed', async (req: Request, res: Response) => {
     try {
       const {
         offerSetId,
@@ -481,9 +485,9 @@ export function buildStatusAPI(
     }
   });
 
-  // ── GET /intent/:id ────────────────────────────────────────────────────────
+  // ── GET /api/v1/intent/:id ────────────────────────────────────────────────
   // Poll this for intent status. Frontend shows progress to user.
-  app.get('/intent/:id', async (req: Request, res: Response) => {
+  router.get('/intent/:id', async (req: Request, res: Response) => {
     const intentId = String(req.params.id);
     const intent = await loadIntent(intentId);
     if (intent === 'unavailable') {
@@ -494,7 +498,7 @@ export function buildStatusAPI(
     res.json(await serializeIntent(intent));
   });
 
-  app.get('/intent/composed/:primaryIntentId/:gasZipIntentId', async (req: Request, res: Response) => {
+  router.get('/intent/composed/:primaryIntentId/:gasZipIntentId', async (req: Request, res: Response) => {
     const primaryIntentId = String(req.params.primaryIntentId);
     const gasZipIntentId = String(req.params.gasZipIntentId);
     const [primaryIntent, gasZipIntent] = await Promise.all([
@@ -542,7 +546,7 @@ export function buildStatusAPI(
     });
   });
 
-  app.post('/intent/:id/submitted', async (req: Request, res: Response) => {
+  router.post('/intent/:id/submitted', async (req: Request, res: Response) => {
     const intentId = String(req.params.id);
     try {
       const auth = parseSignedIntentAction(req, intentId, 'submitted');
@@ -556,7 +560,7 @@ export function buildStatusAPI(
     }
   });
 
-  app.post('/intent/:id/cancel', async (req: Request, res: Response) => {
+  router.post('/intent/:id/cancel', async (req: Request, res: Response) => {
     const intentId = String(req.params.id);
     try {
       const auth = parseSignedIntentAction(req, intentId, 'cancel');
@@ -574,7 +578,7 @@ export function buildStatusAPI(
     }
   });
 
-  app.post('/intent/:id/refund', async (req: Request, res: Response) => {
+  router.post('/intent/:id/refund', async (req: Request, res: Response) => {
     const intentId = String(req.params.id);
     try {
       const auth = parseSignedIntentAction(req, intentId, 'refund');
@@ -589,8 +593,8 @@ export function buildStatusAPI(
     }
   });
 
-  // ── GET /health ────────────────────────────────────────────────────────────
-  app.get('/health', async (_req, res) => {
+  // ── GET /api/v1/health ────────────────────────────────────────────────────
+  router.get('/health', async (_req, res) => {
     try {
       const counts = await intentService.countIntentsByStatus();
       return res.json({ ok: true, intents: counts, ts: Date.now() });
@@ -599,6 +603,9 @@ export function buildStatusAPI(
       return res.status(503).json({ ok: false, ts: Date.now() });
     }
   });
+
+  app.use(STATUS_API_VERSION_PREFIX, router);
+  app.use(router);
 
   return app;
 
@@ -796,6 +803,10 @@ export function buildStatusAPI(
     });
   }
 
+  function offerSetHasProviderDirectOffer(offerSet: { offers?: Array<{ executionMode?: string }> }): boolean {
+    return offerSet.offers?.some((offer) => offer.executionMode === 'provider_direct') ?? false;
+  }
+
   function parseComposedOfferSelection(input: any): {
     offerSetId: string;
     primaryTransferOfferId: string;
@@ -939,7 +950,7 @@ export function buildStatusAPI(
       composedIntentId,
       primaryTransferIntentId: primaryIntentId,
       gasZipDestinationGasIntentId: gasZipIntentId,
-      statusPath: `/intent/composed/${primaryIntentId}/${gasZipIntentId}`,
+      statusPath: `${STATUS_API_VERSION_PREFIX}/intent/composed/${primaryIntentId}/${gasZipIntentId}`,
     };
   }
 

@@ -9,6 +9,7 @@ const BASE_ETH = '0x0000000000000000000000000000000000001003';
 const ARB_USDC = '0x0000000000000000000000000000000000002001';
 const ARB_AXLUSDC = '0x0000000000000000000000000000000000002002';
 const ARB_ETH = '0x0000000000000000000000000000000000002003';
+const API_PREFIX = '/api/v1';
 
 const TEST_ENV: Record<string, string> = {
   CHAIN_8453_TOKEN_CCTP_USDC: BASE_USDC,
@@ -117,7 +118,7 @@ test('status API can select a composed primary-transfer plus Gas.zip destination
     const server = await listen(buildStatusAPI(intentService, quoteEngine));
 
     try {
-      const quoteRes = await fetch(`${server.baseUrl}/quote`, {
+      const quoteRes = await fetch(`${server.baseUrl}${API_PREFIX}/quote`, {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify(QUOTE_REQUEST),
@@ -125,7 +126,7 @@ test('status API can select a composed primary-transfer plus Gas.zip destination
       assert.equal(quoteRes.status, 200);
       const quoteBody = await quoteRes.json() as any;
 
-      const selectRes = await fetch(`${server.baseUrl}/quote/select-composed`, {
+      const selectRes = await fetch(`${server.baseUrl}${API_PREFIX}/quote/select-composed`, {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify({
@@ -142,7 +143,7 @@ test('status API can select a composed primary-transfer plus Gas.zip destination
       assert.equal(selectionBody.primaryTransfer.quote.rail, 'CCTP');
       assert.equal(selectionBody.gasZipDestinationGas.quote.rail, 'GASZIP');
       assert.equal(selectionBody.gasZipDestinationGas.integration.action.kind, 'gaszip_transfer');
-      assert.match(selectionBody.tracking.statusPath, /\/intent\/composed\//);
+      assert.match(selectionBody.tracking.statusPath, /^\/api\/v1\/intent\/composed\//);
 
       await intentService.markSubmitted(selectionBody.primaryTransfer.intentId, '0xprimary');
       await intentService.markSubmitted(selectionBody.gasZipDestinationGas.intentId, '0xgaszip');
@@ -166,4 +167,3 @@ test('status API can select a composed primary-transfer plus Gas.zip destination
     }
   });
 });
-

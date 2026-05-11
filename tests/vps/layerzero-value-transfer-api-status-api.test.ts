@@ -11,6 +11,7 @@ import { IntentStatus, Rail } from '../../src/vps/types';
 const USER = '0x3333333333333333333333333333333333333333';
 const BASE_USDC = '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913';
 const ARB_USDC = '0xaf88d065e77c8cC2239327C5EDb3A432268e5831';
+const API_PREFIX = '/api/v1';
 
 async function listen(app: express.Express) {
   const server = await new Promise<ReturnType<express.Express['listen']>>((resolve) => {
@@ -130,13 +131,13 @@ test('StatusAPI exposes LayerZero Value Transfer API discovery and intent-bound 
 
   const server = await listen(app);
   try {
-    const chainsRes = await fetch(`${server.baseUrl}/layerzero-value-transfer-api/chains`);
+    const chainsRes = await fetch(`${server.baseUrl}${API_PREFIX}/layerzero-value-transfer-api/chains`);
     assert.equal(chainsRes.status, 200);
     const chains = await chainsRes.json() as any;
     assert.equal(chains.chains[0].chainKey, 'base');
 
     const tokensRes = await fetch(
-      `${server.baseUrl}/layerzero-value-transfer-api/tokens?transferrableFromChainKey=base&transferrableFromTokenAddress=${BASE_USDC}&nextToken=abc`,
+      `${server.baseUrl}${API_PREFIX}/layerzero-value-transfer-api/tokens?transferrableFromChainKey=base&transferrableFromTokenAddress=${BASE_USDC}&nextToken=abc`,
     );
     assert.equal(tokensRes.status, 200);
     assert.deepEqual(capturedTokenRequest, {
@@ -145,7 +146,7 @@ test('StatusAPI exposes LayerZero Value Transfer API discovery and intent-bound 
       nextToken: 'abc',
     });
 
-    const quoteRes = await fetch(`${server.baseUrl}/quote`, {
+    const quoteRes = await fetch(`${server.baseUrl}${API_PREFIX}/quote`, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({
@@ -163,8 +164,9 @@ test('StatusAPI exposes LayerZero Value Transfer API discovery and intent-bound 
       offer.rail === Rail.LAYERZERO && offer.offerType === 'lz_api_direct'
     );
     assert.ok(lzOffer);
+    assert.equal('quote' in quoteBody, false);
 
-    const selectRes = await fetch(`${server.baseUrl}/quote/select`, {
+    const selectRes = await fetch(`${server.baseUrl}${API_PREFIX}/quote/select`, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({
@@ -178,7 +180,7 @@ test('StatusAPI exposes LayerZero Value Transfer API discovery and intent-bound 
     assert.equal(selected.integration.action.kind, 'layerzero_value_transfer_api');
 
     const buildStepsRes = await fetch(
-      `${server.baseUrl}/layerzero-value-transfer-api/intents/${selected.intentId}/build-user-steps`,
+      `${server.baseUrl}${API_PREFIX}/layerzero-value-transfer-api/intents/${selected.intentId}/build-user-steps`,
       {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
@@ -191,7 +193,7 @@ test('StatusAPI exposes LayerZero Value Transfer API discovery and intent-bound 
     assert.deepEqual(capturedBuildUserStepsRequest, { quoteId: 'quote_lz_direct' });
 
     const submittedRes = await fetch(
-      `${server.baseUrl}/layerzero-value-transfer-api/intents/${selected.intentId}/submitted`,
+      `${server.baseUrl}${API_PREFIX}/layerzero-value-transfer-api/intents/${selected.intentId}/submitted`,
       {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
@@ -201,7 +203,7 @@ test('StatusAPI exposes LayerZero Value Transfer API discovery and intent-bound 
     assert.equal(submittedRes.status, 202);
 
     const submitSignatureRes = await fetch(
-      `${server.baseUrl}/layerzero-value-transfer-api/intents/${selected.intentId}/submit-signature`,
+      `${server.baseUrl}${API_PREFIX}/layerzero-value-transfer-api/intents/${selected.intentId}/submit-signature`,
       {
         method: 'POST',
         headers: { 'content-type': 'application/json' },

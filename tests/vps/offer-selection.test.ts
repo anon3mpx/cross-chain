@@ -9,6 +9,7 @@ const BASE_ETH = '0x0000000000000000000000000000000000001003';
 const ARB_USDC = '0x0000000000000000000000000000000000002001';
 const ARB_AXLUSDC = '0x0000000000000000000000000000000000002002';
 const ARB_ETH = '0x0000000000000000000000000000000000002003';
+const API_PREFIX = '/api/v1';
 
 const TEST_ENV: Record<string, string> = {
   CHAIN_8453_TOKEN_CCTP_USDC: BASE_USDC,
@@ -148,7 +149,7 @@ test('status quote selection creates an intent from the selected offer', async (
     const server = await listen(buildStatusAPI(intentService, quoteEngine));
 
     try {
-      const quoteRes = await fetch(`${server.baseUrl}/quote`, {
+      const quoteRes = await fetch(`${server.baseUrl}${API_PREFIX}/quote`, {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify(QUOTE_REQUEST),
@@ -164,7 +165,7 @@ test('status quote selection creates an intent from the selected offer', async (
       const selectedOffer = quoteBody.offerSet.offers.find((offer) => offer.offerId !== quoteBody.offerSet?.bestOfferId);
       assert.ok(selectedOffer, 'expected a non-best offer to select');
 
-      const selectRes = await fetch(`${server.baseUrl}/quote/select`, {
+      const selectRes = await fetch(`${server.baseUrl}${API_PREFIX}/quote/select`, {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify({
@@ -185,7 +186,7 @@ test('status quote selection creates an intent from the selected offer', async (
       assert.equal(selectionBody.quote.intentId, selectionBody.intentId);
       assertSelectionIntegration(selectionBody.integration);
 
-      const intentRes = await fetch(`${server.baseUrl}/intent/${selectionBody.intentId}`);
+      const intentRes = await fetch(`${server.baseUrl}${API_PREFIX}/intent/${selectionBody.intentId}`);
       assert.equal(intentRes.status, 200);
       const intentBody = await intentRes.json() as { rail: string };
       assert.equal(intentBody.rail, selectedOffer.rail);
@@ -300,7 +301,7 @@ test('status quote selection returns fallback offers when selected offer is unav
     const server = await listen(buildStatusAPI(intentService, quoteEngine));
 
     try {
-      const quoteRes = await fetch(`${server.baseUrl}/quote`, {
+      const quoteRes = await fetch(`${server.baseUrl}${API_PREFIX}/quote`, {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify(QUOTE_REQUEST),
@@ -311,7 +312,7 @@ test('status quote selection returns fallback offers when selected offer is unav
       };
       assert.ok(quoteBody.offerSet);
 
-      const selectRes = await fetch(`${server.baseUrl}/quote/select`, {
+      const selectRes = await fetch(`${server.baseUrl}${API_PREFIX}/quote/select`, {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify({
