@@ -18,6 +18,7 @@ export enum Rail {
   LAYERZERO = 'LAYERZERO',  // $0.35, 80+ chains, configurable DVN
   VIA_LABS  = 'VIA_LABS',   // $0.25, 30+ chains, API-first
   WORMHOLE  = 'WORMHOLE',   // EVM↔SVM SPL tokens + NTT, 30+ chains
+  GASZIP    = 'GASZIP',     // Provider-direct destination native gas delivery via Gas.zip API
 
   // ── Liquidity rail (AMM-based, direct native delivery, no ReceiverV1) ─────
   THORCHAIN = 'THORCHAIN',  // Free+slip, native BTC/ETH/SOL/DOGE/AVAX/BSC/BASE
@@ -25,7 +26,7 @@ export enum Rail {
 
 // ── Rail category helpers ──────────────────────────────────────────────────────
 export const LIQUIDITY_RAILS = new Set([Rail.THORCHAIN]);
-export const MESSAGING_RAILS = new Set([Rail.CCTP, Rail.CCTP_FAST, Rail.AXELAR, Rail.LAYERZERO, Rail.VIA_LABS, Rail.WORMHOLE]);
+export const MESSAGING_RAILS = new Set([Rail.CCTP, Rail.CCTP_FAST, Rail.AXELAR, Rail.LAYERZERO, Rail.VIA_LABS, Rail.WORMHOLE, Rail.GASZIP]);
 
 // ── Non-EVM pseudo chain IDs (used internally, never on-chain) ────────────────
 export const CHAIN_ID = {
@@ -135,7 +136,15 @@ export interface QuoteRequest {
   dstChainId:   number;
   userAddress:  string;
   nativeDstAddress?: string;  // Required for BTC/SOL destinations
+  destinationGas?: DestinationGasRequest[];
   urgency?:     'fast' | 'normal';
+}
+
+export interface DestinationGasRequest {
+  provider?: 'gaszip';
+  chainId: number;
+  amountWei: string;
+  recipient?: string;
 }
 
 export interface QuoteResult {
@@ -170,6 +179,9 @@ export interface QuoteResult {
   // THORChain-specific
   thorAsset?:        string;    // e.g. "BTC.BTC", "SOL.SOL"
   minThorOutput?:    bigint;    // 8-decimal THORChain units
+  layerZeroValueTransferApiQuoteId?: string; // LayerZero Value Transfer API quote/transfer id
+  layerZeroValueTransferApiRouteSteps?: unknown[];
+  layerZeroValueTransferApiUserSteps?: unknown[];
   nativeDstAddress?: string;    // User's BTC/SOL/DOGE address
   selectedByUser?:   boolean;   // true when intent came from explicit offer selection
 }
@@ -194,6 +206,8 @@ export type RailOfferType =
   | 'lz_oft_adapter'
   | 'lz_stargate_pool'
   | 'lz_stargate_oft'
+  | 'lz_api_direct'
+  | 'gaszip_api_direct'
   | 'thor_api_direct';
 
 export type DeliveryShape =
@@ -247,6 +261,41 @@ export interface OfferSet {
   bestOfferId?: string;
 }
 
+export interface GasZipCompositionStep {
+  step: number;
+  offerId: string;
+  rail: Rail;
+  executionMode?: ExecutionMode;
+  label: 'primary_transfer' | 'gaszip_destination_gas';
+}
+
+export interface GasZipOfferComposition {
+  kind: 'primary_transfer_with_gaszip_destination_gas';
+  primaryTransferOfferId: string;
+  gasZipDestinationGasOfferId: string;
+  primaryTransferOffer: RailOffer;
+  gasZipDestinationGasOffer: RailOffer;
+  executionPlan: GasZipCompositionStep[];
+  uxHints: {
+    destinationGasProvider: 'gaszip';
+    destinationGasIncluded: true;
+    recommendedExecution: 'primary_then_gas';
+    atomic: false;
+  };
+}
+
+export type ComposedIntentStatus =
+  | 'QUOTED'
+  | 'SUBMITTED'
+  | 'IN_TRANSIT'
+  | 'PARTIALLY_SETTLED'
+  | 'SETTLED'
+  | 'STUCK'
+  | 'RECOVERING'
+  | 'PARTIALLY_FAILED'
+  | 'FAILED'
+  | 'CANCELLED';
+
 export interface Intent {
   intentId:         string;
   status:           IntentStatus;
@@ -283,6 +332,41 @@ export interface IntentRefundCase {
   payoutAddress?: string;
   payoutTxHash?: string;
 }
+
+export type ProviderTransferProvider = 'layerzero_value_transfer_api' | 'thorchain_api';
+
+export type ProviderTransferStatus =
+  | 'CREATED'
+  | 'USER_STEPS_BUILT'
+  | 'SUBMITTED'
+  | 'IN_TRANSIT'
+  | 'SETTLED'
+  | 'FAILED'
+  | 'EXPIRED';
+
+export interface ProviderTransfer {
+  intentId: string;
+  provider: ProviderTransferProvider;
+  providerQuoteId: string;
+  status: ProviderTransferStatus;
+  sourceTxHash?: string;
+  sourceSignature?: string;
+  destinationTxHash?: string;
+  latestProviderStatus?: string;
+  routeStepTypes: string[];
+  metadata: Record<string, unknown>;
+  rawErrorPayload?: unknown;
+  lastPolledAt?: number;
+  createdAt: number;
+  updatedAt: number;
+}
+
+export type ProviderTransferUpsert = Omit<Partial<ProviderTransfer>, 'intentId' | 'provider' | 'providerQuoteId' | 'createdAt' | 'updatedAt'> & {
+  intentId: string;
+  provider: ProviderTransferProvider;
+  providerQuoteId: string;
+  status: ProviderTransferStatus;
+};
 
 export interface RailScore {
   rail:              Rail;

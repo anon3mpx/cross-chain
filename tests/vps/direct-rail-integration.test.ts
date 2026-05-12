@@ -138,3 +138,102 @@ test('provider_direct THOR offers set tx value for native deposits', async () =>
   const decoded = THOR_ROUTER_IFACE.decodeFunctionData('depositWithExpiry', integration.tx!.data);
   assert.equal(decoded.asset.toLowerCase(), ZeroAddress.toLowerCase());
 });
+
+test('provider_direct LayerZero Value Transfer API offers return user steps for EVM execution', async () => {
+  const integration = await buildSelectedOfferIntegration('0x' + '66'.repeat(32), {
+    rail: 'LAYERZERO',
+    offerType: 'lz_api_direct',
+    executionMode: 'provider_direct',
+    execution: {
+      provider: 'layerzero_value_transfer_api',
+      quote: {
+        layerZeroValueTransferApiQuoteId: 'quote_lz_direct',
+      },
+      layerZeroValueTransferApiQuoteId: 'quote_lz_direct',
+      layerZeroValueTransferApiUserSteps: [{
+        type: 'TRANSACTION',
+        description: 'bridge',
+        chainKey: 'base',
+        chainType: 'EVM',
+        signerAddress: '0x3333333333333333333333333333333333333333',
+        transaction: {
+          encoded: {
+            chainId: 8453,
+            to: '0x27a16dc786820B16E5c9028b75B99F6f604b5d26',
+            data: '0x1234',
+            value: '456',
+          },
+        },
+      }],
+    },
+  } as any, '0x3333333333333333333333333333333333333333');
+
+  assert.equal(integration.mode, 'provider_direct');
+  assert.equal(integration.action.kind, 'layerzero_value_transfer_api');
+  assert.equal(integration.action.quoteId, 'quote_lz_direct');
+  assert.equal(integration.action.requiresFreshUserSteps, false);
+  assert.equal(integration.action.userSteps[0]?.chainType, 'EVM');
+});
+
+test('provider_direct LayerZero Value Transfer API offers mark Solana execution as needing fresh user steps', async () => {
+  const integration = await buildSelectedOfferIntegration('0x' + '77'.repeat(32), {
+    rail: 'LAYERZERO',
+    offerType: 'lz_api_direct',
+    executionMode: 'provider_direct',
+    execution: {
+      provider: 'layerzero_value_transfer_api',
+      layerZeroValueTransferApiQuoteId: 'quote_lz_solana',
+      layerZeroValueTransferApiUserSteps: [{
+        type: 'TRANSACTION',
+        description: 'bridge',
+        chainKey: 'solana',
+        chainType: 'SOLANA',
+        signerAddress: 'Dz93pUVjXuaMnSsPSn7V99V4cUzhKoQdx9ECwZJZiafG',
+        transaction: {
+          encoded: {
+            encoding: 'base64',
+            data: 'AQAB',
+          },
+        },
+      }],
+    },
+  } as any, '0x3333333333333333333333333333333333333333');
+
+  assert.equal(integration.mode, 'provider_direct');
+  assert.equal(integration.action.kind, 'layerzero_value_transfer_api');
+  assert.equal(integration.action.quoteId, 'quote_lz_solana');
+  assert.equal(integration.action.requiresFreshUserSteps, true);
+  assert.equal(integration.action.userSteps[0]?.chainType, 'SOLANA');
+});
+
+test('provider_direct Gas.zip offers return normalized direct-deposit transaction helpers', async () => {
+  const integration = await buildSelectedOfferIntegration('0x' + '88'.repeat(32), {
+    rail: 'GASZIP',
+    offerType: 'gaszip_api_direct',
+    executionMode: 'provider_direct',
+    execution: {
+      provider: 'gaszip',
+      expectedAmountWei: '800000000000000',
+      recipient: '0x3333333333333333333333333333333333333333',
+      expiresAt: 1_900_000_123,
+      directDepositAddress: '0x391E7C679d29bD940d63be94AD22A25d25b5A604',
+      quote: {
+        srcChainId: 8453,
+      },
+      tx: {
+        to: '0x391E7C679d29bD940d63be94AD22A25d25b5A604',
+        data: '0x010039',
+        value: '805000000000000',
+        chainId: 8453,
+      },
+    },
+  } as any, '0x3333333333333333333333333333333333333333');
+
+  assert.equal(integration.mode, 'provider_direct');
+  assert.equal(integration.action.kind, 'gaszip_transfer');
+  assert.equal(integration.action.expectedAmountOut, '800000000000000');
+  assert.equal(integration.tx?.to, '0x391E7C679d29bD940d63be94AD22A25d25b5A604');
+  assert.equal(integration.tx?.data, '0x010039');
+  assert.equal(integration.tx?.value, '805000000000000');
+  assert.equal(integration.tx?.chainId, 8453);
+});

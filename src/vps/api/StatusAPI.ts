@@ -11,10 +11,21 @@ import { CHAIN_CONFIGS } from '../config/chains';
 import { IntentService, IntentLifecycleError } from '../services/IntentService';
 import { QuoteEngine } from '../services/QuoteEngine';
 import { buildSelectedOfferIntegration } from '../services/DirectRailIntegrationBuilder';
-import { Intent, IntentStatus } from '../types';
-import { parseOfferSelection, parseQuoteRequest, serializeOfferSet, serializeQuote } from './quoteCodec';
+import { ComposedIntentStatus, Intent, IntentStatus, Rail } from '../types';
+import { parseOfferSelection, parseQuoteRequest, serializeGasZipComposition, serializeOfferSet, serializeQuote } from './quoteCodec';
 import { buildIntentActionMessage, IntentAction, SIGNATURE_WINDOW_MS } from '../utils/intentActionAuth';
 import { getRailVariantLabel } from '../rails/registry';
+import {
+  LayerZeroValueTransferApiBuildUserStepsRequest,
+  LayerZeroValueTransferApiClient,
+  LayerZeroValueTransferApiChainsResponse,
+  LayerZeroValueTransferApiSubmitSignatureRequest,
+  LayerZeroValueTransferApiTokensRequest,
+  LayerZeroValueTransferApiTokensResponse,
+  LayerZeroValueTransferApiBuildUserStepsResponse,
+} from '../services/layerzero/LayerZeroValueTransferApiClient';
+
+const STATUS_API_VERSION_PREFIX = '/api/v1';
 
 interface RateLimitOptions {
   windowMs: number;
@@ -30,6 +41,17 @@ interface RateLimitBucket {
 interface RateLimitStore {
   increment(key: string, windowMs: number): Promise<RateLimitBucket>;
   prune?(): void;
+}
+
+interface LayerZeroValueTransferApiHttpClient {
+  listLayerZeroValueTransferApiChains(): Promise<LayerZeroValueTransferApiChainsResponse>;
+  listLayerZeroValueTransferApiTokens(request: LayerZeroValueTransferApiTokensRequest): Promise<LayerZeroValueTransferApiTokensResponse>;
+  buildLayerZeroValueTransferApiUserSteps(request: LayerZeroValueTransferApiBuildUserStepsRequest): Promise<LayerZeroValueTransferApiBuildUserStepsResponse>;
+  submitLayerZeroValueTransferApiSignature(request: LayerZeroValueTransferApiSubmitSignatureRequest): Promise<Record<string, never>>;
+}
+
+interface StatusApiOptions {
+  layerZeroValueTransferApiClient?: LayerZeroValueTransferApiHttpClient;
 }
 
 class MemoryRateLimitStore implements RateLimitStore {
@@ -184,9 +206,12 @@ function rateLimit(
 export function buildStatusAPI(
   intentService: IntentService,
   quoteEngine: QuoteEngine,
+  options: StatusApiOptions = {},
 ): express.Application {
   const app = express();
   const providers = new Map<number, ethers.JsonRpcProvider>();
+  const layerZeroValueTransferApiClient =
+    options.layerZeroValueTransferApiClient ?? new LayerZeroValueTransferApiClient();
 
   app.use((req, res, next) => {
     res.setHeader('Access-Control-Allow-Origin', process.env.VPS_CORS_ORIGIN ?? '*');
@@ -217,9 +242,11 @@ export function buildStatusAPI(
     rateLimitStore.prune?.();
   }, readIntEnv('VPS_RATE_LIMIT_PRUNE_MS', 60_000)).unref?.();
 
-  // ── GET /quote ─────────────────────────────────────────────────────────────
+  const router = express.Router();
+
+  // ── POST /api/v1/quote ────────────────────────────────────────────────────
   // Returns an offer set. Client selects one offer, then requests integration.
-  app.post('/quote', quoteRateLimit, async (req: Request, res: Response) => {
+  router.post('/quote', quoteRateLimit, async (req: Request, res: Response) => {
     try {
       const quoteReq = parseQuoteRequest(req.body, 'normal');
       if (!quoteReq.tokenIn || !quoteReq.tokenOut || !quoteReq.userAddress) {
@@ -231,10 +258,12 @@ export function buildStatusAPI(
       const offerSet = await quoteEngine.getOffers(quoteReq);
       if (!offerSet) return res.status(400).json({ error: 'No route available for this pair' });
 
-      const quote = await quoteEngine.getQuote(quoteReq);
+      const quote = offerSetHasProviderDirectOffer(offerSet) ? null : await quoteEngine.getQuote(quoteReq);
+      const gasZipComposition = quoteEngine.buildGasZipComposition(quoteReq, offerSet);
       res.json({
         offerSet: serializeOfferSet(offerSet),
         ...(quote ? { quote: serializeQuote(quote) } : {}),
+        ...(gasZipComposition ? { gasZipComposition: serializeGasZipComposition(gasZipComposition) } : {}),
       });
     } catch (err) {
       const msg = String(err);
@@ -243,7 +272,7 @@ export function buildStatusAPI(
     }
   });
 
-  app.post('/quote/select', async (req: Request, res: Response) => {
+  router.post('/quote/select', async (req: Request, res: Response) => {
     try {
       const { offerSetId, offerId } = parseOfferSelection(req.body);
       const userAddress = typeof req.body?.userAddress === 'string' ? req.body.userAddress.trim() : '';
@@ -276,9 +305,189 @@ export function buildStatusAPI(
     }
   });
 
-  // ── GET /intent/:id ────────────────────────────────────────────────────────
+  router.get('/layerzero-value-transfer-api/chains', quoteRateLimit, async (_req: Request, res: Response) => {
+    try {
+      const response = await layerZeroValueTransferApiClient.listLayerZeroValueTransferApiChains();
+      res.json(response);
+    } catch (err) {
+      res.status(502).json({ error: 'LAYERZERO_VALUE_TRANSFER_API_UNAVAILABLE', message: String(err) });
+    }
+  });
+
+  router.get('/layerzero-value-transfer-api/tokens', quoteRateLimit, async (req: Request, res: Response) => {
+    try {
+      const tokenRequest = parseLayerZeroValueTransferApiTokensRequest(req.query);
+      const response = await layerZeroValueTransferApiClient.listLayerZeroValueTransferApiTokens(tokenRequest);
+      res.json(response);
+    } catch (err) {
+      const status = err instanceof IntentLifecycleError ? err.statusCode : 502;
+      const error = err instanceof IntentLifecycleError ? err.code : 'LAYERZERO_VALUE_TRANSFER_API_UNAVAILABLE';
+      res.status(status).json({ error, message: String(err instanceof Error ? err.message : err) });
+    }
+  });
+
+  router.post('/layerzero-value-transfer-api/intents/:id/build-user-steps', async (req: Request, res: Response) => {
+    try {
+      const intent = await requireLayerZeroValueTransferApiIntent(req.params.id);
+      const quoteId = requireLayerZeroValueTransferApiQuoteId(intent);
+      const response = await layerZeroValueTransferApiClient.buildLayerZeroValueTransferApiUserSteps({ quoteId });
+      await intentService.upsertProviderTransfer?.({
+        intentId: intent.intentId,
+        provider: 'layerzero_value_transfer_api',
+        providerQuoteId: quoteId,
+        status: 'USER_STEPS_BUILT',
+        latestProviderStatus: 'USER_STEPS_BUILT',
+        routeStepTypes: extractLayerZeroValueTransferApiRouteStepTypes(intent),
+        metadata: { userStepCount: response.userSteps.length },
+      });
+      res.json(response);
+    } catch (err) {
+      writeLayerZeroValueTransferApiError(res, err);
+    }
+  });
+
+  router.post('/layerzero-value-transfer-api/intents/:id/submitted', async (req: Request, res: Response) => {
+    try {
+      const intent = await requireLayerZeroValueTransferApiIntent(req.params.id);
+      const quoteId = requireLayerZeroValueTransferApiQuoteId(intent);
+      const submission = parseLayerZeroValueTransferApiSubmission(req.body);
+      if (submission.userAddress.toLowerCase() !== intent.userAddress.toLowerCase()) {
+        throw new IntentLifecycleError('UNAUTHORIZED_INTENT', 'Intent does not belong to the provided wallet.', 403);
+      }
+
+      await intentService.upsertProviderTransfer({
+        intentId: intent.intentId,
+        provider: 'layerzero_value_transfer_api',
+        providerQuoteId: quoteId,
+        status: 'SUBMITTED',
+        sourceTxHash: submission.sourceTxHash,
+        latestProviderStatus: 'SOURCE_SUBMITTED',
+        routeStepTypes: extractLayerZeroValueTransferApiRouteStepTypes(intent),
+      });
+
+      const updated = intent.status === IntentStatus.SUBMITTED
+        ? intent
+        : await intentService.markSubmitted(intent.intentId, submission.sourceTxHash, {
+          actor: submission.userAddress,
+          eventSource: 'layerzero-value-transfer-api-submitted',
+          allowedFrom: [IntentStatus.QUOTED, IntentStatus.SUBMITTED],
+        });
+      res.status(202).json(await serializeIntent(updated));
+    } catch (err) {
+      writeLayerZeroValueTransferApiError(res, err);
+    }
+  });
+
+  router.post('/layerzero-value-transfer-api/intents/:id/submit-signature', async (req: Request, res: Response) => {
+    try {
+      const intent = await requireLayerZeroValueTransferApiIntent(req.params.id);
+      const quoteId = requireLayerZeroValueTransferApiQuoteId(intent);
+      const signatures = parseLayerZeroValueTransferApiSignatures(req.body);
+      await layerZeroValueTransferApiClient.submitLayerZeroValueTransferApiSignature({ quoteId, signatures });
+      await intentService.upsertProviderTransfer?.({
+        intentId: intent.intentId,
+        provider: 'layerzero_value_transfer_api',
+        providerQuoteId: quoteId,
+        status: 'SUBMITTED',
+        sourceSignature: signatures[0],
+        latestProviderStatus: 'SIGNATURE_SUBMITTED',
+        routeStepTypes: extractLayerZeroValueTransferApiRouteStepTypes(intent),
+        metadata: { signatureCount: signatures.length },
+      });
+      const updated = intent.status === IntentStatus.SUBMITTED
+        ? intent
+        : await intentService.markSubmitted(intent.intentId, quoteId, {
+          actor: 'layerzero-value-transfer-api',
+          eventSource: 'layerzero-value-transfer-api-submit-signature',
+          allowedFrom: [IntentStatus.QUOTED, IntentStatus.SUBMITTED],
+        });
+      res.json({ ok: true, intent: await serializeIntent(updated) });
+    } catch (err) {
+      writeLayerZeroValueTransferApiError(res, err);
+    }
+  });
+
+  router.post('/quote/select-composed', async (req: Request, res: Response) => {
+    try {
+      const {
+        offerSetId,
+        primaryTransferOfferId,
+        gasZipDestinationGasOfferId,
+      } = parseComposedOfferSelection(req.body);
+      const userAddress = typeof req.body?.userAddress === 'string' ? req.body.userAddress.trim() : '';
+      if (!userAddress) {
+        return res.status(400).json({ error: 'userAddress is required' });
+      }
+
+      const [primaryTransferOffer, gasZipDestinationGasOffer] = await Promise.all([
+        quoteEngine.getOfferBySelection(offerSetId, primaryTransferOfferId),
+        quoteEngine.getOfferBySelection(offerSetId, gasZipDestinationGasOfferId),
+      ]);
+      if (!primaryTransferOffer || !gasZipDestinationGasOffer) {
+        return res.status(404).json({
+          error: 'OFFER_NOT_FOUND',
+          message: 'One or more composed offers are unavailable or expired.',
+        });
+      }
+      if (primaryTransferOffer.rail === Rail.GASZIP) {
+        return res.status(400).json({ error: 'primaryTransferOfferId must reference a non-GASZIP offer' });
+      }
+      if (gasZipDestinationGasOffer.rail !== Rail.GASZIP) {
+        return res.status(400).json({ error: 'gasZipDestinationGasOfferId must reference a GASZIP offer' });
+      }
+
+      const [primaryTransferIntent, gasZipDestinationGasIntent] = await Promise.all([
+        intentService.createQuotedIntentFromOffer(primaryTransferOffer, userAddress),
+        intentService.createQuotedIntentFromOffer(gasZipDestinationGasOffer, userAddress),
+      ]);
+      const [primaryTransferIntegration, gasZipDestinationGasIntegration] = await Promise.all([
+        buildSelectedOfferIntegration(primaryTransferIntent.intentId, primaryTransferOffer, userAddress),
+        buildSelectedOfferIntegration(gasZipDestinationGasIntent.intentId, gasZipDestinationGasOffer, userAddress),
+      ]);
+      const tracking = buildComposedTracking(
+        primaryTransferIntent.intentId,
+        gasZipDestinationGasIntent.intentId,
+      );
+
+      res.json({
+        composedIntentId: tracking.composedIntentId,
+        status: 'QUOTED' satisfies ComposedIntentStatus,
+        executionPlan: [
+          {
+            step: 1,
+            label: 'primary_transfer',
+            intentId: primaryTransferIntent.intentId,
+            rail: primaryTransferIntent.quote.rail,
+          },
+          {
+            step: 2,
+            label: 'gaszip_destination_gas',
+            intentId: gasZipDestinationGasIntent.intentId,
+            rail: gasZipDestinationGasIntent.quote.rail,
+          },
+        ],
+        primaryTransfer: {
+          intentId: primaryTransferIntent.intentId,
+          quote: serializeQuote(primaryTransferIntent.quote),
+          integration: primaryTransferIntegration,
+        },
+        gasZipDestinationGas: {
+          intentId: gasZipDestinationGasIntent.intentId,
+          quote: serializeQuote(gasZipDestinationGasIntent.quote),
+          integration: gasZipDestinationGasIntegration,
+        },
+        tracking,
+      });
+    } catch (err) {
+      const msg = String(err);
+      const code = msg.toLowerCase().includes('calldata') || msg.toLowerCase().includes('routerv1') ? 503 : 400;
+      res.status(code).json({ error: msg });
+    }
+  });
+
+  // ── GET /api/v1/intent/:id ────────────────────────────────────────────────
   // Poll this for intent status. Frontend shows progress to user.
-  app.get('/intent/:id', async (req: Request, res: Response) => {
+  router.get('/intent/:id', async (req: Request, res: Response) => {
     const intentId = String(req.params.id);
     const intent = await loadIntent(intentId);
     if (intent === 'unavailable') {
@@ -289,7 +498,55 @@ export function buildStatusAPI(
     res.json(await serializeIntent(intent));
   });
 
-  app.post('/intent/:id/submitted', async (req: Request, res: Response) => {
+  router.get('/intent/composed/:primaryIntentId/:gasZipIntentId', async (req: Request, res: Response) => {
+    const primaryIntentId = String(req.params.primaryIntentId);
+    const gasZipIntentId = String(req.params.gasZipIntentId);
+    const [primaryIntent, gasZipIntent] = await Promise.all([
+      loadIntent(primaryIntentId),
+      loadIntent(gasZipIntentId),
+    ]);
+    if (primaryIntent === 'unavailable' || gasZipIntent === 'unavailable') {
+      return res.status(503).json({ error: 'STATUS_UNAVAILABLE' });
+    }
+    if (!primaryIntent || !gasZipIntent) {
+      return res.status(404).json({ error: 'Intent not found' });
+    }
+    if (gasZipIntent.quote.rail !== Rail.GASZIP) {
+      return res.status(400).json({ error: 'gasZipIntentId must reference a GASZIP intent' });
+    }
+
+    const primaryTransfer = await serializeIntent(primaryIntent);
+    const gasZipDestinationGas = await serializeIntent(gasZipIntent);
+    const tracking = buildComposedTracking(primaryIntentId, gasZipIntentId);
+
+    res.json({
+      composedIntentId: tracking.composedIntentId,
+      status: composeIntentStatus(primaryIntent.status, gasZipIntent.status),
+      createdAt: Math.min(primaryIntent.createdAt, gasZipIntent.createdAt),
+      updatedAt: Math.max(primaryIntent.updatedAt, gasZipIntent.updatedAt),
+      executionPlan: [
+        {
+          step: 1,
+          label: 'primary_transfer',
+          intentId: primaryIntent.intentId,
+          rail: primaryIntent.quote.rail,
+        },
+        {
+          step: 2,
+          label: 'gaszip_destination_gas',
+          intentId: gasZipIntent.intentId,
+          rail: gasZipIntent.quote.rail,
+        },
+      ],
+      primaryTransfer,
+      gasZipDestinationGas,
+      canCancel: intentService.canCancel(primaryIntent.status) && intentService.canCancel(gasZipIntent.status),
+      canRequestRefund: intentService.canRequestRefund(primaryIntent.status) || intentService.canRequestRefund(gasZipIntent.status),
+      tracking,
+    });
+  });
+
+  router.post('/intent/:id/submitted', async (req: Request, res: Response) => {
     const intentId = String(req.params.id);
     try {
       const auth = parseSignedIntentAction(req, intentId, 'submitted');
@@ -303,7 +560,7 @@ export function buildStatusAPI(
     }
   });
 
-  app.post('/intent/:id/cancel', async (req: Request, res: Response) => {
+  router.post('/intent/:id/cancel', async (req: Request, res: Response) => {
     const intentId = String(req.params.id);
     try {
       const auth = parseSignedIntentAction(req, intentId, 'cancel');
@@ -321,7 +578,7 @@ export function buildStatusAPI(
     }
   });
 
-  app.post('/intent/:id/refund', async (req: Request, res: Response) => {
+  router.post('/intent/:id/refund', async (req: Request, res: Response) => {
     const intentId = String(req.params.id);
     try {
       const auth = parseSignedIntentAction(req, intentId, 'refund');
@@ -336,8 +593,8 @@ export function buildStatusAPI(
     }
   });
 
-  // ── GET /health ────────────────────────────────────────────────────────────
-  app.get('/health', async (_req, res) => {
+  // ── GET /api/v1/health ────────────────────────────────────────────────────
+  router.get('/health', async (_req, res) => {
     try {
       const counts = await intentService.countIntentsByStatus();
       return res.json({ ok: true, intents: counts, ts: Date.now() });
@@ -346,6 +603,9 @@ export function buildStatusAPI(
       return res.status(503).json({ ok: false, ts: Date.now() });
     }
   });
+
+  app.use(STATUS_API_VERSION_PREFIX, router);
+  app.use(router);
 
   return app;
 
@@ -427,6 +687,145 @@ export function buildStatusAPI(
       if (err instanceof IntentLifecycleError) throw err;
       throw new IntentLifecycleError('INVALID_SIGNATURE', 'Unable to verify wallet signature.', 401);
     }
+  }
+
+  function parseLayerZeroValueTransferApiTokensRequest(query: Request['query']): LayerZeroValueTransferApiTokensRequest {
+    const transferrableFromChainKey = parseShortText(query.transferrableFromChainKey, 'transferrableFromChainKey', 80, false);
+    const transferrableFromTokenAddress = parseShortText(query.transferrableFromTokenAddress, 'transferrableFromTokenAddress', 160, false);
+    const nextToken = parseShortText(query.nextToken, 'nextToken', 512, false);
+    return {
+      ...(transferrableFromChainKey ? { transferrableFromChainKey } : {}),
+      ...(transferrableFromTokenAddress ? { transferrableFromTokenAddress } : {}),
+      ...(nextToken ? { nextToken } : {}),
+    };
+  }
+
+  function parseLayerZeroValueTransferApiSignatures(body: unknown): string[] {
+    const input = body && typeof body === 'object' ? body as Record<string, unknown> : {};
+    const raw = input.signatures;
+    if (!Array.isArray(raw) || raw.length === 0 || raw.length > 8) {
+      throw new IntentLifecycleError(
+        'INVALID_LAYERZERO_VALUE_TRANSFER_API_SIGNATURES',
+        'signatures must be a non-empty array with at most 8 entries.',
+      );
+    }
+
+    return raw.map((signature, index) =>
+      parseShortText(signature, `signatures[${index}]`, 10_000, true)
+    );
+  }
+
+  function parseLayerZeroValueTransferApiSubmission(body: unknown): { userAddress: string; sourceTxHash: string } {
+    const input = body && typeof body === 'object' ? body as Record<string, unknown> : {};
+    const userAddress = parseShortText(input.userAddress, 'userAddress', 160, true);
+    const sourceTxHash = parseShortText(
+      input.sourceTxHash ?? input.sourceSignature,
+      'sourceTxHash',
+      512,
+      true,
+    );
+    return { userAddress, sourceTxHash };
+  }
+
+  function parseShortText(value: unknown, name: string, maxLength: number, required: true): string;
+  function parseShortText(value: unknown, name: string, maxLength: number, required: false): string | undefined;
+  function parseShortText(value: unknown, name: string, maxLength: number, required: boolean): string | undefined {
+    if (Array.isArray(value)) {
+      throw new IntentLifecycleError('INVALID_LAYERZERO_VALUE_TRANSFER_API_REQUEST', `${name} must be a string.`);
+    }
+    if (typeof value !== 'string') {
+      if (required) {
+        throw new IntentLifecycleError('INVALID_LAYERZERO_VALUE_TRANSFER_API_REQUEST', `${name} is required.`);
+      }
+      return undefined;
+    }
+    const trimmed = value.trim();
+    if (!trimmed) {
+      if (required) {
+        throw new IntentLifecycleError('INVALID_LAYERZERO_VALUE_TRANSFER_API_REQUEST', `${name} is required.`);
+      }
+      return undefined;
+    }
+    if (trimmed.length > maxLength) {
+      throw new IntentLifecycleError('INVALID_LAYERZERO_VALUE_TRANSFER_API_REQUEST', `${name} is too long.`);
+    }
+    return trimmed;
+  }
+
+  async function requireLayerZeroValueTransferApiIntent(intentId: unknown): Promise<Intent> {
+    const normalizedIntentId = typeof intentId === 'string' ? intentId.trim() : '';
+    if (!/^0x[0-9a-fA-F]{64}$/.test(normalizedIntentId)) {
+      throw new IntentLifecycleError('INVALID_INTENT_ID', 'Invalid intent id.');
+    }
+
+    const intent = await intentService.getIntent(normalizedIntentId);
+    if (!intent) throw new IntentLifecycleError('INTENT_NOT_FOUND', 'Intent not found.', 404);
+    if (intent.quote.rail !== Rail.LAYERZERO || !intent.quote.layerZeroValueTransferApiQuoteId) {
+      throw new IntentLifecycleError(
+        'NOT_LAYERZERO_VALUE_TRANSFER_API_INTENT',
+        'Intent is not a LayerZero Value Transfer API provider-direct intent.',
+        409,
+      );
+    }
+    return intent;
+  }
+
+  function requireLayerZeroValueTransferApiQuoteId(intent: Intent): string {
+    const quoteId = intent.quote.layerZeroValueTransferApiQuoteId?.trim();
+    if (!quoteId) {
+      throw new IntentLifecycleError(
+        'MISSING_LAYERZERO_VALUE_TRANSFER_API_QUOTE_ID',
+        'Intent is missing LayerZero Value Transfer API quote id.',
+        409,
+      );
+    }
+    return quoteId;
+  }
+
+  function extractLayerZeroValueTransferApiRouteStepTypes(intent: Intent): string[] {
+    const execution = intent.quote as unknown as Record<string, unknown>;
+    const rawSteps = execution.layerZeroValueTransferApiRouteSteps;
+    if (!Array.isArray(rawSteps)) return [];
+    return rawSteps
+      .map((step) => step && typeof step === 'object' ? String((step as Record<string, unknown>).type ?? '').trim() : '')
+      .filter(Boolean)
+      .slice(0, 16);
+  }
+
+  function writeLayerZeroValueTransferApiError(res: Response, err: unknown): void {
+    if (err instanceof IntentLifecycleError) {
+      res.status(err.statusCode).json({ error: err.code, message: err.message });
+      return;
+    }
+    res.status(502).json({
+      error: 'LAYERZERO_VALUE_TRANSFER_API_UNAVAILABLE',
+      message: String(err instanceof Error ? err.message : err),
+    });
+  }
+
+  function offerSetHasProviderDirectOffer(offerSet: { offers?: Array<{ executionMode?: string }> }): boolean {
+    return offerSet.offers?.some((offer) => offer.executionMode === 'provider_direct') ?? false;
+  }
+
+  function parseComposedOfferSelection(input: any): {
+    offerSetId: string;
+    primaryTransferOfferId: string;
+    gasZipDestinationGasOfferId: string;
+  } {
+    if (!input || typeof input !== 'object') throw new Error('Invalid payload');
+    const offerSetId = typeof input.offerSetId === 'string' ? input.offerSetId.trim() : '';
+    const primaryTransferOfferId = typeof input.primaryTransferOfferId === 'string' ? input.primaryTransferOfferId.trim() : '';
+    const gasZipDestinationGasOfferId = typeof input.gasZipDestinationGasOfferId === 'string'
+      ? input.gasZipDestinationGasOfferId.trim()
+      : '';
+    if (!offerSetId || !primaryTransferOfferId || !gasZipDestinationGasOfferId) {
+      throw new Error('offerSetId, primaryTransferOfferId and gasZipDestinationGasOfferId are required');
+    }
+    return {
+      offerSetId,
+      primaryTransferOfferId,
+      gasZipDestinationGasOfferId,
+    };
   }
 
   async function cancelSubmittedIntent(
@@ -541,6 +940,36 @@ export function buildStatusAPI(
     });
     providers.set(chainId, provider);
     return provider;
+  }
+
+  function buildComposedTracking(primaryIntentId: string, gasZipIntentId: string) {
+    const composedIntentId = ethers.keccak256(
+      ethers.solidityPacked(['bytes32', 'bytes32'], [primaryIntentId, gasZipIntentId]),
+    );
+    return {
+      composedIntentId,
+      primaryTransferIntentId: primaryIntentId,
+      gasZipDestinationGasIntentId: gasZipIntentId,
+      statusPath: `${STATUS_API_VERSION_PREFIX}/intent/composed/${primaryIntentId}/${gasZipIntentId}`,
+    };
+  }
+
+  function composeIntentStatus(
+    primaryStatus: IntentStatus,
+    gasZipStatus: IntentStatus,
+  ): ComposedIntentStatus {
+    const statuses = [primaryStatus, gasZipStatus];
+    if (statuses.every((status) => status === IntentStatus.CANCELLED)) return 'CANCELLED';
+    if (statuses.includes(IntentStatus.RECOVERING)) return 'RECOVERING';
+    if (statuses.includes(IntentStatus.STUCK)) return 'STUCK';
+    if (statuses.every((status) => status === IntentStatus.SETTLED)) return 'SETTLED';
+    if (statuses.includes(IntentStatus.FAILED)) {
+      return statuses.includes(IntentStatus.SETTLED) ? 'PARTIALLY_FAILED' : 'FAILED';
+    }
+    if (statuses.includes(IntentStatus.SETTLED)) return 'PARTIALLY_SETTLED';
+    if (statuses.includes(IntentStatus.IN_TRANSIT) || statuses.includes(IntentStatus.DESTINATION_RECEIVED)) return 'IN_TRANSIT';
+    if (statuses.includes(IntentStatus.SUBMITTED)) return 'SUBMITTED';
+    return 'QUOTED';
   }
 
   function handleLifecycleError(res: Response, err: unknown): void {

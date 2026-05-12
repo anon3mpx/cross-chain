@@ -51,7 +51,8 @@ export type RailVariantLabel =
   | 'LAYERZERO'
   | 'VIA_LABS'
   | 'WORMHOLE'
-  | 'THORCHAIN';
+  | 'THORCHAIN'
+  | 'GASZIP';
 
 export const PLUGIN_ID = {
   CCTP_V2: '0xb148ea5f936a28661e11743b1650193f1b14a2322b9541503bf6815a84a1a6e9',
@@ -61,6 +62,7 @@ export const PLUGIN_ID = {
   VIA_LABS_V1: '0x3c09500df72dbac855e61899e0dd4420addc8367cb7a5f60906b5450d7a71687',
   WORMHOLE_V2: '0xfdd3e68657787c00343d96c11d1cd189fa4dfe5f52999861b06e9f8e99ea902f',
   THORCHAIN_V1: '0x390774707b6ae71a0ce31d10394e70b6ac75b3b62ec4db96c9672cafd1b516c9',
+  GASZIP_V1: '0x' + '0'.repeat(64),
 } as const;
 
 const CCTP_METADATA: CctpRailMetadata = {
@@ -253,6 +255,28 @@ export const RAIL_PROVIDERS: Record<Rail, RailProviderDefinition> = {
     fallbackRails: [],
     refundCustodyLocation: RefundCustodyLocation.THORCHAIN_ROUTER,
   },
+  [Rail.GASZIP]: {
+    rail: Rail.GASZIP,
+    enumValue: 6,
+    aliases: [Rail.GASZIP],
+    config: {
+      rail: Rail.GASZIP,
+      railType: 'messaging',
+      fee: 0,
+      etaSeconds: 15,
+      supportsUSDC: false,
+      supportsUSDT: false,
+      supportsETH: true,
+      supportsBTC: false,
+      supportsSOL: false,
+      nativeUSDC: false,
+      reliabilityScore: 0.98,
+      pluginId: PLUGIN_ID.GASZIP_V1,
+      requiresNativeAddr: false,
+    },
+    fallbackRails: [],
+    refundCustodyLocation: RefundCustodyLocation.EXTERNAL_PROTOCOL,
+  },
 };
 
 export const CHAIN_RAILS: Record<number, Rail[]> = {
@@ -443,6 +467,8 @@ export function getRailVariantLabel(rail: Rail, railPluginId?: string): RailVari
       return 'WORMHOLE';
     case Rail.THORCHAIN:
       return 'THORCHAIN';
+    case Rail.GASZIP:
+      return 'GASZIP';
     default:
       return 'CCTP_STANDARD';
   }

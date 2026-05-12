@@ -34,9 +34,9 @@ CREATE TABLE IF NOT EXISTS intents (
   dst_chain_id       INTEGER NOT NULL,
 
   rail               TEXT NOT NULL
-                    CHECK (rail IN ('CCTP','AXELAR','LAYERZERO','VIA_LABS','WORMHOLE','THORCHAIN')),
+                    CHECK (rail IN ('CCTP','AXELAR','LAYERZERO','VIA_LABS','WORMHOLE','THORCHAIN','GASZIP')),
   fallback_rail      TEXT
-                    CHECK (fallback_rail IS NULL OR fallback_rail IN ('CCTP','AXELAR','LAYERZERO','VIA_LABS','WORMHOLE','THORCHAIN')),
+                    CHECK (fallback_rail IS NULL OR fallback_rail IN ('CCTP','AXELAR','LAYERZERO','VIA_LABS','WORMHOLE','THORCHAIN','GASZIP')),
 
   quote              JSONB NOT NULL,
   src_tx_hash        TEXT,
@@ -62,6 +62,7 @@ CREATE INDEX IF NOT EXISTS idx_intents_src_dst
 CREATE INDEX IF NOT EXISTS idx_intents_user_address
   ON intents(user_address);
 
+DROP TRIGGER IF EXISTS trg_intents_updated_at ON intents;
 CREATE TRIGGER trg_intents_updated_at
 BEFORE UPDATE ON intents
 FOR EACH ROW
@@ -143,8 +144,52 @@ CREATE TABLE IF NOT EXISTS intent_refund_cases (
 CREATE INDEX IF NOT EXISTS idx_intent_refund_cases_status
   ON intent_refund_cases(status, updated_at DESC);
 
+DROP TRIGGER IF EXISTS trg_intent_refund_cases_updated_at ON intent_refund_cases;
 CREATE TRIGGER trg_intent_refund_cases_updated_at
 BEFORE UPDATE ON intent_refund_cases
+FOR EACH ROW
+EXECUTE FUNCTION set_updated_at();
+
+-- -----------------------------------------------------------------------------
+-- 2c) intent_provider_transfers: provider-direct rail status snapshots
+-- -----------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS intent_provider_transfers (
+  id                     BIGSERIAL PRIMARY KEY,
+  intent_id              TEXT NOT NULL REFERENCES intents(intent_id) ON DELETE CASCADE,
+
+  provider               TEXT NOT NULL
+                         CHECK (provider IN ('layerzero_value_transfer_api','thorchain_api')),
+  provider_quote_id      TEXT NOT NULL,
+
+  status                 TEXT NOT NULL DEFAULT 'CREATED'
+                         CHECK (status IN (
+                           'CREATED','USER_STEPS_BUILT','SUBMITTED','IN_TRANSIT',
+                           'SETTLED','FAILED','EXPIRED'
+                         )),
+
+  source_tx_hash         TEXT,
+  source_signature       TEXT,
+  destination_tx_hash    TEXT,
+  latest_provider_status TEXT,
+  route_step_types       TEXT[] NOT NULL DEFAULT ARRAY[]::TEXT[],
+  metadata               JSONB NOT NULL DEFAULT '{}'::jsonb,
+  raw_error_payload      JSONB,
+  last_polled_at         TIMESTAMPTZ,
+
+  created_at             TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at             TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+
+  CONSTRAINT uq_intent_provider_transfer UNIQUE (intent_id, provider, provider_quote_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_intent_provider_transfers_intent
+  ON intent_provider_transfers(intent_id, updated_at DESC);
+CREATE INDEX IF NOT EXISTS idx_intent_provider_transfers_provider_status
+  ON intent_provider_transfers(provider, status, updated_at DESC);
+
+DROP TRIGGER IF EXISTS trg_intent_provider_transfers_updated_at ON intent_provider_transfers;
+CREATE TRIGGER trg_intent_provider_transfers_updated_at
+BEFORE UPDATE ON intent_provider_transfers
 FOR EACH ROW
 EXECUTE FUNCTION set_updated_at();
 
@@ -157,7 +202,7 @@ CREATE TABLE IF NOT EXISTS intent_rail_attempts (
   attempt_no         INTEGER NOT NULL,
 
   rail               TEXT NOT NULL
-                    CHECK (rail IN ('CCTP','AXELAR','LAYERZERO','VIA_LABS','WORMHOLE','THORCHAIN')),
+                    CHECK (rail IN ('CCTP','AXELAR','LAYERZERO','VIA_LABS','WORMHOLE','THORCHAIN','GASZIP')),
 
   status             TEXT NOT NULL
                     CHECK (status IN ('PENDING','SUBMITTED','IN_TRANSIT','SETTLED','FAILED','CANCELLED')),
@@ -213,6 +258,7 @@ CREATE TABLE IF NOT EXISTS chain_event_offsets (
   PRIMARY KEY (chain_id, contract_address, event_name)
 );
 
+DROP TRIGGER IF EXISTS trg_chain_event_offsets_updated_at ON chain_event_offsets;
 CREATE TRIGGER trg_chain_event_offsets_updated_at
 BEFORE UPDATE ON chain_event_offsets
 FOR EACH ROW
@@ -260,6 +306,7 @@ CREATE TABLE IF NOT EXISTS task_outbox (
 CREATE INDEX IF NOT EXISTS idx_task_outbox_runnable
   ON task_outbox(status, run_after);
 
+DROP TRIGGER IF EXISTS trg_task_outbox_updated_at ON task_outbox;
 CREATE TRIGGER trg_task_outbox_updated_at
 BEFORE UPDATE ON task_outbox
 FOR EACH ROW

@@ -1,4 +1,4 @@
-import { OfferSet, QuoteRequest, QuoteResult } from '../types';
+import { DestinationGasRequest, GasZipOfferComposition, OfferSet, QuoteRequest, QuoteResult } from '../types';
 
 type Json = null | boolean | number | string | Json[] | { [k: string]: Json };
 const EMPTY_TEXT_VALUES = new Set(['', 'undefined', 'null']);
@@ -44,8 +44,33 @@ export function parseQuoteRequest(input: any, defaultUrgency: 'fast' | 'normal' 
     dstChainId: Number(input.dstChainId),
     userAddress: String(input.userAddress ?? ''),
     nativeDstAddress: parseOptionalText(input.nativeDstAddress),
+    destinationGas: parseDestinationGasRequests(input.destinationGas),
     urgency: input.urgency ? urgency : defaultUrgency,
   };
+}
+
+function parseDestinationGasRequests(raw: unknown): DestinationGasRequest[] | undefined {
+  if (!Array.isArray(raw)) return undefined;
+
+  const parsed = raw.flatMap((entry) => {
+    if (!entry || typeof entry !== 'object') return [];
+    const item = entry as Record<string, unknown>;
+    const amountWei = parseOptionalText(item.amountWei);
+    const recipient = parseOptionalText(item.recipient);
+    const provider = parseOptionalText(item.provider);
+    const chainId = Number(item.chainId);
+
+    if (!Number.isFinite(chainId) || !amountWei) return [];
+
+    return [{
+      chainId,
+      amountWei,
+      recipient,
+      provider: provider === 'gaszip' ? 'gaszip' : undefined,
+    } satisfies DestinationGasRequest];
+  });
+
+  return parsed.length > 0 ? parsed : undefined;
 }
 
 export function serializeQuote(quote: QuoteResult): Json {
@@ -54,6 +79,10 @@ export function serializeQuote(quote: QuoteResult): Json {
 
 export function serializeOfferSet(offerSet: OfferSet): Json {
   return toJSONSafe(offerSet);
+}
+
+export function serializeGasZipComposition(composition: GasZipOfferComposition): Json {
+  return toJSONSafe(composition);
 }
 
 export function parseOfferSelection(input: any): { offerSetId: string; offerId: string } {
