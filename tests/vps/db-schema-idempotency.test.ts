@@ -32,4 +32,5 @@ test('schema.sql defines provider-direct transfer tracking table', () => {
   assert.match(schema, /latest_provider_status\s+TEXT/);
   assert.match(schema, /raw_error_payload\s+JSONB/);
   assert.match(schema, /CONSTRAINT uq_intent_provider_transfer UNIQUE \(intent_id, provider, provider_quote_id\)/);
+  assert.match(schema, /idx_intents_lz_value_transfer_quote_id/);
 });

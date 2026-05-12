@@ -61,6 +61,9 @@ CREATE INDEX IF NOT EXISTS idx_intents_src_dst
   ON intents(src_chain_id, dst_chain_id);
 CREATE INDEX IF NOT EXISTS idx_intents_user_address
   ON intents(user_address);
+CREATE INDEX IF NOT EXISTS idx_intents_lz_value_transfer_quote_id
+  ON intents((quote->>'layerZeroValueTransferApiQuoteId'))
+  WHERE quote ? 'layerZeroValueTransferApiQuoteId';
 
 DROP TRIGGER IF EXISTS trg_intents_updated_at ON intents;
 CREATE TRIGGER trg_intents_updated_at
