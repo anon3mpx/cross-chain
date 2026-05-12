@@ -95,7 +95,15 @@ contract LayerZeroRailPluginTest {
         wethOft = new MockLayerZeroOFT(address(weth), LZ_NATIVE_FEE);
         plugin = new LayerZeroRailPlugin(address(0x9999), address(this));
 
-        plugin.setFamilyRouteConfig(DST_CHAIN, FAMILY_OFT, DST_EID, address(0xBEEF), hex"01020304");
+        plugin.setFamilyRouteConfig(
+            DST_CHAIN,
+            FAMILY_OFT,
+            DST_EID,
+            address(0xBEEF),
+            hex"01020304",
+            address(usdc),
+            address(oft)
+        );
         usdc.mint(address(this), 1_000_000e6);
         weth.mint(address(this), 1_000_000e18);
     }
@@ -146,7 +154,9 @@ contract LayerZeroRailPluginTest {
             FAMILY_OFT_ADAPTER,
             DST_EID,
             address(0xBEEF),
-            hex"05060708"
+            hex"05060708",
+            address(weth),
+            address(wethOft)
         );
         weth.approve(address(plugin), amount);
 
@@ -235,6 +245,34 @@ contract LayerZeroRailPluginTest {
             abi.encodeWithSelector(plugin.bridge.selector, params)
         );
         _assertTrue(!ok, "expected route asset mismatch revert");
+    }
+
+    function testBridgeRevertsWhenRailDataOftDoesNotMatchConfiguredOft() public {
+        MockLayerZeroOFT rogueOft = new MockLayerZeroOFT(address(usdc), LZ_NATIVE_FEE);
+        plugin.setRouteConfig(DST_CHAIN, DST_EID, address(0xBEEF), hex"01020304", address(oft), address(usdc));
+
+        uint256 amount = 250e6;
+        bytes memory payload = _receiverPayload(
+            address(usdc),
+            _settlementAssetId(address(usdc)),
+            keccak256("intent-lz-rogue-oft")
+        );
+        usdc.approve(address(plugin), amount);
+
+        IntentTypes.BridgeParams memory params =
+            _bridgeParams(
+                address(usdc),
+                amount,
+                _settlementAssetId(address(usdc)),
+                keccak256("intent-lz-rogue-oft"),
+                payload,
+                _railData(FAMILY_OFT, address(rogueOft), hex"")
+            );
+
+        (bool ok, ) = address(plugin).call{value: LZ_NATIVE_FEE}(
+            abi.encodeWithSelector(plugin.bridge.selector, params)
+        );
+        _assertTrue(!ok, "expected unconfigured routeOft revert");
     }
 
     receive() external payable {}

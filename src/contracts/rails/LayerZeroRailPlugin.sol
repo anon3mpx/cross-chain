@@ -30,6 +30,8 @@ contract LayerZeroRailPlugin is IRailPlugin, ERC165, Ownable2Step {
     mapping(uint32 => bytes) public sendOptionsByChain;
     // EVM chainId + LayerZero route family => route config
     mapping(uint32 => mapping(uint8 => LzRouteConfig)) public routeConfigs;
+    // EVM chainId + route family + source route asset => approved OFT implementation
+    mapping(uint32 => mapping(uint8 => mapping(bytes32 => address))) public routeOftByAssetId;
 
     event LayerZeroBridgeInitiated(
         bytes32 indexed intentId,
@@ -49,6 +51,8 @@ contract LayerZeroRailPlugin is IRailPlugin, ERC165, Ownable2Step {
     error MissingRailData();
     error InvalidRouteOft(address routeOft);
     error InvalidRouteToken(address routeToken);
+    error RouteOftNotConfigured(uint32 dstChainId, uint8 family, bytes32 routeAssetId);
+    error UnexpectedRouteOft(address provided, address expected);
 
     uint8 public constant FAMILY_OFT = 0;
     uint8 public constant FAMILY_OFT_ADAPTER = 1;
@@ -92,9 +96,10 @@ contract LayerZeroRailPlugin is IRailPlugin, ERC165, Ownable2Step {
     {
         DecodedRailData memory decoded = _decodeRailData(routeToken, railData);
         LzRouteConfig memory route = _resolveRouteConfig(dstChainId, decoded.family, routeToken, routeAssetId);
+        address routeOft = _resolveRouteOft(dstChainId, decoded.family, routeAssetId, decoded.routeOft);
         uint32 dstEid = route.dstEid;
         address dstReceiver = route.dstReceiver;
-        if (dstEid == 0 || decoded.routeOft == address(0) || routeToken == address(0)) {
+        if (dstEid == 0 || routeOft == address(0) || routeToken == address(0)) {
             revert UnsupportedRoute(dstChainId);
         }
         if (dstReceiver == address(0)) revert ReceiverNotConfigured(dstChainId);
@@ -120,7 +125,7 @@ contract LayerZeroRailPlugin is IRailPlugin, ERC165, Ownable2Step {
             oftCmd: bytes("")
         });
 
-        MessagingFee memory mFee = ILayerZeroOFT(decoded.routeOft).quoteSend(sendParam, false);
+        MessagingFee memory mFee = ILayerZeroOFT(routeOft).quoteSend(sendParam, false);
         if (mFee.lzTokenFee != 0) revert UnsupportedLzTokenFee(mFee.lzTokenFee);
         fee = mFee.nativeFee;
         eta = 120;
@@ -139,9 +144,14 @@ contract LayerZeroRailPlugin is IRailPlugin, ERC165, Ownable2Step {
             params.routeTokenAddr,
             params.routeAssetId
         );
+        address routeOft = _resolveRouteOft(
+            params.dstChainId,
+            decoded.family,
+            params.routeAssetId,
+            decoded.routeOft
+        );
         uint32 dstEid = route.dstEid;
         address dstReceiver = route.dstReceiver;
-        address routeOft = decoded.routeOft;
         if (dstEid == 0 || params.routeTokenAddr == address(0) || routeOft == address(0)) {
             revert UnsupportedRoute(params.dstChainId);
         }
@@ -217,21 +227,42 @@ contract LayerZeroRailPlugin is IRailPlugin, ERC165, Ownable2Step {
         );
     }
 
+    function setFamilyRouteConfig(
+        uint32 chainId,
+        uint8 family,
+        uint32 dstEid,
+        address receiver,
+        bytes calldata sendOptions,
+        address routeToken,
+        address routeOft
+    ) external onlyOwner {
+        _storeRouteConfig(
+            chainId,
+            family,
+            dstEid,
+            receiver,
+            sendOptions
+        );
+        _storeRouteOft(chainId, family, routeToken, routeOft);
+    }
+
     function setRouteConfig(
         uint32 chainId,
         uint32 dstEid,
         address receiver,
         bytes calldata sendOptions,
         address routeOft,
-        address /*routeToken*/
+        address routeToken
     ) external onlyOwner {
+        uint8 family = _familyFromRouteOft(routeOft);
         _storeRouteConfig(
             chainId,
-            _familyFromRouteOft(routeOft),
+            family,
             dstEid,
             receiver,
             sendOptions
         );
+        _storeRouteOft(chainId, family, routeToken, routeOft);
     }
 
     function deriveRouteAssetId(address routeToken) public view returns (bytes32) {
@@ -276,6 +307,20 @@ contract LayerZeroRailPlugin is IRailPlugin, ERC165, Ownable2Step {
         }
     }
 
+    function _resolveRouteOft(uint32 chainId, uint8 family, bytes32 routeAssetId, address providedRouteOft)
+        internal
+        view
+        returns (address routeOft)
+    {
+        routeOft = routeOftByAssetId[chainId][family][routeAssetId];
+        if (routeOft == address(0)) {
+            revert RouteOftNotConfigured(chainId, family, routeAssetId);
+        }
+        if (providedRouteOft != routeOft) {
+            revert UnexpectedRouteOft(providedRouteOft, routeOft);
+        }
+    }
+
     function _decodeRailData(address routeToken, bytes calldata railData)
         internal
         pure
@@ -294,6 +339,12 @@ contract LayerZeroRailPlugin is IRailPlugin, ERC165, Ownable2Step {
     function _familyFromRouteOft(address routeOft) internal pure returns (uint8) {
         if (routeOft == address(0)) revert InvalidRouteOft(routeOft);
         return FAMILY_OFT;
+    }
+
+    function _storeRouteOft(uint32 chainId, uint8 family, address routeToken, address routeOft) internal {
+        if (routeToken == address(0)) revert InvalidRouteToken(routeToken);
+        if (routeOft == address(0)) revert InvalidRouteOft(routeOft);
+        routeOftByAssetId[chainId][family][deriveRouteAssetId(routeToken)] = routeOft;
     }
 
     function supportsInterface(bytes4 interfaceId)
