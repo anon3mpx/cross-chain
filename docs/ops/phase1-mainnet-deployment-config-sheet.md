@@ -5,17 +5,18 @@ This sheet is the working deployment and configuration artifact for the first Ru
 It is scoped to these chains:
 
 - `Arbitrum` (`42161`)
-- `Avalanche` (`43114`)
 - `Base` (`8453`)
 - `BSC` (`56`)
 - `OP` (`10`)
 - `Monad` (`143`)
+- `HyperEVM` (`999`)
 
 It assumes:
 
-- full bidirectional mesh for `Axelar` and `LayerZero`
-- `CCTP standard` on `Arbitrum`, `Avalanche`, `Base`, `OP`, `Monad`
+- `Axelar` is not part of phase-1 deployment
+- `CCTP standard` on `Arbitrum`, `Base`, `OP`, `Monad`, `HyperEVM`
 - `CCTP fast` on `Arbitrum`, `Base`, `OP`
+- `LayerZero` on `Arbitrum`, `Base`, `BSC`, `OP`, `Monad`, `HyperEVM`
 - your DEX aggregator / swap plugin infrastructure is already deployed on all six chains
 
 This sheet does not replace the full runbook. It is the phase-1 execution matrix you can fill and operate from.
@@ -34,15 +35,15 @@ Related docs:
 
 | Rail | Phase 1 chains | Notes |
 |---|---|---|
-| `CCTP standard` | `Arbitrum`, `Avalanche`, `Base`, `OP`, `Monad` | `USDC` only |
+| `CCTP standard` | `Arbitrum`, `Base`, `OP`, `Monad`, `HyperEVM` | `USDC` only |
 | `CCTP fast` | `Arbitrum`, `Base`, `OP` | `USDC` only |
-| `Axelar` | all 6 chains | start with `USDC`, `USDT`, `WETH` route assets |
-| `LayerZero` | all 6 chains | start with `USDC`, `USDT`, `WETH` route assets |
+| `LayerZero` | `Arbitrum`, `Base`, `BSC`, `OP`, `Monad`, `HyperEVM` | start with `USDC`, `USDT`, `WETH` route assets |
 
-### 1.2 Important provider constraints
+### 1.2 Important rollout constraints
 
-- `BSC` is excluded from the `CCTP USDC` rollout.
-- `Avalanche` is `CCTP standard` only in this rollout.
+- `Axelar` is dropped from this deployment phase.
+- `Avalanche` is removed from this deployment phase.
+- `BSC` is excluded from the `CCTP` rollout.
 - `Monad` is `CCTP standard` only in this rollout.
 - `CCTP fast` phase-1 source set is only `Arbitrum`, `Base`, `OP`.
 
@@ -52,7 +53,6 @@ Related docs:
 |---|---:|---:|
 | `CCTP standard` | 5 | 20 |
 | `CCTP fast` | 3 | 6 |
-| `Axelar` | 6 | 30 |
 | `LayerZero` | 6 | 30 |
 
 ## 2. Chain Inventory
@@ -60,13 +60,13 @@ Related docs:
 Fill one row per chain before starting deploy/config.
 
 | Chain | Chain ID | Native settlement bias | CCTP domain | Has DEX aggregator | RPC | Explorer |
-|---|---:|---|---:|---|---|---|
+|---|---:|---|---|---|---|---|
 | `Arbitrum` | `42161` | `USDC` | `3` | `yes` | `<RPC_ARB>` | `<EXPLORER_ARB>` |
-| `Avalanche` | `43114` | `USDC` | `1` | `yes` | `<RPC_AVAX>` | `<EXPLORER_AVAX>` |
 | `Base` | `8453` | `USDC` | `6` | `yes` | `<RPC_BASE>` | `<EXPLORER_BASE>` |
 | `BSC` | `56` | `USDT` | `n/a` | `yes` | `<RPC_BSC>` | `<EXPLORER_BSC>` |
 | `OP` | `10` | `USDC` | `2` | `yes` | `<RPC_OP>` | `<EXPLORER_OP>` |
 | `Monad` | `143` | `USDC` | `15` | `yes` | `<RPC_MONAD>` | `<EXPLORER_MONAD>` |
+| `HyperEVM` | `999` | `USDC` | `19` | `yes` | `<RPC_HYPEREVM>` | `<EXPLORER_HYPEREVM>` |
 
 ## 3. Per-Chain Deployment Sheet
 
@@ -79,23 +79,21 @@ Record the deployed local Ruflo stack for every chain.
 - `RECEIVER_V1`
 - `RAIL_PLUGIN_CCTP`
 - `RAIL_PLUGIN_CCTP_FAST`
-- `RAIL_PLUGIN_AXELAR`
 - `RAIL_PLUGIN_LAYERZERO`
-- `AXELAR_ADAPTER`
 - `LZ_ADAPTER`
 - `SWAP_PLUGIN_ID`
 - `SWAP_PLUGIN_KIND`
 
 ### 3.2 Sheet
 
-| Chain | PLUGIN_REGISTRY | ROUTER_V1 | RECEIVER_V1 | CCTP plugin | CCTP fast plugin | Axelar plugin | LZ plugin | Axelar adapter | LZ adapter | Swap plugin ID |
-|---|---|---|---|---|---|---|---|---|---|---|
-| `Arbitrum` | `<...>` | `<...>` | `<...>` | `<...>` | `<...>` | `<...>` | `<...>` | `<...>` | `<...>` | `<...>` |
-| `Avalanche` | `<...>` | `<...>` | `<...>` | `<...>` | `n/a` | `<...>` | `<...>` | `<...>` | `<...>` | `<...>` |
-| `Base` | `<...>` | `<...>` | `<...>` | `<...>` | `<...>` | `<...>` | `<...>` | `<...>` | `<...>` | `<...>` |
-| `BSC` | `<...>` | `<...>` | `<...>` | `n/a` | `n/a` | `<...>` | `<...>` | `<...>` | `<...>` | `<...>` |
-| `OP` | `<...>` | `<...>` | `<...>` | `<...>` | `<...>` | `<...>` | `<...>` | `<...>` | `<...>` | `<...>` |
-| `Monad` | `<...>` | `<...>` | `<...>` | `<...>` | `n/a` | `<...>` | `<...>` | `<...>` | `<...>` | `<...>` |
+| Chain | PLUGIN_REGISTRY | ROUTER_V1 | RECEIVER_V1 | CCTP plugin | CCTP fast plugin | LZ plugin | LZ adapter | Swap plugin ID |
+|---|---|---|---|---|---|---|---|---|
+| `Arbitrum` | `<...>` | `<...>` | `<...>` | `<...>` | `<...>` | `<...>` | `<...>` | `<...>` |
+| `Base` | `<...>` | `<...>` | `<...>` | `<...>` | `<...>` | `<...>` | `<...>` | `<...>` |
+| `BSC` | `<...>` | `<...>` | `<...>` | `n/a` | `n/a` | `<...>` | `<...>` | `<...>` |
+| `OP` | `<...>` | `<...>` | `<...>` | `<...>` | `<...>` | `<...>` | `<...>` | `<...>` |
+| `Monad` | `<...>` | `<...>` | `<...>` | `<...>` | `n/a` | `<...>` | `<...>` | `<...>` |
+| `HyperEVM` | `<...>` | `<...>` | `<...>` | `<...>` | `n/a` | `<...>` | `<...>` | `<...>` |
 
 ## 4. Settlement Asset Policy
 
@@ -105,13 +103,11 @@ Recommended initial phase-1 settlement asset allowlists:
 |---|---|
 | `CCTP standard` | `USDC` |
 | `CCTP fast` | `USDC` |
-| `Axelar` | `USDC`, `USDT`, `WETH` |
 | `LayerZero` | `USDC`, `USDT`, `WETH` |
 
 Notes:
 
 - `BSC` should be treated as `USDT`-dominant operationally for non-CCTP rails.
-- `Axelar token IDs` are needed only for the route assets you whitelist, not for arbitrary user `tokenIn` or `tokenOut`.
 - `LayerZero` metadata is required only for the route assets and route families you enable.
 
 ## 5. CCTP Standard Mesh
@@ -119,10 +115,10 @@ Notes:
 This mesh is only among:
 
 - `Arbitrum`
-- `Avalanche`
 - `Base`
 - `OP`
 - `Monad`
+- `HyperEVM`
 
 Every source chain below needs local CCTP route config for each listed destination chain.
 
@@ -130,11 +126,11 @@ Every source chain below needs local CCTP route config for each listed destinati
 
 | Source | Destination chains |
 |---|---|
-| `Arbitrum` | `Avalanche`, `Base`, `OP`, `Monad` |
-| `Avalanche` | `Arbitrum`, `Base`, `OP`, `Monad` |
-| `Base` | `Arbitrum`, `Avalanche`, `OP`, `Monad` |
-| `OP` | `Arbitrum`, `Avalanche`, `Base`, `Monad` |
-| `Monad` | `Arbitrum`, `Avalanche`, `Base`, `OP` |
+| `Arbitrum` | `Base`, `OP`, `Monad`, `HyperEVM` |
+| `Base` | `Arbitrum`, `OP`, `Monad`, `HyperEVM` |
+| `OP` | `Arbitrum`, `Base`, `Monad`, `HyperEVM` |
+| `Monad` | `Arbitrum`, `Base`, `OP`, `HyperEVM` |
+| `HyperEVM` | `Arbitrum`, `Base`, `OP`, `Monad` |
 
 ### 5.2 Per-route values required on the source chain
 
@@ -148,27 +144,27 @@ For each directed pair `SRC -> DST`, fill:
 ### 5.3 Pair sheet
 
 | Source | Destination | DST chain ID | DST domain | DST ReceiverV1 | DST allowed caller / relayer |
-|---|---|---:|---:|---|---|
-| `Arbitrum` | `Avalanche` | `43114` | `1` | `<RECEIVER_AVAX>` | `<CALLER_AVAX>` |
+|---|---|---:|---|---|---|
 | `Arbitrum` | `Base` | `8453` | `6` | `<RECEIVER_BASE>` | `<CALLER_BASE>` |
 | `Arbitrum` | `OP` | `10` | `2` | `<RECEIVER_OP>` | `<CALLER_OP>` |
 | `Arbitrum` | `Monad` | `143` | `15` | `<RECEIVER_MONAD>` | `<CALLER_MONAD>` |
-| `Avalanche` | `Arbitrum` | `42161` | `3` | `<RECEIVER_ARB>` | `<CALLER_ARB>` |
-| `Avalanche` | `Base` | `8453` | `6` | `<RECEIVER_BASE>` | `<CALLER_BASE>` |
-| `Avalanche` | `OP` | `10` | `2` | `<RECEIVER_OP>` | `<CALLER_OP>` |
-| `Avalanche` | `Monad` | `143` | `15` | `<RECEIVER_MONAD>` | `<CALLER_MONAD>` |
+| `Arbitrum` | `HyperEVM` | `999` | `19` | `<RECEIVER_HYPEREVM>` | `<CALLER_HYPEREVM>` |
 | `Base` | `Arbitrum` | `42161` | `3` | `<RECEIVER_ARB>` | `<CALLER_ARB>` |
-| `Base` | `Avalanche` | `43114` | `1` | `<RECEIVER_AVAX>` | `<CALLER_AVAX>` |
 | `Base` | `OP` | `10` | `2` | `<RECEIVER_OP>` | `<CALLER_OP>` |
 | `Base` | `Monad` | `143` | `15` | `<RECEIVER_MONAD>` | `<CALLER_MONAD>` |
+| `Base` | `HyperEVM` | `999` | `19` | `<RECEIVER_HYPEREVM>` | `<CALLER_HYPEREVM>` |
 | `OP` | `Arbitrum` | `42161` | `3` | `<RECEIVER_ARB>` | `<CALLER_ARB>` |
-| `OP` | `Avalanche` | `43114` | `1` | `<RECEIVER_AVAX>` | `<CALLER_AVAX>` |
 | `OP` | `Base` | `8453` | `6` | `<RECEIVER_BASE>` | `<CALLER_BASE>` |
 | `OP` | `Monad` | `143` | `15` | `<RECEIVER_MONAD>` | `<CALLER_MONAD>` |
+| `OP` | `HyperEVM` | `999` | `19` | `<RECEIVER_HYPEREVM>` | `<CALLER_HYPEREVM>` |
 | `Monad` | `Arbitrum` | `42161` | `3` | `<RECEIVER_ARB>` | `<CALLER_ARB>` |
-| `Monad` | `Avalanche` | `43114` | `1` | `<RECEIVER_AVAX>` | `<CALLER_AVAX>` |
 | `Monad` | `Base` | `8453` | `6` | `<RECEIVER_BASE>` | `<CALLER_BASE>` |
 | `Monad` | `OP` | `10` | `2` | `<RECEIVER_OP>` | `<CALLER_OP>` |
+| `Monad` | `HyperEVM` | `999` | `19` | `<RECEIVER_HYPEREVM>` | `<CALLER_HYPEREVM>` |
+| `HyperEVM` | `Arbitrum` | `42161` | `3` | `<RECEIVER_ARB>` | `<CALLER_ARB>` |
+| `HyperEVM` | `Base` | `8453` | `6` | `<RECEIVER_BASE>` | `<CALLER_BASE>` |
+| `HyperEVM` | `OP` | `10` | `2` | `<RECEIVER_OP>` | `<CALLER_OP>` |
+| `HyperEVM` | `Monad` | `143` | `15` | `<RECEIVER_MONAD>` | `<CALLER_MONAD>` |
 
 ## 6. CCTP Fast Mesh
 
@@ -207,122 +203,29 @@ For each directed pair `SRC -> DST`, fill:
 | `OP` | `Arbitrum` | `42161` | `3` | `<RECEIVER_ARB>` | `<CALLER_ARB>` | `<FAST_CAP_BPS>` |
 | `OP` | `Base` | `8453` | `6` | `<RECEIVER_BASE>` | `<CALLER_BASE>` | `<FAST_CAP_BPS>` |
 
-## 7. Axelar Full Mesh
+## 7. LayerZero Full Mesh
 
-All six chains participate.
+This mesh is only among:
+
+- `Arbitrum`
+- `Base`
+- `BSC`
+- `OP`
+- `Monad`
+- `HyperEVM`
 
 ### 7.1 Directed source route matrix
 
 | Source | Destination chains |
 |---|---|
-| `Arbitrum` | `Avalanche`, `Base`, `BSC`, `OP`, `Monad` |
-| `Avalanche` | `Arbitrum`, `Base`, `BSC`, `OP`, `Monad` |
-| `Base` | `Arbitrum`, `Avalanche`, `BSC`, `OP`, `Monad` |
-| `BSC` | `Arbitrum`, `Avalanche`, `Base`, `OP`, `Monad` |
-| `OP` | `Arbitrum`, `Avalanche`, `Base`, `BSC`, `Monad` |
-| `Monad` | `Arbitrum`, `Avalanche`, `Base`, `BSC`, `OP` |
+| `Arbitrum` | `Base`, `BSC`, `OP`, `Monad`, `HyperEVM` |
+| `Base` | `Arbitrum`, `BSC`, `OP`, `Monad`, `HyperEVM` |
+| `BSC` | `Arbitrum`, `Base`, `OP`, `Monad`, `HyperEVM` |
+| `OP` | `Arbitrum`, `Base`, `BSC`, `Monad`, `HyperEVM` |
+| `Monad` | `Arbitrum`, `Base`, `BSC`, `OP`, `HyperEVM` |
+| `HyperEVM` | `Arbitrum`, `Base`, `BSC`, `OP`, `Monad` |
 
 ### 7.2 What must be configured
-
-For every directed pair `SRC -> DST`:
-
-On the source chain:
-
-- `AXELAR_ROUTE_CHAIN_ID`
-- `AXELAR_ROUTE_NAME`
-- `AXELAR_ROUTE_RECEIVER`
-- `AXELAR_ROUTE_TOKEN_ID` for each route asset you enable
-
-On the destination chain:
-
-- `AXELAR_ADAPTER_SET_TRUSTED_SOURCE`
-- `AXELAR_SOURCE_CHAIN`
-- `AXELAR_SOURCE_ADDRESS`
-- `AXELAR_TRUSTED_TOKEN_ID`
-- `AXELAR_TRUSTED_TOKEN`
-
-Operationally:
-
-- route config is pair-scoped
-- trusted source is pair-scoped
-- trusted token rows are asset-scoped, not arbitrary-token-scoped
-
-### 7.3 Source route sheet
-
-| Source | Destination | AXELAR_ROUTE_CHAIN_ID | AXELAR_ROUTE_NAME | AXELAR_ROUTE_RECEIVER |
-|---|---|---:|---|---|
-| `Arbitrum` | `Avalanche` | `43114` | `<axelar-avalanche-name>` | `<AXELAR_ADAPTER_AVAX>` |
-| `Arbitrum` | `Base` | `8453` | `<axelar-base-name>` | `<AXELAR_ADAPTER_BASE>` |
-| `Arbitrum` | `BSC` | `56` | `<axelar-bsc-name>` | `<AXELAR_ADAPTER_BSC>` |
-| `Arbitrum` | `OP` | `10` | `<axelar-op-name>` | `<AXELAR_ADAPTER_OP>` |
-| `Arbitrum` | `Monad` | `143` | `<axelar-monad-name>` | `<AXELAR_ADAPTER_MONAD>` |
-| `Avalanche` | `Arbitrum` | `42161` | `<axelar-arbitrum-name>` | `<AXELAR_ADAPTER_ARB>` |
-| `Avalanche` | `Base` | `8453` | `<axelar-base-name>` | `<AXELAR_ADAPTER_BASE>` |
-| `Avalanche` | `BSC` | `56` | `<axelar-bsc-name>` | `<AXELAR_ADAPTER_BSC>` |
-| `Avalanche` | `OP` | `10` | `<axelar-op-name>` | `<AXELAR_ADAPTER_OP>` |
-| `Avalanche` | `Monad` | `143` | `<axelar-monad-name>` | `<AXELAR_ADAPTER_MONAD>` |
-| `Base` | `Arbitrum` | `42161` | `<axelar-arbitrum-name>` | `<AXELAR_ADAPTER_ARB>` |
-| `Base` | `Avalanche` | `43114` | `<axelar-avalanche-name>` | `<AXELAR_ADAPTER_AVAX>` |
-| `Base` | `BSC` | `56` | `<axelar-bsc-name>` | `<AXELAR_ADAPTER_BSC>` |
-| `Base` | `OP` | `10` | `<axelar-op-name>` | `<AXELAR_ADAPTER_OP>` |
-| `Base` | `Monad` | `143` | `<axelar-monad-name>` | `<AXELAR_ADAPTER_MONAD>` |
-| `BSC` | `Arbitrum` | `42161` | `<axelar-arbitrum-name>` | `<AXELAR_ADAPTER_ARB>` |
-| `BSC` | `Avalanche` | `43114` | `<axelar-avalanche-name>` | `<AXELAR_ADAPTER_AVAX>` |
-| `BSC` | `Base` | `8453` | `<axelar-base-name>` | `<AXELAR_ADAPTER_BASE>` |
-| `BSC` | `OP` | `10` | `<axelar-op-name>` | `<AXELAR_ADAPTER_OP>` |
-| `BSC` | `Monad` | `143` | `<axelar-monad-name>` | `<AXELAR_ADAPTER_MONAD>` |
-| `OP` | `Arbitrum` | `42161` | `<axelar-arbitrum-name>` | `<AXELAR_ADAPTER_ARB>` |
-| `OP` | `Avalanche` | `43114` | `<axelar-avalanche-name>` | `<AXELAR_ADAPTER_AVAX>` |
-| `OP` | `Base` | `8453` | `<axelar-base-name>` | `<AXELAR_ADAPTER_BASE>` |
-| `OP` | `BSC` | `56` | `<axelar-bsc-name>` | `<AXELAR_ADAPTER_BSC>` |
-| `OP` | `Monad` | `143` | `<axelar-monad-name>` | `<AXELAR_ADAPTER_MONAD>` |
-| `Monad` | `Arbitrum` | `42161` | `<axelar-arbitrum-name>` | `<AXELAR_ADAPTER_ARB>` |
-| `Monad` | `Avalanche` | `43114` | `<axelar-avalanche-name>` | `<AXELAR_ADAPTER_AVAX>` |
-| `Monad` | `Base` | `8453` | `<axelar-base-name>` | `<AXELAR_ADAPTER_BASE>` |
-| `Monad` | `BSC` | `56` | `<axelar-bsc-name>` | `<AXELAR_ADAPTER_BSC>` |
-| `Monad` | `OP` | `10` | `<axelar-op-name>` | `<AXELAR_ADAPTER_OP>` |
-
-### 7.4 Destination trusted-token sheet
-
-Fill once per destination chain per whitelisted route asset.
-
-| Destination chain | Asset alias | AXELAR_TRUSTED_TOKEN_ID | AXELAR_TRUSTED_TOKEN |
-|---|---|---|---|
-| `Arbitrum` | `USDC` | `<ARB_AXELAR_USDC_TOKEN_ID>` | `<ARB_AXELAR_USDC>` |
-| `Arbitrum` | `USDT` | `<ARB_AXELAR_USDT_TOKEN_ID>` | `<ARB_AXELAR_USDT>` |
-| `Arbitrum` | `WETH` | `<ARB_AXELAR_WETH_TOKEN_ID>` | `<ARB_AXELAR_WETH>` |
-| `Avalanche` | `USDC` | `<AVAX_AXELAR_USDC_TOKEN_ID>` | `<AVAX_AXELAR_USDC>` |
-| `Avalanche` | `USDT` | `<AVAX_AXELAR_USDT_TOKEN_ID>` | `<AVAX_AXELAR_USDT>` |
-| `Avalanche` | `WETH` | `<AVAX_AXELAR_WETH_TOKEN_ID>` | `<AVAX_AXELAR_WETH>` |
-| `Base` | `USDC` | `<BASE_AXELAR_USDC_TOKEN_ID>` | `<BASE_AXELAR_USDC>` |
-| `Base` | `USDT` | `<BASE_AXELAR_USDT_TOKEN_ID>` | `<BASE_AXELAR_USDT>` |
-| `Base` | `WETH` | `<BASE_AXELAR_WETH_TOKEN_ID>` | `<BASE_AXELAR_WETH>` |
-| `BSC` | `USDC` | `<BSC_AXELAR_USDC_TOKEN_ID>` | `<BSC_AXELAR_USDC>` |
-| `BSC` | `USDT` | `<BSC_AXELAR_USDT_TOKEN_ID>` | `<BSC_AXELAR_USDT>` |
-| `BSC` | `WETH` | `<BSC_AXELAR_WETH_TOKEN_ID>` | `<BSC_AXELAR_WETH>` |
-| `OP` | `USDC` | `<OP_AXELAR_USDC_TOKEN_ID>` | `<OP_AXELAR_USDC>` |
-| `OP` | `USDT` | `<OP_AXELAR_USDT_TOKEN_ID>` | `<OP_AXELAR_USDT>` |
-| `OP` | `WETH` | `<OP_AXELAR_WETH_TOKEN_ID>` | `<OP_AXELAR_WETH>` |
-| `Monad` | `USDC` | `<MONAD_AXELAR_USDC_TOKEN_ID>` | `<MONAD_AXELAR_USDC>` |
-| `Monad` | `USDT` | `<MONAD_AXELAR_USDT_TOKEN_ID>` | `<MONAD_AXELAR_USDT>` |
-| `Monad` | `WETH` | `<MONAD_AXELAR_WETH_TOKEN_ID>` | `<MONAD_AXELAR_WETH>` |
-
-## 8. LayerZero Full Mesh
-
-All six chains participate.
-
-### 8.1 Directed source route matrix
-
-| Source | Destination chains |
-|---|---|
-| `Arbitrum` | `Avalanche`, `Base`, `BSC`, `OP`, `Monad` |
-| `Avalanche` | `Arbitrum`, `Base`, `BSC`, `OP`, `Monad` |
-| `Base` | `Arbitrum`, `Avalanche`, `BSC`, `OP`, `Monad` |
-| `BSC` | `Arbitrum`, `Avalanche`, `Base`, `OP`, `Monad` |
-| `OP` | `Arbitrum`, `Avalanche`, `Base`, `BSC`, `Monad` |
-| `Monad` | `Arbitrum`, `Avalanche`, `Base`, `BSC`, `OP` |
-
-### 8.2 What must be configured
 
 For every directed pair `SRC -> DST`:
 
@@ -354,42 +257,42 @@ Operationally:
 - trusted peer is pair scoped
 - settlement token and compose sender are asset scoped
 
-### 8.3 Source route sheet
+### 7.3 Source route sheet
 
 | Source | Destination | LZ_ROUTE_CHAIN_ID | LZ_ROUTE_EID | LZ_ROUTE_RECEIVER | LZ route family set |
 |---|---|---:|---:|---|---|
-| `Arbitrum` | `Avalanche` | `43114` | `<LZ_EID_AVAX>` | `<LZ_ADAPTER_AVAX>` | `<USDC/USDT/WETH families>` |
 | `Arbitrum` | `Base` | `8453` | `<LZ_EID_BASE>` | `<LZ_ADAPTER_BASE>` | `<USDC/USDT/WETH families>` |
 | `Arbitrum` | `BSC` | `56` | `<LZ_EID_BSC>` | `<LZ_ADAPTER_BSC>` | `<USDC/USDT/WETH families>` |
 | `Arbitrum` | `OP` | `10` | `<LZ_EID_OP>` | `<LZ_ADAPTER_OP>` | `<USDC/USDT/WETH families>` |
 | `Arbitrum` | `Monad` | `143` | `<LZ_EID_MONAD>` | `<LZ_ADAPTER_MONAD>` | `<USDC/USDT/WETH families>` |
-| `Avalanche` | `Arbitrum` | `42161` | `<LZ_EID_ARB>` | `<LZ_ADAPTER_ARB>` | `<USDC/USDT/WETH families>` |
-| `Avalanche` | `Base` | `8453` | `<LZ_EID_BASE>` | `<LZ_ADAPTER_BASE>` | `<USDC/USDT/WETH families>` |
-| `Avalanche` | `BSC` | `56` | `<LZ_EID_BSC>` | `<LZ_ADAPTER_BSC>` | `<USDC/USDT/WETH families>` |
-| `Avalanche` | `OP` | `10` | `<LZ_EID_OP>` | `<LZ_ADAPTER_OP>` | `<USDC/USDT/WETH families>` |
-| `Avalanche` | `Monad` | `143` | `<LZ_EID_MONAD>` | `<LZ_ADAPTER_MONAD>` | `<USDC/USDT/WETH families>` |
+| `Arbitrum` | `HyperEVM` | `999` | `<LZ_EID_HYPEREVM>` | `<LZ_ADAPTER_HYPEREVM>` | `<USDC/USDT/WETH families>` |
 | `Base` | `Arbitrum` | `42161` | `<LZ_EID_ARB>` | `<LZ_ADAPTER_ARB>` | `<USDC/USDT/WETH families>` |
-| `Base` | `Avalanche` | `43114` | `<LZ_EID_AVAX>` | `<LZ_ADAPTER_AVAX>` | `<USDC/USDT/WETH families>` |
 | `Base` | `BSC` | `56` | `<LZ_EID_BSC>` | `<LZ_ADAPTER_BSC>` | `<USDC/USDT/WETH families>` |
 | `Base` | `OP` | `10` | `<LZ_EID_OP>` | `<LZ_ADAPTER_OP>` | `<USDC/USDT/WETH families>` |
 | `Base` | `Monad` | `143` | `<LZ_EID_MONAD>` | `<LZ_ADAPTER_MONAD>` | `<USDC/USDT/WETH families>` |
+| `Base` | `HyperEVM` | `999` | `<LZ_EID_HYPEREVM>` | `<LZ_ADAPTER_HYPEREVM>` | `<USDC/USDT/WETH families>` |
 | `BSC` | `Arbitrum` | `42161` | `<LZ_EID_ARB>` | `<LZ_ADAPTER_ARB>` | `<USDC/USDT/WETH families>` |
-| `BSC` | `Avalanche` | `43114` | `<LZ_EID_AVAX>` | `<LZ_ADAPTER_AVAX>` | `<USDC/USDT/WETH families>` |
 | `BSC` | `Base` | `8453` | `<LZ_EID_BASE>` | `<LZ_ADAPTER_BASE>` | `<USDC/USDT/WETH families>` |
 | `BSC` | `OP` | `10` | `<LZ_EID_OP>` | `<LZ_ADAPTER_OP>` | `<USDC/USDT/WETH families>` |
 | `BSC` | `Monad` | `143` | `<LZ_EID_MONAD>` | `<LZ_ADAPTER_MONAD>` | `<USDC/USDT/WETH families>` |
+| `BSC` | `HyperEVM` | `999` | `<LZ_EID_HYPEREVM>` | `<LZ_ADAPTER_HYPEREVM>` | `<USDC/USDT/WETH families>` |
 | `OP` | `Arbitrum` | `42161` | `<LZ_EID_ARB>` | `<LZ_ADAPTER_ARB>` | `<USDC/USDT/WETH families>` |
-| `OP` | `Avalanche` | `43114` | `<LZ_EID_AVAX>` | `<LZ_ADAPTER_AVAX>` | `<USDC/USDT/WETH families>` |
 | `OP` | `Base` | `8453` | `<LZ_EID_BASE>` | `<LZ_ADAPTER_BASE>` | `<USDC/USDT/WETH families>` |
 | `OP` | `BSC` | `56` | `<LZ_EID_BSC>` | `<LZ_ADAPTER_BSC>` | `<USDC/USDT/WETH families>` |
 | `OP` | `Monad` | `143` | `<LZ_EID_MONAD>` | `<LZ_ADAPTER_MONAD>` | `<USDC/USDT/WETH families>` |
+| `OP` | `HyperEVM` | `999` | `<LZ_EID_HYPEREVM>` | `<LZ_ADAPTER_HYPEREVM>` | `<USDC/USDT/WETH families>` |
 | `Monad` | `Arbitrum` | `42161` | `<LZ_EID_ARB>` | `<LZ_ADAPTER_ARB>` | `<USDC/USDT/WETH families>` |
-| `Monad` | `Avalanche` | `43114` | `<LZ_EID_AVAX>` | `<LZ_ADAPTER_AVAX>` | `<USDC/USDT/WETH families>` |
 | `Monad` | `Base` | `8453` | `<LZ_EID_BASE>` | `<LZ_ADAPTER_BASE>` | `<USDC/USDT/WETH families>` |
 | `Monad` | `BSC` | `56` | `<LZ_EID_BSC>` | `<LZ_ADAPTER_BSC>` | `<USDC/USDT/WETH families>` |
 | `Monad` | `OP` | `10` | `<LZ_EID_OP>` | `<LZ_ADAPTER_OP>` | `<USDC/USDT/WETH families>` |
+| `Monad` | `HyperEVM` | `999` | `<LZ_EID_HYPEREVM>` | `<LZ_ADAPTER_HYPEREVM>` | `<USDC/USDT/WETH families>` |
+| `HyperEVM` | `Arbitrum` | `42161` | `<LZ_EID_ARB>` | `<LZ_ADAPTER_ARB>` | `<USDC/USDT/WETH families>` |
+| `HyperEVM` | `Base` | `8453` | `<LZ_EID_BASE>` | `<LZ_ADAPTER_BASE>` | `<USDC/USDT/WETH families>` |
+| `HyperEVM` | `BSC` | `56` | `<LZ_EID_BSC>` | `<LZ_ADAPTER_BSC>` | `<USDC/USDT/WETH families>` |
+| `HyperEVM` | `OP` | `10` | `<LZ_EID_OP>` | `<LZ_ADAPTER_OP>` | `<USDC/USDT/WETH families>` |
+| `HyperEVM` | `Monad` | `143` | `<LZ_EID_MONAD>` | `<LZ_ADAPTER_MONAD>` | `<USDC/USDT/WETH families>` |
 
-### 8.4 Destination asset sheet
+### 7.4 Destination asset sheet
 
 Fill once per destination chain per asset family you enable.
 
@@ -398,9 +301,6 @@ Fill once per destination chain per asset family you enable.
 | `Arbitrum` | `USDC` | `<ARB_LZ_USDC>` | `<ARB_LZ_OFT_USDC>` | `<ARB_COMPOSE_SENDER_USDC>` | `<family>` | `<options>` |
 | `Arbitrum` | `USDT` | `<ARB_LZ_USDT>` | `<ARB_LZ_OFT_USDT>` | `<ARB_COMPOSE_SENDER_USDT>` | `<family>` | `<options>` |
 | `Arbitrum` | `WETH` | `<ARB_LZ_WETH>` | `<ARB_LZ_OFT_WETH>` | `<ARB_COMPOSE_SENDER_WETH>` | `<family>` | `<options>` |
-| `Avalanche` | `USDC` | `<AVAX_LZ_USDC>` | `<AVAX_LZ_OFT_USDC>` | `<AVAX_COMPOSE_SENDER_USDC>` | `<family>` | `<options>` |
-| `Avalanche` | `USDT` | `<AVAX_LZ_USDT>` | `<AVAX_LZ_OFT_USDT>` | `<AVAX_COMPOSE_SENDER_USDT>` | `<family>` | `<options>` |
-| `Avalanche` | `WETH` | `<AVAX_LZ_WETH>` | `<AVAX_LZ_OFT_WETH>` | `<AVAX_COMPOSE_SENDER_WETH>` | `<family>` | `<options>` |
 | `Base` | `USDC` | `<BASE_LZ_USDC>` | `<BASE_LZ_OFT_USDC>` | `<BASE_COMPOSE_SENDER_USDC>` | `<family>` | `<options>` |
 | `Base` | `USDT` | `<BASE_LZ_USDT>` | `<BASE_LZ_OFT_USDT>` | `<BASE_COMPOSE_SENDER_USDT>` | `<family>` | `<options>` |
 | `Base` | `WETH` | `<BASE_LZ_WETH>` | `<BASE_LZ_OFT_WETH>` | `<BASE_COMPOSE_SENDER_WETH>` | `<family>` | `<options>` |
@@ -413,10 +313,13 @@ Fill once per destination chain per asset family you enable.
 | `Monad` | `USDC` | `<MONAD_LZ_USDC>` | `<MONAD_LZ_OFT_USDC>` | `<MONAD_COMPOSE_SENDER_USDC>` | `<family>` | `<options>` |
 | `Monad` | `USDT` | `<MONAD_LZ_USDT>` | `<MONAD_LZ_OFT_USDT>` | `<MONAD_COMPOSE_SENDER_USDT>` | `<family>` | `<options>` |
 | `Monad` | `WETH` | `<MONAD_LZ_WETH>` | `<MONAD_LZ_OFT_WETH>` | `<MONAD_COMPOSE_SENDER_WETH>` | `<family>` | `<options>` |
+| `HyperEVM` | `USDC` | `<HYPEREVM_LZ_USDC>` | `<HYPEREVM_LZ_OFT_USDC>` | `<HYPEREVM_COMPOSE_SENDER_USDC>` | `<family>` | `<options>` |
+| `HyperEVM` | `USDT` | `<HYPEREVM_LZ_USDT>` | `<HYPEREVM_LZ_OFT_USDT>` | `<HYPEREVM_COMPOSE_SENDER_USDT>` | `<family>` | `<options>` |
+| `HyperEVM` | `WETH` | `<HYPEREVM_LZ_WETH>` | `<HYPEREVM_LZ_OFT_WETH>` | `<HYPEREVM_COMPOSE_SENDER_WETH>` | `<family>` | `<options>` |
 
-## 9. VPS Configuration Sheet
+## 8. VPS Configuration Sheet
 
-### 9.1 Chain-local runtime keys
+### 8.1 Chain-local runtime keys
 
 Fill these for every chain:
 
@@ -428,7 +331,7 @@ CHAIN_<id>_SWAP_PLUGIN_ID=
 CHAIN_<id>_SWAP_PLUGIN_KIND=
 ```
 
-### 9.2 Settlement token keys
+### 8.2 Settlement token keys
 
 Fill the rail-specific token addresses you actually enable.
 
@@ -436,15 +339,12 @@ Examples:
 
 ```bash
 CHAIN_42161_TOKEN_CCTP_USDC=
-CHAIN_42161_TOKEN_AXELAR_USDC=
-CHAIN_42161_TOKEN_AXELAR_USDT=
-CHAIN_42161_TOKEN_AXELAR_ETH=
 CHAIN_42161_TOKEN_LAYERZERO_USDC=
 CHAIN_42161_TOKEN_LAYERZERO_USDT=
 CHAIN_42161_TOKEN_LAYERZERO_ETH=
 ```
 
-### 9.3 CCTP runtime keys
+### 8.3 CCTP runtime keys
 
 Fill for CCTP chains:
 
@@ -458,17 +358,7 @@ CHAIN_<id>_CCTP_DOMAIN=
 CHAIN_<id>_CCTP_MESSAGE_TRANSMITTER=
 ```
 
-### 9.4 Axelar metadata keys
-
-Fill per destination chain per whitelisted route asset:
-
-```bash
-CHAIN_<dstId>_AXELAR_TOKEN_ID_USDC=
-CHAIN_<dstId>_AXELAR_TOKEN_ID_USDT=
-CHAIN_<dstId>_AXELAR_TOKEN_ID_WETH=
-```
-
-### 9.5 LayerZero metadata keys
+### 8.4 LayerZero metadata keys
 
 Fill per chain:
 
@@ -482,7 +372,7 @@ CHAIN_<id>_LZ_EXTRA_OPTIONS_USDT=
 CHAIN_<id>_LZ_EXTRA_OPTIONS_WETH=
 ```
 
-## 10. Deployment Order
+## 9. Deployment Order
 
 Recommended order:
 
@@ -491,25 +381,22 @@ Recommended order:
 3. Configure `ReceiverV1` approved callers on all 6 chains.
 4. Configure `CCTP standard` mesh.
 5. Configure `CCTP fast` mesh.
-6. Configure `Axelar` source routes on all 6 chains.
-7. Configure `Axelar` destination trusted sources and trusted tokens on all 6 chains.
-8. Configure `LayerZero` source routes on all 6 chains.
-9. Configure `LayerZero` destination trusted peers and settlement assets on all 6 chains.
-10. Populate VPS deployment registry and runtime env.
-11. Run per-pair smoke tests before opening production traffic.
+6. Configure `LayerZero` source routes on its 6 participating chains.
+7. Configure `LayerZero` destination trusted peers and settlement assets on its 6 participating chains.
+8. Populate VPS deployment registry and runtime env.
+9. Run per-pair smoke tests before opening production traffic.
 
-## 11. Minimum Smoke-Test Matrix
+## 10. Minimum Smoke-Test Matrix
 
 Run at least one end-to-end test for each rail shape:
 
 - `Arbitrum -> Base` via `CCTP standard`
 - `Arbitrum -> Base` via `CCTP fast`
-- `Avalanche -> Base` via `CCTP standard`
 - `Monad -> OP` via `CCTP standard`
-- `BSC -> Base` via `Axelar`
-- `Base -> Monad` via `Axelar`
+- `HyperEVM -> Base` via `CCTP standard`
 - `Base -> BSC` via `LayerZero`
-- `OP -> Avalanche` via `LayerZero`
+- `OP -> Monad` via `LayerZero`
+- `HyperEVM -> Arbitrum` via `LayerZero`
 
 For at least one route on each rail, test:
 
@@ -517,12 +404,11 @@ For at least one route on each rail, test:
 - destination swap out
 - source swap in + destination swap out
 
-## 12. Open Items To Fill
+## 11. Open Items To Fill
 
 - final RPC URLs
 - final deployed contract addresses
-- final Axelar chain names
-- final Axelar token IDs for `USDC`, `USDT`, `WETH`
+- final `HyperEVM` CCTP domain
 - final LayerZero EIDs
 - final LayerZero route families per asset per chain
 - final LayerZero OFT / Stargate addresses
@@ -530,7 +416,7 @@ For at least one route on each rail, test:
 - final `CCTP_ROUTE_CALLER` / `CCTP_FAST_ROUTE_CALLER`
 - final swap plugin IDs and kind per chain
 
-## 13. External References
+## 12. External References
 
 These should be rechecked before production broadcast:
 
@@ -538,4 +424,3 @@ These should be rechecked before production broadcast:
 - Circle required block confirmations and fast-transfer notes: [developers.circle.com/cctp/required-block-confirmations](https://developers.circle.com/cctp/required-block-confirmations)
 - LayerZero network / mesh concepts: [docs.layerzero.network/v2/concepts/protocol/mesh-network](https://docs.layerzero.network/v2/concepts/protocol/mesh-network)
 - LayerZero adding networks guide: [docs.layerzero.network/v2/get-started/create-lz-oapp/adding-networks](https://docs.layerzero.network/v2/get-started/create-lz-oapp/adding-networks)
-

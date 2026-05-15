@@ -84,13 +84,13 @@ export const ROUTE_METADATA_BY_CHAIN: Record<number, ChainRouteMetadataEntry> = 
   42161: {
     axelarChainName: "arbitrum",
     defaultTokens: {
-      [SettlementToken.USDC]: "0x0000000000000000000000000000000000002001",
+      [SettlementToken.USDC]: "0xaf88d065e77c8cC2239327C5EDb3A432268e5831",
       [SettlementToken.USDT]: "0x0000000000000000000000000000000000002004",
       [SettlementToken.ETH]: "0x0000000000000000000000000000000000002003",
     },
     rails: {
       [Rail.CCTP]: {
-        tokens: { USDC: "0x0000000000000000000000000000000000002001" },
+        tokens: { USDC: "0xaf88d065e77c8cC2239327C5EDb3A432268e5831" },
       },
       [Rail.AXELAR]: {
         tokens: {
@@ -102,10 +102,13 @@ export const ROUTE_METADATA_BY_CHAIN: Record<number, ChainRouteMetadataEntry> = 
       },
       [Rail.LAYERZERO]: {
         tokens: {
-          USDC: "0x0000000000000000000000000000000000002001",
+          USDC: "0xaf88d065e77c8cC2239327C5EDb3A432268e5831",
           USDT: "0x0000000000000000000000000000000000002004",
           ETH: "0x0000000000000000000000000000000000002003",
           WETH: "0x0000000000000000000000000000000000002003",
+        },
+        oft: {
+          USDC: "0xe8CDF27AcD73a434D661C84887215F7598e7d0d3",
         },
       },
       [Rail.THORCHAIN]: {
@@ -123,6 +126,33 @@ export const ROUTE_METADATA_BY_CHAIN: Record<number, ChainRouteMetadataEntry> = 
     },
     layerZero: {
       dstEid: 30110,
+      extraOptions: {
+        USDC: "0x00030100110100000000000000000000000000030d4001001303000000000000000000000000000000061a80",
+      },
+    },
+  },
+  10: {
+    defaultTokens: {
+      [SettlementToken.USDC]: "0x0b2C639c533813f4Aa9D7837CAf62653d097Ff85",
+    },
+    rails: {
+      [Rail.CCTP]: {
+        tokens: { USDC: "0x0b2C639c533813f4Aa9D7837CAf62653d097Ff85" },
+      },
+      [Rail.LAYERZERO]: {
+        tokens: {
+          USDC: "0x0b2C639c533813f4Aa9D7837CAf62653d097Ff85",
+        },
+        oft: {
+          USDC: "0xcE8CcA271Ebc0533920C83d39F417ED6A0abB7D0",
+        },
+      },
+    },
+    layerZero: {
+      dstEid: 30111,
+      extraOptions: {
+        USDC: "0x00030100110100000000000000000000000000030d4001001303000000000000000000000000000000061a80",
+      },
     },
   },
   84532: {

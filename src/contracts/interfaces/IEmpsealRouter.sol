@@ -29,7 +29,6 @@ interface IEmpsealRouter {
         uint256[] amounts;     // amounts at each step
         address[] adapters;
         address[] path;
-        uint256[] gasEstimates;
     }
 
     // ── View: quote ────────────────────────────────────────────────────────────

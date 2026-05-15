@@ -13,22 +13,12 @@ import {ISwapPlugin} from "src/contracts/interfaces/ISwapPlugin.sol";
 
 import {CCTPRailPlugin} from "src/contracts/rails/CCTPRailPlugin.sol";
 import {CCTPFastRailPlugin} from "src/contracts/rails/CCTPFastRailPlugin.sol";
-import {AxelarRailPlugin} from "src/contracts/rails/AxelarRailPlugin.sol";
 import {LayerZeroRailPlugin} from "src/contracts/rails/LayerZeroRailPlugin.sol";
-import {THORChainRailPlugin} from "src/contracts/rails/THORChainRailPlugin.sol";
-import {AxelarReceiverAdapter} from "src/contracts/rails/AxelarReceiverAdapter.sol";
 import {LayerZeroReceiverAdapter} from "src/contracts/rails/LayerZeroReceiverAdapter.sol";
 
 /// @notice Post-deployment configuration script.
 /// @dev Run this repeatedly as you add routes/chains. Every config block is opt-in by env flag.
 contract ConfigureAll is ScriptBase {
-    bytes4 private constant AXELAR_SET_CHAIN_CONFIG_SELECTOR =
-        bytes4(keccak256("setChainConfig(uint32,string,address)"));
-    bytes4 private constant AXELAR_SET_ROUTE_CONFIG_WITH_ASSET_ID_SELECTOR =
-        bytes4(keccak256("setRouteConfigWithAssetId(string,uint32,address)"));
-    bytes4 private constant AXELAR_SET_ROUTE_CONFIG_LEGACY_SELECTOR =
-        bytes4(keccak256("setRouteConfig(uint32,string,address,bytes32)"));
-
     bytes4 private constant LZ_SET_FAMILY_ROUTE_CONFIG_SELECTOR =
         bytes4(keccak256("setFamilyRouteConfig(uint32,uint8,uint32,address,bytes)"));
     bytes4 private constant LZ_SET_FAMILY_ROUTE_CONFIG_WITH_OFT_SELECTOR =
@@ -50,11 +40,8 @@ contract ConfigureAll is ScriptBase {
 
         _configureCctpRoutes();
         _configureCctpFastRoutes();
-        _configureAxelarRoutes();
         _configureLayerZeroRoutes();
-        _configureThor();
 
-        _configureAxelarAdapter();
         _configureLayerZeroAdapter();
         _configureLayerZeroOftPeer();
 
@@ -69,9 +56,7 @@ contract ConfigureAll is ScriptBase {
 
         _registerRailIfProvided(registry, vm.envOr("RAIL_PLUGIN_CCTP", address(0)));
         _registerRailIfProvided(registry, vm.envOr("RAIL_PLUGIN_CCTP_FAST", address(0)));
-        _registerRailIfProvided(registry, vm.envOr("RAIL_PLUGIN_AXELAR", address(0)));
         _registerRailIfProvided(registry, vm.envOr("RAIL_PLUGIN_LAYERZERO", address(0)));
-        _registerRailIfProvided(registry, vm.envOr("RAIL_PLUGIN_THORCHAIN", address(0)));
 
         _registerSwapIfProvided(registry, vm.envOr("SWAP_PLUGIN_EMPSEAL", address(0)));
         _registerSwapIfProvided(registry, vm.envOr("SWAP_PLUGIN_UNIV2", address(0)));
@@ -168,56 +153,6 @@ contract ConfigureAll is ScriptBase {
         }
     }
 
-    function _configureAxelarRoutes() internal {
-        if (!vm.envOr("AXELAR_SET_ROUTE", false)) return;
-
-        address pluginAddr = vm.envAddress("AXELAR_PLUGIN");
-        uint32 dstChainId = uint32(vm.envUint("AXELAR_ROUTE_CHAIN_ID"));
-        string memory chainName = vm.envString("AXELAR_ROUTE_NAME");
-        address dstReceiver = vm.envAddress("AXELAR_ROUTE_RECEIVER");
-        bytes32 routeTokenId = vm.envOr("AXELAR_ROUTE_TOKEN_ID", bytes32(0));
-        bool ok;
-        bytes memory reason;
-
-        if (_hasSelector(pluginAddr, AXELAR_SET_CHAIN_CONFIG_SELECTOR)) {
-            (ok, reason) = pluginAddr.call(
-                abi.encodeWithSelector(
-                    AXELAR_SET_CHAIN_CONFIG_SELECTOR,
-                    dstChainId,
-                    chainName,
-                    dstReceiver
-                )
-            );
-            if (!ok) _revertWithReason(reason, "AXELAR_SET_CHAIN_CONFIG_FAILED");
-            return;
-        }
-
-        if (_hasSelector(pluginAddr, AXELAR_SET_ROUTE_CONFIG_WITH_ASSET_ID_SELECTOR)) {
-            (ok, reason) = pluginAddr.call(
-                abi.encodeWithSelector(
-                    AXELAR_SET_ROUTE_CONFIG_WITH_ASSET_ID_SELECTOR,
-                    chainName,
-                    dstChainId,
-                    dstReceiver
-                )
-            );
-            if (!ok) _revertWithReason(reason, "AXELAR_SET_ROUTE_CONFIG_WITH_ASSET_ID_FAILED");
-            return;
-        }
-
-        if (routeTokenId == bytes32(0)) revert("AXELAR_ROUTE_TOKEN_ID required for legacy Axelar plugin");
-        (ok, reason) = pluginAddr.call(
-            abi.encodeWithSelector(
-                AXELAR_SET_ROUTE_CONFIG_LEGACY_SELECTOR,
-                dstChainId,
-                chainName,
-                dstReceiver,
-                routeTokenId
-            )
-        );
-        if (!ok) _revertWithReason(reason, "AXELAR_SET_ROUTE_CONFIG_LEGACY_FAILED");
-    }
-
     function _configureLayerZeroRoutes() internal {
         if (!vm.envOr("LZ_SET_ROUTE", false)) return;
 
@@ -295,46 +230,6 @@ contract ConfigureAll is ScriptBase {
             )
         );
         if (!ok) _revertWithReason(reason, "LZ_SET_ROUTE_CONFIG_LEGACY_FAILED");
-    }
-
-    function _configureThor() internal {
-        address pluginAddr = vm.envOr("THOR_PLUGIN", address(0));
-        if (pluginAddr == address(0)) return;
-
-        THORChainRailPlugin thor = THORChainRailPlugin(pluginAddr);
-
-        if (vm.envOr("THOR_SET_VAULT", false)) {
-            uint32 chainId = uint32(vm.envUint("THOR_VAULT_CHAIN_ID"));
-            address vault = vm.envAddress("THOR_VAULT_ADDRESS");
-            thor.setInboundVault(chainId, vault);
-        }
-
-        if (vm.envOr("THOR_SET_ROUTER", false)) {
-            address newThorRouter = vm.envAddress("THOR_ROUTER");
-            thor.setTHORRouter(newThorRouter);
-        }
-    }
-
-    function _configureAxelarAdapter() internal {
-        if (!vm.envOr("AXELAR_ADAPTER_SET_TRUSTED_SOURCE", false)) return;
-
-        address adapterAddr = vm.envAddress("AXELAR_ADAPTER");
-        string memory sourceChain = vm.envString("AXELAR_SOURCE_CHAIN");
-        bool trusted = vm.envOr("AXELAR_SOURCE_TRUSTED", true);
-
-        bytes memory sourceAddressBytes = vm.envOr("AXELAR_SOURCE_ADDRESS_BYTES", bytes(""));
-        if (sourceAddressBytes.length != 0) {
-            AxelarReceiverAdapter(adapterAddr).setTrustedSource(sourceChain, sourceAddressBytes, trusted);
-        } else {
-            address sourceAddress = vm.envAddress("AXELAR_SOURCE_ADDRESS");
-            AxelarReceiverAdapter(adapterAddr).setTrustedSourceAddress(sourceChain, sourceAddress, trusted);
-        }
-
-        bytes32 tokenId = vm.envOr("AXELAR_TRUSTED_TOKEN_ID", bytes32(0));
-        address token = vm.envOr("AXELAR_TRUSTED_TOKEN", address(0));
-        if (tokenId != bytes32(0) || token != address(0)) {
-            AxelarReceiverAdapter(adapterAddr).setTrustedToken(tokenId, token, trusted);
-        }
     }
 
     function _configureLayerZeroAdapter() internal {
