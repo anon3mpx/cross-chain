@@ -752,14 +752,20 @@ export function buildStatusAPI(
     return trimmed;
   }
 
-  async function requireLayerZeroValueTransferApiIntent(intentId: unknown): Promise<Intent> {
-    const normalizedIntentId = typeof intentId === 'string' ? intentId.trim() : '';
-    if (!/^0x[0-9a-fA-F]{64}$/.test(normalizedIntentId)) {
-      throw new IntentLifecycleError('INVALID_INTENT_ID', 'Invalid intent id.');
-    }
+  async function requireLayerZeroValueTransferApiIntent(intentOrQuoteId: unknown): Promise<Intent> {
+    const normalizedId = parseShortText(intentOrQuoteId, 'id', 256, true);
+    const intent = /^0x[0-9a-fA-F]{64}$/.test(normalizedId)
+      ? (await intentService.getIntent(normalizedId))
+        ?? (await intentService.findLayerZeroValueTransferApiIntentByQuoteId(normalizedId))
+      : await intentService.findLayerZeroValueTransferApiIntentByQuoteId(normalizedId);
 
-    const intent = await intentService.getIntent(normalizedIntentId);
-    if (!intent) throw new IntentLifecycleError('INTENT_NOT_FOUND', 'Intent not found.', 404);
+    if (!intent) {
+      throw new IntentLifecycleError(
+        'LAYERZERO_VALUE_TRANSFER_API_INTENT_NOT_FOUND',
+        'LayerZero Value Transfer API intent not found for the provided intent id or quote id.',
+        404,
+      );
+    }
     if (intent.quote.rail !== Rail.LAYERZERO || !intent.quote.layerZeroValueTransferApiQuoteId) {
       throw new IntentLifecycleError(
         'NOT_LAYERZERO_VALUE_TRANSFER_API_INTENT',

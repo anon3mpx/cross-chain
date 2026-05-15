@@ -180,7 +180,7 @@ test('StatusAPI exposes LayerZero Value Transfer API discovery and intent-bound 
     assert.equal(selected.integration.action.kind, 'layerzero_value_transfer_api');
 
     const buildStepsRes = await fetch(
-      `${server.baseUrl}${API_PREFIX}/layerzero-value-transfer-api/intents/${selected.intentId}/build-user-steps`,
+      `${server.baseUrl}${API_PREFIX}/layerzero-value-transfer-api/intents/quote_lz_direct/build-user-steps`,
       {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
@@ -193,7 +193,7 @@ test('StatusAPI exposes LayerZero Value Transfer API discovery and intent-bound 
     assert.deepEqual(capturedBuildUserStepsRequest, { quoteId: 'quote_lz_direct' });
 
     const submittedRes = await fetch(
-      `${server.baseUrl}${API_PREFIX}/layerzero-value-transfer-api/intents/${selected.intentId}/submitted`,
+      `${server.baseUrl}${API_PREFIX}/layerzero-value-transfer-api/intents/quote_lz_direct/submitted`,
       {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
@@ -203,7 +203,7 @@ test('StatusAPI exposes LayerZero Value Transfer API discovery and intent-bound 
     assert.equal(submittedRes.status, 202);
 
     const submitSignatureRes = await fetch(
-      `${server.baseUrl}${API_PREFIX}/layerzero-value-transfer-api/intents/${selected.intentId}/submit-signature`,
+      `${server.baseUrl}${API_PREFIX}/layerzero-value-transfer-api/intents/quote_lz_direct/submit-signature`,
       {
         method: 'POST',
         headers: { 'content-type': 'application/json' },

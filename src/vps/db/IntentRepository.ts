@@ -205,6 +205,23 @@ export class IntentRepository {
     return this.rowToIntent(rows[0]);
   }
 
+  async findIntentByLayerZeroValueTransferApiQuoteId(quoteId: string): Promise<Intent | null> {
+    const { rows } = await this.pool.query(
+      `SELECT intent_id, status, quote, user_address,
+              src_tx_hash, rail_tx_id, dst_tx_hash,
+              created_at, updated_at, retry_count, fallback_rail,
+              error_message, partner_api_key
+       FROM intents
+       WHERE quote->>'layerZeroValueTransferApiQuoteId' = $1
+       ORDER BY updated_at DESC
+       LIMIT 1`,
+      [quoteId],
+    );
+
+    if (rows.length === 0) return null;
+    return this.rowToIntent(rows[0]);
+  }
+
   async listIntentsByStatus(status: IntentStatus, limit = 500): Promise<Intent[]> {
     const { rows } = await this.pool.query(
       `SELECT intent_id, status, quote, user_address,

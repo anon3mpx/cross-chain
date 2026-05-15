@@ -31,8 +31,12 @@ contract ConfigureAll is ScriptBase {
 
     bytes4 private constant LZ_SET_FAMILY_ROUTE_CONFIG_SELECTOR =
         bytes4(keccak256("setFamilyRouteConfig(uint32,uint8,uint32,address,bytes)"));
+    bytes4 private constant LZ_SET_FAMILY_ROUTE_CONFIG_WITH_OFT_SELECTOR =
+        bytes4(keccak256("setFamilyRouteConfig(uint32,uint8,uint32,address,bytes,address,address)"));
     bytes4 private constant LZ_SET_ROUTE_CONFIG_LEGACY_SELECTOR =
         bytes4(keccak256("setRouteConfig(uint32,uint32,address,bytes)"));
+    bytes4 private constant LZ_SET_ROUTE_CONFIG_WITH_OFT_SELECTOR =
+        bytes4(keccak256("setRouteConfig(uint32,uint32,address,bytes,address,address)"));
 
     function run() external {
         uint256 deployerPk = vm.envUint("DEPLOYER_PRIVATE_KEY");
@@ -224,8 +228,47 @@ contract ConfigureAll is ScriptBase {
         bytes memory sendOptions = vm.envOr("LZ_ROUTE_OPTIONS", bytes(""));
         string memory familyValue = vm.envOr("LZ_ROUTE_FAMILY", string("lz_oft"));
         uint8 family = _layerZeroFamilyFromValue(familyValue);
+        address routeToken = vm.envOr("LZ_ROUTE_TOKEN", address(0));
+        address routeOft = vm.envOr("LZ_ROUTE_OFT", address(0));
         bool ok;
         bytes memory reason;
+
+        if (_hasSelector(pluginAddr, LZ_SET_FAMILY_ROUTE_CONFIG_WITH_OFT_SELECTOR)) {
+            _nonZero(routeToken, "LZ_ROUTE_TOKEN is required");
+            _nonZero(routeOft, "LZ_ROUTE_OFT is required");
+            (ok, reason) = pluginAddr.call(
+                abi.encodeWithSelector(
+                    LZ_SET_FAMILY_ROUTE_CONFIG_WITH_OFT_SELECTOR,
+                    dstChainId,
+                    family,
+                    dstEid,
+                    dstReceiver,
+                    sendOptions,
+                    routeToken,
+                    routeOft
+                )
+            );
+            if (!ok) _revertWithReason(reason, "LZ_SET_FAMILY_ROUTE_CONFIG_WITH_OFT_FAILED");
+            return;
+        }
+
+        if (_hasSelector(pluginAddr, LZ_SET_ROUTE_CONFIG_WITH_OFT_SELECTOR)) {
+            _nonZero(routeToken, "LZ_ROUTE_TOKEN is required");
+            _nonZero(routeOft, "LZ_ROUTE_OFT is required");
+            (ok, reason) = pluginAddr.call(
+                abi.encodeWithSelector(
+                    LZ_SET_ROUTE_CONFIG_WITH_OFT_SELECTOR,
+                    dstChainId,
+                    dstEid,
+                    dstReceiver,
+                    sendOptions,
+                    routeOft,
+                    routeToken
+                )
+            );
+            if (!ok) _revertWithReason(reason, "LZ_SET_ROUTE_CONFIG_WITH_OFT_FAILED");
+            return;
+        }
 
         if (_hasSelector(pluginAddr, LZ_SET_FAMILY_ROUTE_CONFIG_SELECTOR)) {
             (ok, reason) = pluginAddr.call(

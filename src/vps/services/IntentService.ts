@@ -88,6 +88,26 @@ export class IntentService {
     return this.intentEngine.get(intentId) ?? null;
   }
 
+  async findLayerZeroValueTransferApiIntentByQuoteId(quoteId: string): Promise<Intent | null> {
+    const normalizedQuoteId = quoteId.trim();
+    if (!normalizedQuoteId) return null;
+
+    if (this.intentRepo) {
+      const persisted = await this.intentRepo.findIntentByLayerZeroValueTransferApiQuoteId(normalizedQuoteId);
+      if (persisted) {
+        this.intentEngine.upsert(persisted);
+        return persisted;
+      }
+    }
+
+    const candidates = Object.values(IntentStatus)
+      .flatMap((status) => this.intentEngine.getByStatus(status));
+    return candidates.find((intent) =>
+      intent.quote.rail === Rail.LAYERZERO
+      && intent.quote.layerZeroValueTransferApiQuoteId?.trim() === normalizedQuoteId
+    ) ?? null;
+  }
+
   async countIntentsByStatus(): Promise<Record<IntentStatus, number>> {
     if (this.intentRepo) return this.intentRepo.countIntentsByStatus();
 
