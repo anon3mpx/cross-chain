@@ -55,9 +55,10 @@ ROUTER_V1=0x465fa155c8623dd3dce1e5e134d86f1d47b8fcf4                # local Rout
 RECEIVER_V1=0xa10914363664e46154328e6e787961641ea6e3de              # local ReceiverV1 on Arbitrum
 RAIL_PLUGIN_LAYERZERO=0x8fb6314678a9287f9b47b96e54122444e43dde1f    # local LayerZeroRailPlugin on Arbitrum
 LZ_ADAPTER=0xcdbc01b0dddac2729263a7ff4318a1b17b2eedb3               # local LayerZeroReceiverAdapter on Arbitrum
+EMPSEAL_ROUTER=0xA7772cDBA7739F19dcaE85fe0357929790FD23F9
 
 # Optional plugin registration vars
-SWAP_PLUGIN_EMPSEAL=0xA7772cDBA7739F19dcaE85fe0357929790FD23F9       # local swap plugin on Arbitrum
+SWAP_PLUGIN_EMPSEAL=0xe3b60a80cdada5fd1e05b64beb7dfe8423a3c331       # local swap plugin on Arbitrum
 SWAP_PLUGIN_UNIV2=
 SWAP_PLUGIN_UNIV3=
 
@@ -141,3 +142,89 @@ CHAIN_42161_LZ_OFT_USDC=0xe8CDF27AcD73a434D661C84887215F7598e7d0d3
 CHAIN_42161_LZ_DST_EID=30110
 CHAIN_42161_LZ_EXTRA_OPTIONS_USDC=0x00030100110100000000000000000000000000030d4001001303000000000000000000000000000000061a80
 CHAIN_42161_TOKEN_USDC=0xaf88d065e77c8cC2239327C5EDb3A432268e5831
+
+## Additional Peer Config: Arbitrum <-> Base
+
+Leave the `Arbitrum <-> OP` section above unchanged.
+Use this additional section when you are configuring `Arbitrum -> Base` routes or `Base -> Arbitrum` trust on the local Arbitrum contracts.
+
+Important:
+
+- These route keys reuse the same `CCTP_*`, `CCTP_FAST_*`, and `LZ_*` env names as the section above.
+- Configure `Arbitrum -> OP` and `Arbitrum -> Base` in separate runs of `npm run sol:configure:all`.
+- Do not try to enable both peer sections in one env export at the same time.
+
+### Peer Summary
+
+- Local chain: `Arbitrum` (`42161`)
+- Remote peer: `Base` (`8453`)
+- Local `CCTPRailPlugin`: `0x396adf660cf97105308c3650575d73b5fe8f586e`
+- Local `CCTPFastRailPlugin`: `0x970b735a5cdaaa97cd686a1da0b9f5d8332011c0`
+- Local `LayerZeroRailPlugin`: `0x8fb6314678a9287f9b47b96e54122444e43dde1f`
+- Local `LayerZeroReceiverAdapter`: `0xcdbc01b0dddac2729263a7ff4318a1b17b2eedb3`
+- Remote `ReceiverV1` on Base: `0x3aef79e7455843a33e4c46d5cf283a809bf50970`
+- Remote `LayerZeroRailPlugin` on Base: `0x347a213c8f511c7da06c3f0484b74309ba34f882`
+- Remote `LayerZeroReceiverAdapter` on Base: `0x6f7cd979bcbd03c2fd593c5beec3b2628514392b`
+
+### Arbitrum <-> Base Route Vars
+
+```bash
+# ------------------------------------------------------------
+# CCTP standard source route config on Arbitrum for ARB -> BASE
+# These vars are written to the local Arbitrum CCTPRailPlugin.
+# Remote fields below point to Base.
+# ------------------------------------------------------------
+CCTP_SET_ROUTE=true
+CCTP_PLUGIN=0x396adf660cf97105308c3650575d73b5fe8f586e
+CCTP_ROUTE_CHAIN_ID=8453
+CCTP_ROUTE_DOMAIN=6
+CCTP_ROUTE_RECEIVER=0x3aef79e7455843a33e4c46d5cf283a809bf50970      # remote Base ReceiverV1
+CCTP_ROUTE_CALLER=0x05F8cC8753D90d67DBB8c02118440b8283F941c9         # destination caller on Base
+
+# ------------------------------------------------------------
+# CCTP fast source route config on Arbitrum for ARB -> BASE
+# These vars are written to the local Arbitrum CCTPFastRailPlugin.
+# Remote fields below point to Base.
+# ------------------------------------------------------------
+CCTP_FAST_SET_ROUTE=true
+CCTP_FAST_PLUGIN=0x970b735a5cdaaa97cd686a1da0b9f5d8332011c0
+CCTP_FAST_ROUTE_CHAIN_ID=8453
+CCTP_FAST_ROUTE_DOMAIN=6
+CCTP_FAST_ROUTE_RECEIVER=0x3aef79e7455843a33e4c46d5cf283a809bf50970 # remote Base ReceiverV1
+CCTP_FAST_ROUTE_CALLER=0x05F8cC8753D90d67DBB8c02118440b8283F941c9    # destination caller on Base
+CCTP_FAST_MAX_FEE_BPS_CAP=100
+
+# ------------------------------------------------------------
+# LayerZero source route config on Arbitrum for ARB -> BASE
+# These vars are written to the local Arbitrum LayerZeroRailPlugin.
+# Remote fields below point to Base.
+# ------------------------------------------------------------
+LZ_SET_ROUTE=true
+LZ_PLUGIN=0x8fb6314678a9287f9b47b96e54122444e43dde1f                # local LayerZeroRailPlugin on Arbitrum
+LZ_ROUTE_CHAIN_ID=8453                                              # remote destination chain = Base
+LZ_ROUTE_EID=30184                                                  # remote destination EID = Base
+LZ_ROUTE_RECEIVER=0x6f7cd979bcbd03c2fd593c5beec3b2628514392b        # remote Base LayerZeroReceiverAdapter
+LZ_ROUTE_OPTIONS=0x00030100110100000000000000000000000000030d4001001303000000000000000000000000000000061a80
+LZ_ROUTE_FAMILY=lz_stargate_pool                                    # route family selected for this USDC path
+LZ_ROUTE_TOKEN=0xaf88d065e77c8cC2239327C5EDb3A432268e5831           # local source route token on Arbitrum = USDC
+LZ_ROUTE_OFT=0xe8CDF27AcD73a434D661C84887215F7598e7d0d3             # local Arbitrum LayerZero USDC asset contract
+
+# ------------------------------------------------------------
+# LayerZero destination trust on Arbitrum for inbound BASE -> ARB
+# These vars are written to the local Arbitrum LayerZeroReceiverAdapter.
+# Here, Base is the remote source chain.
+# ------------------------------------------------------------
+LZ_ADAPTER_SET_TRUSTED_PEER=true
+LZ_ADAPTER=0xcdbc01b0dddac2729263a7ff4318a1b17b2eedb3               # local LayerZeroReceiverAdapter on Arbitrum
+LZ_SOURCE_EID=30184                                                 # remote source EID = Base
+LZ_SOURCE_PEER_ADDRESS=0x347a213c8f511c7da06c3f0484b74309ba34f882   # remote Base LayerZeroRailPlugin
+
+# ------------------------------------------------------------
+# LayerZero destination asset registry on Arbitrum for inbound BASE -> ARB
+# LZ_SETTLEMENT_TOKEN is the token that arrives locally on Arbitrum.
+# LZ_COMPOSE_SENDER is the remote Base asset contract allowed to send it.
+# ------------------------------------------------------------
+LZ_ADAPTER_SET_ASSET=true
+LZ_SETTLEMENT_TOKEN=0xaf88d065e77c8cC2239327C5EDb3A432268e5831       # local Arbitrum USDC that ReceiverV1 will receive
+LZ_COMPOSE_SENDER=0x27a16dc786820B16E5c9028b75B99F6f604b5d26         # remote Base LayerZero USDC asset contract
+```
