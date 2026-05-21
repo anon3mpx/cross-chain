@@ -79,11 +79,23 @@ export function getSwapPluginIdForChain(chainId: number): string | undefined {
   if (configured) return configured;
   if (!hasAggregator(chainId)) return undefined;
 
-  const kind = (readEnv(`CHAIN_${chainId}_SWAP_PLUGIN_KIND`) ?? readEnv('DEFAULT_SWAP_PLUGIN_KIND') ?? 'EMPSEAL')
-    .trim()
-    .toUpperCase();
+  const kind = getSwapPluginKindForChain(chainId);
   if (kind === 'UNIV2' || kind === 'UNISWAP_V2') return DEFAULT_UNIV2_SWAP_PLUGIN_ID;
   if (kind === 'UNIV3' || kind === 'UNISWAP_V3') return DEFAULT_UNIV3_SWAP_PLUGIN_ID;
   if (kind === 'EMPSEAL') return DEFAULT_EMPSEAL_SWAP_PLUGIN_ID;
   return undefined;
+}
+
+export function getSwapPluginKindForChain(chainId: number): string | undefined {
+  if (!hasAggregator(chainId)) return undefined;
+  return (readEnv(`CHAIN_${chainId}_SWAP_PLUGIN_KIND`) ?? readEnv('DEFAULT_SWAP_PLUGIN_KIND') ?? 'EMPSEAL')
+    .trim()
+    .toUpperCase();
+}
+
+export function getEmpsealRouterAddressForChain(chainId: number): string | undefined {
+  return asAddress(
+    readEnv(`CHAIN_${chainId}_EMPSEAL_ROUTER`)
+    ?? readEnv(`CHAIN_${chainId}_DEX_EMPSEAL_ROUTER`)
+  );
 }

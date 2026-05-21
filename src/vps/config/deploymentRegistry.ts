@@ -15,31 +15,35 @@ export interface ChainDeploymentEntry {
 
 export const DEPLOYMENT_REGISTRY_BY_CHAIN: Record<number, ChainDeploymentEntry> = {
   8453: {
-    routerV1: '0x1111111111111111111111111111111111111111',
-    receiverV1: '0x1111111111111111111111111111111111111112',
-    pluginRegistry: '0x1111111111111111111111111111111111111113',
+    routerV1: '0x10c9db3761056d752bc41ac817f730f9e4348bb0',
+    receiverV1: '0x3aef79e7455843a33e4c46d5cf283a809bf50970',
+    pluginRegistry: '0x39c586ec7f4df4a3b5cb5603e6ac6a6f4b950a49',
     railPlugins: {
-      [Rail.AXELAR]: '0x1111111111111111111111111111111111111114',
-      [Rail.LAYERZERO]: '0x1111111111111111111111111111111111111115',
-      [Rail.CCTP]: '0x1111111111111111111111111111111111111118',
+      [Rail.LAYERZERO]: '0x347a213c8f511c7da06c3f0484b74309ba34f882',
+      [Rail.CCTP]: '0xe1b589fcd71541099dd861a68a104f31e5ffebed',
+      [Rail.CCTP_FAST]: '0xf788dc2af6a35339028df57d92a3d6221547d991',
     },
     receiverAdapters: {
-      axelar: '0x1111111111111111111111111111111111111116',
-      layerzero: '0x1111111111111111111111111111111111111117',
+      layerzero: '0x6f7cd979bcbd03c2fd593c5beec3b2628514392b',
+    },
+    swapPlugins: {
+      empseal: '0xb4d497e97ff3966c9c6c6dcd78bdb7e4f3cd940a',
     },
   },
   42161: {
-    routerV1: '0x2222222222222222222222222222222222222221',
-    receiverV1: '0x2222222222222222222222222222222222222222',
-    pluginRegistry: '0x2222222222222222222222222222222222222223',
+    routerV1: '0x465fa155c8623dd3dce1e5e134d86f1d47b8fcf4',
+    receiverV1: '0xa10914363664e46154328e6e787961641ea6e3de',
+    pluginRegistry: '0x1725e2c27e428eb4a18ed121b459f4055ef2cc5b',
     railPlugins: {
-      [Rail.AXELAR]: '0x2222222222222222222222222222222222222224',
-      [Rail.LAYERZERO]: '0x2222222222222222222222222222222222222225',
-      [Rail.CCTP]: '0x2222222222222222222222222222222222222228',
+      [Rail.LAYERZERO]: '0x8fb6314678a9287f9b47b96e54122444e43dde1f',
+      [Rail.CCTP]: '0x396adf660cf97105308c3650575d73b5fe8f586e',
+      [Rail.CCTP_FAST]: '0x970b735a5cdaaa97cd686a1da0b9f5d8332011c0',
     },
     receiverAdapters: {
-      axelar: '0x2222222222222222222222222222222222222226',
-      layerzero: '0x2222222222222222222222222222222222222227',
+      layerzero: '0xcdbc01b0dddac2729263a7ff4318a1b17b2eedb3',
+    },
+    swapPlugins: {
+      empseal: '0xe3b60a80cdada5fd1e05b64beb7dfe8423a3c331',
     },
   },
   84532: {
@@ -71,6 +75,22 @@ export const DEPLOYMENT_REGISTRY_BY_CHAIN: Record<number, ChainDeploymentEntry> 
     receiverAdapters: {
       axelar: '0xc827913f0556a74bf9589d7ba7434cfe1be2a62b',
       layerzero: '0x7f5713bcf5198a1d1045ddd79d2952317fe3846e',
+    },
+  },
+  10: {
+    routerV1: '0xe6ef55853f548b7edfa403056f91f85fd3b3f086',
+    receiverV1: '0x65642ac8fd57eff8dd4651cb76be48814c8bf386',
+    pluginRegistry: '0x367ec0c092d32f3883c4cacbfb6c9c3594062e90',
+    railPlugins: {
+      [Rail.LAYERZERO]: '0xdb403792c55bfe26beaef235986d4f106e40ee6f',
+      [Rail.CCTP]: '0x1b7eb489eb0ae102720442fe15b0e08653a13404',
+      [Rail.CCTP_FAST]: '0x050c6c2555c2d54aba01420fbc02ff0f1d10e8df',
+    },
+    receiverAdapters: {
+      layerzero: '0x845cd50644a9592de43bcac0212656480744aaca',
+    },
+    swapPlugins: {
+      empseal: '0x1cb21a8a39e760e97c587b323d891927f3d006e9',
     },
   },
 };

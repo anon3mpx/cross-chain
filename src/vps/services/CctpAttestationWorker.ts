@@ -38,6 +38,10 @@ const RECEIVER_ABI = [
   'function settledIntents(bytes32 intentId) external view returns (bool)',
 ];
 
+const ERC20_BALANCE_ABI = [
+  'function balanceOf(address account) external view returns (uint256)',
+];
+
 const ERC20_TRANSFER_IFACE = new Interface([
   'event Transfer(address indexed from, address indexed to, uint256 value)',
 ]);
@@ -80,6 +84,63 @@ interface RetryEntry {
   attempts: number;
   nextAttemptAt: number;
   lastError: string;
+}
+
+export function buildReceiverExecutionPayloadFromIntent(intent: any): string {
+  return AbiCoder.defaultAbiCoder().encode(
+    ['bytes32', 'address', 'address', 'uint256', 'address', 'bytes32', 'uint256', 'bytes', 'bytes32'],
+    [
+      intent.intentId,
+      intent.user,
+      intent.tokenOut,
+      intent.minAmountOut,
+      intent.expectedDstRouteToken,
+      intent.expectedDstRouteAssetId,
+      intent.minRouteAmount,
+      intent.swapDataDst,
+      intent.dstSwapPluginId,
+    ],
+  );
+}
+
+export function extractReceivedSettlementAmountFromReceipt(
+  receipt: ethers.TransactionReceipt | null,
+  settlementToken: string,
+  receiver: string,
+): bigint {
+  if (!receipt) return 0n;
+  const transferEvent = ERC20_TRANSFER_IFACE.getEvent('Transfer');
+  if (!transferEvent) return 0n;
+  const receiverTopic = ethers.zeroPadValue(receiver.toLowerCase(), 32).toLowerCase();
+
+  let totalReceived = 0n;
+  for (const log of receipt.logs) {
+    if (log.address.toLowerCase() !== settlementToken.toLowerCase()) continue;
+    if (log.topics[0] !== transferEvent.topicHash) continue;
+    if (log.topics.length < 3) continue;
+    if (log.topics[2].toLowerCase() !== receiverTopic) continue;
+
+    const parsed = ERC20_TRANSFER_IFACE.parseLog(log);
+    if (!parsed) continue;
+    totalReceived += BigInt(parsed.args.value);
+  }
+
+  return totalReceived;
+}
+
+export function isBenignEmptyReceiveMessageStaticResult(err: unknown): boolean {
+  if (typeof err !== 'object' || err === null) return false;
+
+  const code = 'code' in err ? String((err as { code?: unknown }).code) : '';
+  const value = 'value' in err ? String((err as { value?: unknown }).value) : '';
+  const info = 'info' in err ? (err as { info?: { method?: unknown; signature?: unknown } }).info : undefined;
+  const method = info?.method ? String(info.method) : '';
+  const signature = info?.signature ? String(info.signature) : '';
+
+  return code === 'BAD_DATA'
+    && value === '0x'
+    && method === 'receiveMessage'
+    && signature === 'receiveMessage(bytes,bytes)';
 }
 
 export class CctpAttestationWorker {
@@ -345,17 +406,7 @@ export class CctpAttestationWorker {
       throw new Error(`intent.dstReceiver is zero for ${intentId}`);
     }
 
-    const payload = AbiCoder.defaultAbiCoder().encode(
-      ['bytes32', 'address', 'address', 'uint256', 'bytes', 'bytes32'],
-      [
-        intent.intentId,
-        intent.user,
-        intent.tokenOut,
-        intent.minAmountOut,
-        intent.swapDataDst,
-        intent.dstSwapPluginId,
-      ],
-    );
+    const payload = buildReceiverExecutionPayloadFromIntent(intent);
 
     return {
       intentId,
@@ -421,15 +472,32 @@ export class CctpAttestationWorker {
 
       const messageTransmitter = await this._resolveMessageTransmitter(job.dstChainId, dstProvider);
       const mtContract = new Contract(messageTransmitter, MESSAGE_TRANSMITTER_ABI, signer);
+      const settlementTokenContract = new Contract(job.settlementToken, ERC20_BALANCE_ABI, dstProvider);
 
       let receiveTxHash: string | undefined;
       let mintedAmount = 0n;
 
       try {
+        const beforeReceiverBalance = BigInt(await settlementTokenContract.balanceOf(job.receiver));
+        try {
+          const receiveOk = await mtContract.receiveMessage.staticCall(relayMessage, attestation);
+          if (!receiveOk) {
+            throw new Error(`receiveMessage returned false for intent=${job.intentId}`);
+          }
+        } catch (err) {
+          if (!isBenignEmptyReceiveMessageStaticResult(err)) throw err;
+        }
+
         const tx = await mtContract.receiveMessage(relayMessage, attestation);
         const rcpt = await tx.wait();
         receiveTxHash = rcpt?.hash;
-        mintedAmount = this._extractMintedAmount(rcpt, job.settlementToken, job.receiver);
+        mintedAmount = extractReceivedSettlementAmountFromReceipt(rcpt, job.settlementToken, job.receiver);
+        if (mintedAmount === 0n) {
+          const afterReceiverBalance = BigInt(await settlementTokenContract.balanceOf(job.receiver));
+          if (afterReceiverBalance > beforeReceiverBalance) {
+            mintedAmount = afterReceiverBalance - beforeReceiverBalance;
+          }
+        }
 
         if (receiveTxHash) this._safeMarkDestinationReceived(job.intentId, receiveTxHash);
         console.log(
@@ -548,29 +616,6 @@ export class CctpAttestationWorker {
     throw new Error(
       `attestation timeout for srcTx=${job.srcTxHash} sourceDomain=${job.sourceDomainId} messageHash=${job.messageHash}`,
     );
-  }
-
-  private _extractMintedAmount(
-    receipt: ethers.TransactionReceipt | null,
-    settlementToken: string,
-    receiver: string,
-  ): bigint {
-    if (!receipt) return 0n;
-    const transferEvent = ERC20_TRANSFER_IFACE.getEvent('Transfer');
-    if (!transferEvent) return 0n;
-    const receiverTopic = ethers.zeroPadValue(receiver.toLowerCase(), 32);
-    for (const log of receipt.logs) {
-      if (log.address.toLowerCase() !== settlementToken.toLowerCase()) continue;
-      if (log.topics[0] !== transferEvent.topicHash) continue;
-      if (log.topics.length < 3) continue;
-      if (log.topics[1] !== ethers.zeroPadValue(ZeroAddress, 32)) continue;
-      if (log.topics[2].toLowerCase() !== receiverTopic.toLowerCase()) continue;
-
-      const parsed = ERC20_TRANSFER_IFACE.parseLog(log);
-      if (!parsed) continue;
-      return BigInt(parsed.args.value);
-    }
-    return 0n;
   }
 
   private _pickIrisMessage(

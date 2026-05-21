@@ -15,9 +15,9 @@ export interface DestinationGasConfig {
  */
 export const RAIL_SETTLEMENT_ASSET_ALLOWLISTS: RailSettlementAssetAllowlist = {
   [Rail.CCTP]: ['USDC'],
-  [Rail.AXELAR]: ['USDC', 'USDT', 'WETH'],
   [Rail.LAYERZERO]: ['USDC', 'USDT', 'WETH'],
-  [Rail.VIA_LABS]: ['USDC', 'USDT', 'WETH'],
+  // [Rail.AXELAR]: ['USDC', 'USDT', 'WETH'],
+  // [Rail.VIA_LABS]: ['USDC', 'USDT', 'WETH'],
   [Rail.THORCHAIN]: ['USDC', 'USDT', 'WETH'],
 };
 
@@ -32,13 +32,13 @@ export const DESTINATION_GAS_LIMITS: Partial<Record<Rail, DestinationGasConfig>>
       cctp_fast: 200_000,
     },
   },
-  [Rail.AXELAR]: {
-    default: 250_000,
-    byOfferType: {
-      axelar_direct: 220_000,
-      axelar_dst_swap: 260_000,
-    },
-  },
+  // [Rail.AXELAR]: {
+  //   default: 250_000,
+  //   byOfferType: {
+  //     axelar_direct: 220_000,
+  //     axelar_dst_swap: 260_000,
+  //   },
+  // },
   [Rail.LAYERZERO]: {
     default: 220_000,
     byOfferType: {

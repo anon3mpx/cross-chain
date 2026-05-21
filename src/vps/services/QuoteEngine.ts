@@ -25,7 +25,12 @@ import { RouteBuilder } from './RouterBuilder';
 import { AxelarAssetCatalog, type AxelarRouteOption } from './axelar/AxelarAssetCatalog';
 import { CHAIN_CONFIGS, getChainConfig } from '../config/chains';
 import { RAIL_SETTLEMENT_ASSET_ALLOWLISTS } from '../config/routeExecution';
-import { getSettlementTokenAddress, getSwapPluginIdForChain } from '../config/contracts';
+import {
+  getEmpsealRouterAddressForChain,
+  getSettlementTokenAddress,
+  getSwapPluginIdForChain,
+  getSwapPluginKindForChain,
+} from '../config/contracts';
 import {
   getDefaultAxelarDirectAssetsFromMetadata,
   getDefaultLayerZeroRouteFamiliesFromMetadata,
@@ -55,6 +60,11 @@ import {
   GasZipQuoteWorker,
   type GasZipQuoteResult,
 } from './gaszip/GasZipQuoteWorker';
+import {
+  EmpsealQuoteWorker,
+  type EmpsealQuoteWorkerLike,
+  type EmpsealTrade,
+} from './empseal/EmpsealQuoteWorker';
 import { RailSelector } from './RailSelector';
 import {
   ZERO_PLUGIN_ID,
@@ -128,6 +138,7 @@ export interface QuoteEngineDependencies {
   layerZeroRouteCatalog?: Pick<LayerZeroRouteCatalog, 'listRoutes'>;
   layerZeroValueTransferApiQuoteWorker?: Pick<LayerZeroValueTransferApiQuoteWorker, 'quoteLayerZeroValueTransferApi'>;
   gasZipQuoteWorker?: Pick<GasZipQuoteWorker, 'quoteDirectDeposit'>;
+  empsealQuoteWorker?: EmpsealQuoteWorkerLike;
 }
 
 export class QuoteEngine {
@@ -141,6 +152,7 @@ export class QuoteEngine {
   private readonly layerZeroRouteCatalog: Pick<LayerZeroRouteCatalog, 'listRoutes'>;
   private readonly layerZeroValueTransferApiQuoteWorker?: Pick<LayerZeroValueTransferApiQuoteWorker, 'quoteLayerZeroValueTransferApi'>;
   private readonly gasZipQuoteWorker?: Pick<GasZipQuoteWorker, 'quoteDirectDeposit'>;
+  private readonly empsealQuoteWorker?: EmpsealQuoteWorkerLike;
   private readonly thorchainQuoteWorker?: Pick<THORChainQuoteWorker, 'quote'>;
   private readonly routeAssetPolicy: RouteAssetPolicy;
   private readonly destinationGasPolicy: DestinationGasPolicy;
@@ -173,6 +185,7 @@ export class QuoteEngine {
       : this._readBoolEnv('ENABLE_GASZIP_DIRECT_DEPOSIT', false)
         ? new GasZipQuoteWorker()
         : undefined;
+    this.empsealQuoteWorker = deps.empsealQuoteWorker ?? new EmpsealQuoteWorker();
     const hasExplicitThorchainWorker = Object.prototype.hasOwnProperty.call(deps, 'thorchainQuoteWorker');
     if (hasExplicitThorchainWorker) {
       this.thorchainQuoteWorker = deps.thorchainQuoteWorker;
@@ -405,6 +418,7 @@ export class QuoteEngine {
 
     // Get src swap quote: tokenIn → settlementToken
     let srcSwapAmount: bigint;
+    let swapDataSrc = '0x';
     const srcSwapNeeded = srcSwapEnabled && this._isAddress(req.tokenIn) &&
       req.tokenIn.toLowerCase() !== settlementAddrSrc.toLowerCase();
     if (!srcSwapEnabled) {
@@ -416,9 +430,10 @@ export class QuoteEngine {
     } else if (!srcSwapNeeded) {
       srcSwapAmount = amountAfterFee;
     } else {
-      const quoted = await this._getSwapQuote(req.srcChainId, req.tokenIn, settlementAddrSrc, amountAfterFee);
-      if (quoted === null) return null;
-      srcSwapAmount = quoted;
+      const srcPlan = await this._buildSwapPlan(req.srcChainId, req.tokenIn, settlementAddrSrc, amountAfterFee);
+      if (!srcPlan) return null;
+      srcSwapAmount = srcPlan.amountOut;
+      swapDataSrc = srcPlan.data;
     }
     const minSrcSwapOut = srcSwapNeeded ? (srcSwapAmount * 995n) / 1000n : 0n;
 
@@ -450,6 +465,7 @@ export class QuoteEngine {
     // Get dst swap quote: settlementToken → tokenOut
     const settlementAddrDst = routeAsset.destinationRouteToken;
     let dstSwapAmount: bigint;
+    let swapDataDst = '0x';
     const dstSwapNeeded = dstSwapEnabled && !!settlementAddrDst && this._isAddress(req.tokenOut) &&
       req.tokenOut.toLowerCase() !== settlementAddrDst.toLowerCase();
     if (!dstSwapEnabled) {
@@ -461,9 +477,10 @@ export class QuoteEngine {
     } else if (!dstSwapNeeded) {
       dstSwapAmount = bridgeAmount;
     } else {
-      const quoted = await this._getSwapQuote(req.dstChainId, settlementAddrDst, req.tokenOut, bridgeAmount);
-      if (quoted === null) return null;
-      dstSwapAmount = quoted;
+      const dstPlan = await this._buildSwapPlan(req.dstChainId, settlementAddrDst, req.tokenOut, bridgeAmount);
+      if (!dstPlan) return null;
+      dstSwapAmount = dstPlan.amountOut;
+      swapDataDst = dstPlan.data;
     }
 
     const srcSwapPluginId = srcSwapNeeded
@@ -511,8 +528,8 @@ export class QuoteEngine {
         railData,
         swapPluginIdSrc: srcSwapPluginId,
         swapPluginIdDst: dstSwapPluginId,
-        swapDataSrc:     '0x',
-        swapDataDst:     '0x',
+        swapDataSrc,
+        swapDataDst,
         nativeDstAddress: req.nativeDstAddress,
         routeAsset: routeAsset.routeAsset,
       },
@@ -1216,6 +1233,43 @@ export class QuoteEngine {
     } catch {
       return null;
     }
+  }
+
+  private async _buildSwapPlan(
+    chainId: number,
+    tokenIn: string,
+    tokenOut: string,
+    amountIn: bigint,
+  ): Promise<{ amountOut: bigint; data: string } | null> {
+    if (this._isEmpsealSwapChain(chainId)) {
+      const plan = await this.empsealQuoteWorker?.buildSwapPlan({
+        chainId,
+        tokenIn,
+        tokenOut,
+        amountIn,
+      });
+      if (!plan) return null;
+      return {
+        amountOut: plan.amountOut,
+        data: this._encodeEmpsealTrade(plan.trade),
+      };
+    }
+
+    const quoted = await this._getSwapQuote(chainId, tokenIn, tokenOut, amountIn);
+    if (quoted === null) return null;
+    return { amountOut: quoted, data: '0x' };
+  }
+
+  private _encodeEmpsealTrade(trade: EmpsealTrade): string {
+    return abiCoder.encode(
+      ['tuple(uint256 amountIn,uint256 amountOut,address[] path,address[] adapters)'],
+      [trade],
+    );
+  }
+
+  private _isEmpsealSwapChain(chainId: number): boolean {
+    return getSwapPluginKindForChain(chainId) === 'EMPSEAL'
+      && !!getEmpsealRouterAddressForChain(chainId);
   }
 
   private _resolveRouteExecutionAsset(

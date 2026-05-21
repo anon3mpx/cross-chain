@@ -38,8 +38,10 @@ const cfg = (
   chainId, name,
   rpcUrl: env(`CHAIN_${chainId}_RPC_URL`) ?? '',
   rpcFallback: env(`CHAIN_${chainId}_RPC_FALLBACK`) ?? env(`CHAIN_${chainId}_RPC_URL`) ?? '',
-  routerV1: getRouterAddressFromDeploymentRegistry(chainId) ?? env(`CHAIN_${chainId}_ROUTER_V1`),
-  receiverV1: getReceiverAddressFromDeploymentRegistry(chainId) ?? env(`CHAIN_${chainId}_RECEIVER_V1`),
+  // Runtime env must take precedence over the baked-in deployment registry.
+  // This prevents placeholder registry entries from leaking into signed intents.
+  routerV1: env(`CHAIN_${chainId}_ROUTER_V1`) ?? getRouterAddressFromDeploymentRegistry(chainId),
+  receiverV1: env(`CHAIN_${chainId}_RECEIVER_V1`) ?? getReceiverAddressFromDeploymentRegistry(chainId),
   nativeStable,
   blockTimeMs,
   isEVM,

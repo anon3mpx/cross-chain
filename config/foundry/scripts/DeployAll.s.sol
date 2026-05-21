@@ -10,10 +10,7 @@ import {Paymaster} from "src/contracts/Paymaster.sol";
 
 import {CCTPRailPlugin} from "src/contracts/rails/CCTPRailPlugin.sol";
 import {CCTPFastRailPlugin} from "src/contracts/rails/CCTPFastRailPlugin.sol";
-import {AxelarRailPlugin} from "src/contracts/rails/AxelarRailPlugin.sol";
 import {LayerZeroRailPlugin} from "src/contracts/rails/LayerZeroRailPlugin.sol";
-import {THORChainRailPlugin} from "src/contracts/rails/THORChainRailPlugin.sol";
-import {AxelarReceiverAdapter} from "src/contracts/rails/AxelarReceiverAdapter.sol";
 import {LayerZeroReceiverAdapter} from "src/contracts/rails/LayerZeroReceiverAdapter.sol";
 
 import {EmpsealSwapPlugin} from "src/contracts/plugins/EmpsealSwapPlugin.sol";
@@ -29,11 +26,9 @@ import {UniswapV3SwapPlugin} from "src/contracts/plugins/UniswapV3SwapPlugin.sol
 ///      - ROUTER_INTENT_SIGNER
 ///
 /// Optional env vars (deploys related components when present):
-///      - USDC, USDT
+///      - USDC
 ///      - TOKEN_MESSENGER
-///      - AXELAR_GAS_SERVICE, AXELAR_ITS
-///      - LZ_ENDPOINT, LZ_OFT
-///      - THOR_ROUTER
+///      - LZ_ENDPOINT
 ///      - EMPSEAL_ROUTER
 ///      - UNIV2_ROUTER
 ///      - UNIV3_ROUTER
@@ -64,7 +59,7 @@ contract DeployAll is ScriptBase {
         emit ScriptLogAddress("ReceiverV1", address(receiver));
         _deployPaymaster(owner);
         _deploySwapPlugins(owner);
-        _deployRailPlugins(owner, weth);
+        _deployRailPlugins(owner);
         _deployAdapters(owner, address(receiver));
 
         vm.stopBroadcast();
@@ -99,9 +94,8 @@ contract DeployAll is ScriptBase {
         }
     }
 
-    function _deployRailPlugins(address owner, address weth) internal {
+    function _deployRailPlugins(address owner) internal {
         address usdc = vm.envOr("USDC", address(0));
-        address usdt = vm.envOr("USDT", address(0));
         {
             address cctpUsdc = vm.envOr("CCTP_USDC", usdc);
             address tokenMessenger = vm.envOr("TOKEN_MESSENGER", address(0));
@@ -115,40 +109,15 @@ contract DeployAll is ScriptBase {
         }
 
         {
-            address axelarGasService = vm.envOr("AXELAR_GAS_SERVICE", address(0));
-            address axelarIts = vm.envOr("AXELAR_ITS", address(0));
-            if (axelarGasService != address(0) && axelarIts != address(0)) {
-                AxelarRailPlugin axelar = new AxelarRailPlugin(axelarGasService, axelarIts, owner);
-                emit ScriptLogAddress("AxelarRailPlugin", address(axelar));
-            }
-        }
-
-        {
             address lzEndpoint = vm.envOr("LZ_ENDPOINT", address(0));
             if (lzEndpoint != address(0)) {
                 LayerZeroRailPlugin layerZero = new LayerZeroRailPlugin(lzEndpoint, owner);
                 emit ScriptLogAddress("LayerZeroRailPlugin", address(layerZero));
             }
         }
-
-        {
-            address thorUsdc = vm.envOr("THOR_USDC", usdc);
-            address thorUsdt = vm.envOr("THOR_USDT", usdt);
-            address thorRouter = vm.envOr("THOR_ROUTER", address(0));
-            if (thorRouter != address(0) && thorUsdc != address(0) && thorUsdt != address(0)) {
-                THORChainRailPlugin thor = new THORChainRailPlugin(thorRouter, thorUsdc, weth, thorUsdt, owner);
-                emit ScriptLogAddress("THORChainRailPlugin", address(thor));
-            }
-        }
     }
 
     function _deployAdapters(address owner, address receiver) internal {
-        address axelarIts = vm.envOr("AXELAR_ITS", address(0));
-        if (axelarIts != address(0)) {
-            AxelarReceiverAdapter axAdapter = new AxelarReceiverAdapter(axelarIts, receiver, owner);
-            emit ScriptLogAddress("AxelarReceiverAdapter", address(axAdapter));
-        }
-
         address lzEndpoint = vm.envOr("LZ_ENDPOINT", address(0));
         if (lzEndpoint != address(0)) {
             LayerZeroReceiverAdapter lzAdapter =
