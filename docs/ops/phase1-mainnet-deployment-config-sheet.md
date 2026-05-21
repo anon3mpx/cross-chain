@@ -23,7 +23,7 @@ This sheet does not replace the full runbook. It is the phase-1 execution matrix
 
 Related docs:
 
-- [DEPLOYMENT.md](/Users/ganadhish/code/work/ruflo/DEPLOYMENT.md)
+- [DEPLOYMENT.md](/Users/ganadhish/code/work/ruflo/docs/root-notes/DEPLOYMENT.md)
 - [route-asset-deployment-runbook.md](/Users/ganadhish/code/work/ruflo/docs/ops/route-asset-deployment-runbook.md)
 - [chains.ts](/Users/ganadhish/code/work/ruflo/src/vps/config/chains.ts)
 - [routeExecution.ts](/Users/ganadhish/code/work/ruflo/src/vps/config/routeExecution.ts)

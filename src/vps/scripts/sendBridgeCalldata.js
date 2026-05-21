@@ -49,7 +49,7 @@ const LAYERZERO_ERRORS_IFACE = new Interface([
 
 function parseArgs(argv) {
   const args = {
-    file: 'bridge-calldata.md',
+    file: 'docs/root-notes/bridge-calldata.md',
     index: 0,
     value: undefined,
     to: undefined,
@@ -103,7 +103,7 @@ function printHelp() {
   node src/vps/scripts/sendBridgeCalldata.js [options]
 
 Options:
-  --file <path>         Markdown/notes file containing quote response (default: bridge-calldata.md)
+  --file <path>         Markdown/notes file containing quote response (default: docs/root-notes/bridge-calldata.md)
   --index <n>           Which integration payload to use from file (default: 0)
   --to <address>        Override destination contract address
   --data <hex>          Override calldata

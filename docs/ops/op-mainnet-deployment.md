@@ -7,7 +7,7 @@ It is derived from [phase1-mainnet-deployment-config-sheet.md](/Users/ganadhish/
 Related docs:
 
 - [phase1-mainnet-deployment-config-sheet.md](/Users/ganadhish/code/work/ruflo/docs/ops/phase1-mainnet-deployment-config-sheet.md)
-- [DEPLOYMENT.md](/Users/ganadhish/code/work/ruflo/DEPLOYMENT.md)
+- [DEPLOYMENT.md](/Users/ganadhish/code/work/ruflo/docs/root-notes/DEPLOYMENT.md)
 - [route-asset-deployment-runbook.md](/Users/ganadhish/code/work/ruflo/docs/ops/route-asset-deployment-runbook.md)
 - [chains.ts](/Users/ganadhish/code/work/ruflo/src/vps/config/chains.ts)
 - [routeExecution.ts](/Users/ganadhish/code/work/ruflo/src/vps/config/routeExecution.ts)

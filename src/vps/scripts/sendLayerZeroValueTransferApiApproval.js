@@ -3,13 +3,13 @@
 const { Contract, Interface, JsonRpcProvider, Wallet, formatUnits, isAddress } = require('ethers');
 
 // Replace these values from the LayerZero Value Transfer API approve userStep.
-const RPC_URL = 'https://mainnet.base.org';
-const EXPECTED_CHAIN_ID = 8453;
+const RPC_URL = '';
+const EXPECTED_CHAIN_ID = '';
 const PRIVATE_KEY = '';
 const OWNER_ADDRESS = '';
-const TOKEN_ADDRESS = '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913';
-const SPENDER_ADDRESS = '0x0000000000000000000000000000000000000000';
-const AMOUNT_RAW = '100000000';
+const TOKEN_ADDRESS = '';
+const SPENDER_ADDRESS = '';
+const AMOUNT_RAW = '';
 
 // Keep true until you have reviewed the printed transaction payload.
 const DRY_RUN = true;
