@@ -10,7 +10,7 @@ Related runtime registries:
 - [deploymentRegistry.ts](/Users/ganadhish/code/work/ruflo/src/vps/config/deploymentRegistry.ts)
 - [routeMetadata.ts](/Users/ganadhish/code/work/ruflo/src/vps/config/routeMetadata.ts)
 
-It is written to replace scattered chain-specific notes like `currentEnvOnBaseSepolia.md` and `currentEnvOnArbSepolia.md`.
+It is written to replace scattered chain-specific notes like `docs/root-notes/currentEnvOnBaseSepolia.md` and `docs/root-notes/currentEnvOnArbSepolia.md`.
 
 ## 1) Important: How These Scripts Read Env
 

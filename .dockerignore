@@ -7,7 +7,7 @@
 !config
 !config/docker
 !config/docker/Dockerfile
-!config/docker/docker-compose.testnet.yml
+!config/docker/docker-compose.yml
 !config/docker/package.json
 !config/docker/package-lock.json
 

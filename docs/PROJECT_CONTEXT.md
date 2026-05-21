@@ -81,7 +81,7 @@ Notes:
 ## Local Infra (Docker)
 
 ```bash
-docker compose -f config/docker/docker-compose.testnet.yml up --build -d
+docker compose -f config/docker/docker-compose.yml up --build -d
 curl http://localhost:8787/health
 ```
 

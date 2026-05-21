@@ -6,7 +6,7 @@ const { JsonRpcProvider, Wallet, getAddress } = require('ethers');
 
 function parseArgs(argv) {
   const args = {
-    file: 'thorchain-calldata.md',
+    file: 'docs/root-notes/thorchain-calldata.md',
     index: 0,
     to: undefined,
     data: undefined,
@@ -79,7 +79,7 @@ function printHelp() {
   node src/vps/scripts/sendThorchainTx.js [options]
 
 Options:
-  --file <path>         File containing /quote/select response (default: thorchain-calldata.md)
+  --file <path>         File containing /quote/select response (default: docs/root-notes/thorchain-calldata.md)
   --index <n>           Which integration.tx payload to use from file (default: 0)
   --to <address>        Override destination contract address
   --data <hex>          Override calldata
@@ -97,7 +97,7 @@ Options:
 
 Examples:
   node src/vps/scripts/sendThorchainTx.js --dry-run
-  node src/vps/scripts/sendThorchainTx.js --file thorchain-calldata.md
+  node src/vps/scripts/sendThorchainTx.js --file docs/root-notes/thorchain-calldata.md
   node src/vps/scripts/sendThorchainTx.js --status-api http://localhost:8787
   node src/vps/scripts/sendThorchainTx.js --notify-only --status-api http://localhost:8787 --tx-hash 0xabc...
 `);

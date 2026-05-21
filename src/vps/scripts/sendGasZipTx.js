@@ -9,13 +9,13 @@ const { JsonRpcProvider, Wallet } = require('ethers');
  * 2) Run: node src/vps/scripts/sendGasZipTx.js
  */
 
-const RPC_URL = 'https://mainnet.base.org';
+const RPC_URL = '';
 const PRIVATE_KEY = '';
 
-const CHAIN_ID = 8453;
-const TO = '0x391E7C679d29bD940d63be94AD22A25d25b5A604'; // Replace with actual recipient address
-const DATA = '0x010037'; // Replace with actual transaction data
-const VALUE_WEI = '8803568708006'; // Replace with actual value in wei
+const CHAIN_ID = '';
+const TO = ''; // Replace with actual recipient address
+const DATA = ''; // Replace with actual transaction data
+const VALUE_WEI = ''; // Replace with actual value in wei
 
 const DRY_RUN = false;
 
