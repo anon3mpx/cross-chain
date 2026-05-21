@@ -6,18 +6,25 @@ import {
     LayerZeroRailPlugin,
     ILayerZeroOFT,
     SendParam,
-    MessagingFee
+    MessagingFee,
+    MessagingReceipt,
+    OFTReceipt
 } from "../../src/contracts/rails/LayerZeroRailPlugin.sol";
 import {IntentTypes} from "../../src/contracts/interfaces/IIntentTypes.sol";
 
-contract MockUSDCLayerZero is ERC20 {
-    constructor() ERC20("Mock USDC", "mUSDC") {}
-    function decimals() public pure override returns (uint8) { return 6; }
+contract MockLayerZeroToken is ERC20 {
+    uint8 public immutable tokenDecimals;
+
+    constructor(string memory name_, string memory symbol_, uint8 _tokenDecimals) ERC20(name_, symbol_) {
+        tokenDecimals = _tokenDecimals;
+    }
+
+    function decimals() public view override returns (uint8) { return tokenDecimals; }
     function mint(address to, uint256 amount) external { _mint(to, amount); }
 }
 
 contract MockLayerZeroOFT is ILayerZeroOFT {
-    MockUSDCLayerZero public immutable usdc;
+    MockLayerZeroToken public immutable token;
     uint256 public nativeFee;
 
     uint32 public lastDstEid;
@@ -28,8 +35,8 @@ contract MockLayerZeroOFT is ILayerZeroOFT {
     uint256 public lastPaidNativeFee;
     bool public sendCalled;
 
-    constructor(address _usdc, uint256 _nativeFee) {
-        usdc = MockUSDCLayerZero(_usdc);
+    constructor(address _token, uint256 _nativeFee) {
+        token = MockLayerZeroToken(_token);
         nativeFee = _nativeFee;
     }
 
@@ -44,7 +51,7 @@ contract MockLayerZeroOFT is ILayerZeroOFT {
         SendParam calldata _sendParam,
         MessagingFee calldata _fee,
         address payable
-    ) external payable returns (bytes32 guid) {
+    ) external payable returns (MessagingReceipt memory receipt, OFTReceipt memory oftReceipt) {
         require(msg.value == _fee.nativeFee, "native fee mismatch");
 
         lastDstEid = _sendParam.dstEid;
@@ -55,46 +62,70 @@ contract MockLayerZeroOFT is ILayerZeroOFT {
         lastPaidNativeFee = msg.value;
         sendCalled = true;
 
-        usdc.transferFrom(msg.sender, address(this), _sendParam.amountLD);
-        guid = keccak256(abi.encodePacked(_sendParam.dstEid, _sendParam.to, _sendParam.amountLD));
+        token.transferFrom(msg.sender, address(this), _sendParam.amountLD);
+        receipt = MessagingReceipt({
+            guid: keccak256(abi.encodePacked(_sendParam.dstEid, _sendParam.to, _sendParam.amountLD)),
+            nonce: 1,
+            fee: _fee
+        });
+        oftReceipt = OFTReceipt({
+            amountSentLD: _sendParam.amountLD,
+            amountReceivedLD: _sendParam.amountLD
+        });
     }
 }
 
 contract LayerZeroRailPluginTest {
-    MockUSDCLayerZero private usdc;
+    MockLayerZeroToken private usdc;
+    MockLayerZeroToken private weth;
     MockLayerZeroOFT private oft;
+    MockLayerZeroOFT private wethOft;
     LayerZeroRailPlugin private plugin;
 
     uint32 private constant DST_CHAIN = 10;
     uint32 private constant DST_EID = 30111;
     uint256 private constant LZ_NATIVE_FEE = 0.005 ether;
+    uint8 private constant FAMILY_OFT = 0;
+    uint8 private constant FAMILY_OFT_ADAPTER = 1;
 
     function setUp() public {
-        usdc = new MockUSDCLayerZero();
+        usdc = new MockLayerZeroToken("Mock USDC", "mUSDC", 6);
+        weth = new MockLayerZeroToken("Mock WETH", "mWETH", 18);
         oft = new MockLayerZeroOFT(address(usdc), LZ_NATIVE_FEE);
-        plugin = new LayerZeroRailPlugin(address(usdc), address(0x9999), address(oft), address(this));
+        wethOft = new MockLayerZeroOFT(address(weth), LZ_NATIVE_FEE);
+        plugin = new LayerZeroRailPlugin(address(0x9999), address(this));
 
-        plugin.setRouteConfig(DST_CHAIN, DST_EID, address(0xBEEF), hex"01020304");
+        plugin.setFamilyRouteConfig(
+            DST_CHAIN,
+            FAMILY_OFT,
+            DST_EID,
+            address(0xBEEF),
+            hex"01020304",
+            address(usdc),
+            address(oft)
+        );
         usdc.mint(address(this), 1_000_000e6);
+        weth.mint(address(this), 1_000_000e18);
     }
 
     function testBridgeHappyPath() public {
         uint256 amount = 250e6;
+        bytes memory payload = _receiverPayload(
+            address(usdc),
+            _settlementAssetId(address(usdc)),
+            keccak256("intent-lz")
+        );
         usdc.approve(address(plugin), amount);
 
-        IntentTypes.BridgeParams memory params = IntentTypes.BridgeParams({
-            intentId: keccak256("intent-lz"),
-            settlementTokenAddr: address(usdc),
-            amount: amount,
-            dstChainId: DST_CHAIN,
-            dstReceiver: address(0xBEEF),
-            dstCalldata: hex"abcd",
-            gasForDst: 200_000,
-            finalRecipient: address(0xCAFE),
-            nativeDstAddress: bytes(""),
-            thorAssetIdentifier: "",
-            minThorOutput: 0
-        });
+        IntentTypes.BridgeParams memory params =
+            _bridgeParams(
+                address(usdc),
+                amount,
+                _settlementAssetId(address(usdc)),
+                keccak256("intent-lz"),
+                payload,
+                _railData(FAMILY_OFT, address(oft), hex"")
+            );
 
         bytes32 railTxId = plugin.bridge{value: LZ_NATIVE_FEE + 1 wei}(params);
 
@@ -103,25 +134,66 @@ contract LayerZeroRailPluginTest {
         _assertEq(oft.lastDstEid(), DST_EID, "dst eid mismatch");
         _assertEq(oft.lastTo(), bytes32(uint256(uint160(address(0xBEEF)))), "receiver bytes32 mismatch");
         _assertEq(oft.lastAmount(), amount, "amount mismatch");
+        _assertEq(oft.lastComposeHash(), keccak256(payload), "compose payload mismatch");
         _assertEq(oft.lastPaidNativeFee(), LZ_NATIVE_FEE, "native fee mismatch");
         _assertEq(keccak256(hex"01020304"), oft.lastOptionsHash(), "options mismatch");
         _assertEq(usdc.balanceOf(address(oft)), amount, "OFT did not receive funds");
     }
 
+    function testBridgeUsesDynamicOftRouteConfig() public {
+        uint256 amount = 2e18;
+        bytes32 settlementAssetId = _settlementAssetId(address(weth));
+        bytes memory payload = _receiverPayload(
+            address(weth),
+            settlementAssetId,
+            keccak256("intent-lz-weth")
+        );
+
+        plugin.setFamilyRouteConfig(
+            DST_CHAIN,
+            FAMILY_OFT_ADAPTER,
+            DST_EID,
+            address(0xBEEF),
+            hex"05060708",
+            address(weth),
+            address(wethOft)
+        );
+        weth.approve(address(plugin), amount);
+
+        IntentTypes.BridgeParams memory params =
+            _bridgeParams(
+                address(weth),
+                amount,
+                settlementAssetId,
+                keccak256("intent-lz-weth"),
+                payload,
+                _railData(FAMILY_OFT_ADAPTER, address(wethOft), hex"")
+            );
+
+        bytes32 railTxId = plugin.bridge{value: LZ_NATIVE_FEE}(params);
+
+        _assertTrue(railTxId != bytes32(0), "rail tx id is zero");
+        _assertTrue(wethOft.sendCalled(), "dynamic oft send not called");
+        _assertEq(wethOft.lastDstEid(), DST_EID, "dynamic dst eid mismatch");
+        _assertEq(wethOft.lastAmount(), amount, "dynamic amount mismatch");
+        _assertEq(wethOft.lastComposeHash(), keccak256(payload), "dynamic compose payload mismatch");
+        _assertEq(wethOft.lastPaidNativeFee(), LZ_NATIVE_FEE, "dynamic native fee mismatch");
+        _assertEq(keccak256(hex"05060708"), wethOft.lastOptionsHash(), "dynamic options mismatch");
+        _assertEq(weth.balanceOf(address(wethOft)), amount, "dynamic oft did not receive funds");
+    }
+
     function testBridgeRevertsWhenRouteMissing() public {
-        IntentTypes.BridgeParams memory params = IntentTypes.BridgeParams({
-            intentId: keccak256("intent-lz-2"),
-            settlementTokenAddr: address(usdc),
-            amount: 1e6,
-            dstChainId: 55555,
-            dstReceiver: address(0xBEEF),
-            dstCalldata: hex"",
-            gasForDst: 200_000,
-            finalRecipient: address(0xCAFE),
-            nativeDstAddress: bytes(""),
-            thorAssetIdentifier: "",
-            minThorOutput: 0
-        });
+        IntentTypes.BridgeParams memory params =
+            _bridgeParams(
+                address(usdc),
+                1e6,
+                _settlementAssetId(address(usdc)),
+                keccak256("intent-lz-2"),
+                hex"",
+                _railData(FAMILY_OFT, address(oft), hex"")
+            );
+        params.dstChainId = 55555;
+        params.dstCalldata = hex"";
 
         (bool ok, ) = address(plugin).call{value: LZ_NATIVE_FEE}(
             abi.encodeWithSelector(plugin.bridge.selector, params)
@@ -129,7 +201,139 @@ contract LayerZeroRailPluginTest {
         _assertTrue(!ok, "expected unsupported route revert");
     }
 
+    function testEstimateFeeRevertsWhenRouteFamilyMissing() public {
+        (bool ok, bytes memory data) = address(plugin).call(
+            abi.encodeWithSelector(
+                plugin.estimateFee.selector,
+                DST_CHAIN,
+                uint256(1e18),
+                address(weth),
+                _settlementAssetId(address(weth)),
+                uint256(200_000),
+                _railData(FAMILY_OFT_ADAPTER, address(wethOft), hex"")
+            )
+        );
+
+        _assertTrue(!ok, "expected estimate fee to revert");
+        _assertEqBytes4(
+            _errorSelector(data),
+            bytes4(keccak256("RouteFamilyNotConfigured(uint32,uint8)")),
+            "wrong revert selector"
+        );
+    }
+
+    function testBridgeRevertsWhenRouteAssetIdDoesNotMatchToken() public {
+        uint256 amount = 250e6;
+        bytes memory payload = _receiverPayload(
+            address(usdc),
+            _settlementAssetId(address(usdc)),
+            keccak256("intent-lz-bad-asset")
+        );
+        usdc.approve(address(plugin), amount);
+
+        IntentTypes.BridgeParams memory params =
+            _bridgeParams(
+                address(usdc),
+                amount,
+                _settlementAssetId(address(weth)),
+                keccak256("intent-lz-bad-asset"),
+                payload,
+                _railData(FAMILY_OFT, address(oft), hex"")
+            );
+
+        (bool ok, ) = address(plugin).call{value: LZ_NATIVE_FEE}(
+            abi.encodeWithSelector(plugin.bridge.selector, params)
+        );
+        _assertTrue(!ok, "expected route asset mismatch revert");
+    }
+
+    function testBridgeRevertsWhenRailDataOftDoesNotMatchConfiguredOft() public {
+        MockLayerZeroOFT rogueOft = new MockLayerZeroOFT(address(usdc), LZ_NATIVE_FEE);
+        plugin.setRouteConfig(DST_CHAIN, DST_EID, address(0xBEEF), hex"01020304", address(oft), address(usdc));
+
+        uint256 amount = 250e6;
+        bytes memory payload = _receiverPayload(
+            address(usdc),
+            _settlementAssetId(address(usdc)),
+            keccak256("intent-lz-rogue-oft")
+        );
+        usdc.approve(address(plugin), amount);
+
+        IntentTypes.BridgeParams memory params =
+            _bridgeParams(
+                address(usdc),
+                amount,
+                _settlementAssetId(address(usdc)),
+                keccak256("intent-lz-rogue-oft"),
+                payload,
+                _railData(FAMILY_OFT, address(rogueOft), hex"")
+            );
+
+        (bool ok, ) = address(plugin).call{value: LZ_NATIVE_FEE}(
+            abi.encodeWithSelector(plugin.bridge.selector, params)
+        );
+        _assertTrue(!ok, "expected unconfigured routeOft revert");
+    }
+
     receive() external payable {}
+
+    function _bridgeParams(
+        address settlementToken,
+        uint256 amount,
+        bytes32 settlementAssetId,
+        bytes32 intentId,
+        bytes memory dstCalldata,
+        bytes memory railData
+    ) internal pure returns (IntentTypes.BridgeParams memory) {
+        return IntentTypes.BridgeParams({
+            intentId: intentId,
+            routeTokenAddr: settlementToken,
+            amount: amount,
+            routeAssetId: settlementAssetId,
+            expectedDstRouteToken: address(0),
+            expectedDstRouteAssetId: bytes32(0),
+            minRouteAmount: 0,
+            dstChainId: DST_CHAIN,
+            railData: railData,
+            dstReceiver: address(0xBEEF),
+            dstCalldata: dstCalldata,
+            gasForDst: 200_000,
+            finalRecipient: address(0xCAFE),
+            nativeDstAddress: bytes(""),
+            thorAssetIdentifier: "",
+            minThorOutput: 0
+        });
+    }
+
+    function _receiverPayload(
+        address expectedSettlementToken,
+        bytes32 expectedSettlementAssetId,
+        bytes32 intentId
+    ) internal pure returns (bytes memory) {
+        return abi.encode(
+            intentId,
+            address(0x1111),
+            address(0x2222),
+            uint256(42),
+            expectedSettlementToken,
+            expectedSettlementAssetId,
+            uint256(1),
+            hex"1234",
+            bytes32(0)
+        );
+    }
+
+    function _railData(uint8 family, address routeOft, bytes memory optionsOverride)
+        internal
+        pure
+        returns (bytes memory)
+    {
+        return abi.encode(family, routeOft, optionsOverride);
+    }
+
+    function _settlementAssetId(address token) internal view returns (bytes32) {
+        return keccak256(abi.encode(block.chainid, token));
+    }
 
     function _assertEq(uint256 a, uint256 b, string memory err) internal pure {
         require(a == b, err);
@@ -137,6 +341,17 @@ contract LayerZeroRailPluginTest {
 
     function _assertEq(bytes32 a, bytes32 b, string memory err) internal pure {
         require(a == b, err);
+    }
+
+    function _assertEqBytes4(bytes4 a, bytes4 b, string memory err) internal pure {
+        require(a == b, err);
+    }
+
+    function _errorSelector(bytes memory data) internal pure returns (bytes4 selector) {
+        require(data.length >= 4, "missing selector");
+        assembly {
+            selector := mload(add(data, 32))
+        }
     }
 
     function _assertTrue(bool ok, string memory err) internal pure {

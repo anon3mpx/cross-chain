@@ -1,0 +1,123 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: empx-cross-chain-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: empx-cross-chain
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+    ports:
+      - "5432:5432"
+    volumes:
+      - empx-cross-chain_pg_data:/var/lib/postgresql/data
+      - ../../src/vps/db/schema.sql:/docker-entrypoint-initdb.d/001_schema.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d empx-cross-chain"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  redis:
+    image: redis:7-alpine
+    container_name: empx-cross-chain-redis
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  api:
+    image: empx-cross-chain-vps:${IMAGE_TAG:-local}
+    build:
+      context: ../..
+      dockerfile: config/docker/Dockerfile
+    container_name: empx-cross-chain-api
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    env_file:
+      - path: ../../.env
+        required: false
+    environment:
+      DATABASE_URL: postgres://postgres:postgres@postgres:5432/empx-cross-chain
+      REDIS_URL: redis://redis:6379
+      REDIS_ENABLED: "${REDIS_ENABLED:-true}"
+      ENABLE_PARTNER_API: "${API_ENABLE_PARTNER_API:-false}"
+      ENABLE_EVENT_MONITOR: "${API_ENABLE_EVENT_MONITOR:-false}"
+      ENABLE_RECOVERY_ENGINE: "${API_ENABLE_RECOVERY_ENGINE:-false}"
+      ENABLE_CCTP_RELAY: "${API_ENABLE_CCTP_RELAY:-false}"
+      VPS_JSON_LIMIT: "${VPS_JSON_LIMIT:-32kb}"
+      VPS_RATE_LIMIT_STORE: "${VPS_RATE_LIMIT_STORE:-redis}"
+      VPS_RATE_LIMIT_REDIS_PREFIX: "${VPS_RATE_LIMIT_REDIS_PREFIX:-empx-cross-chain:rate-limit:local}"
+      VPS_RATE_LIMIT_WINDOW_MS: "${VPS_RATE_LIMIT_WINDOW_MS:-60000}"
+      VPS_RATE_LIMIT_MAX: "${VPS_RATE_LIMIT_MAX:-120}"
+      VPS_QUOTE_RATE_LIMIT_WINDOW_MS: "${VPS_QUOTE_RATE_LIMIT_WINDOW_MS:-60000}"
+      VPS_QUOTE_RATE_LIMIT_MAX: "${VPS_QUOTE_RATE_LIMIT_MAX:-20}"
+    command: ["npm", "run", "vps:api"]
+    ports:
+      - "8787:8787"
+
+  worker:
+    image: empx-cross-chain-vps:${IMAGE_TAG:-local}
+    build:
+      context: ../..
+      dockerfile: config/docker/Dockerfile
+    container_name: empx-cross-chain-worker
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      api:
+        condition: service_started
+    env_file:
+      - path: ../../.env
+        required: false
+    environment:
+      DATABASE_URL: postgres://postgres:postgres@postgres:5432/empx-cross-chain
+      REDIS_URL: redis://redis:6379
+      REDIS_ENABLED: "${REDIS_ENABLED:-true}"
+      ENABLE_PARTNER_API: "${WORKER_ENABLE_PARTNER_API:-false}"
+      ENABLE_EVENT_MONITOR: "${WORKER_ENABLE_EVENT_MONITOR:-true}"
+      ENABLE_RECOVERY_ENGINE: "${WORKER_ENABLE_RECOVERY_ENGINE:-true}"
+      RPC_POLLING_INTERVAL_MS: "${RPC_POLLING_INTERVAL_MS:-4000}"
+      RECOVERY_INTERVAL_MS: "${RECOVERY_INTERVAL_MS:-30000}"
+      ENABLE_CCTP_RELAY: "${WORKER_ENABLE_CCTP_RELAY:-true}"
+    command: ["npm", "run", "vps:worker"]
+
+  adminer:
+    image: adminer:latest
+    container_name: empx-cross-chain-adminer
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    ports:
+      - "8080:8080"
+    environment:
+      ADMINER_DEFAULT_SERVER: postgres
+
+  swagger-ui:
+    image: swaggerapi/swagger-ui
+    container_name: empx-cross-chain-swagger-ui
+    restart: unless-stopped
+    depends_on:
+      api:
+        condition: service_started
+    ports:
+      - "8081:8080"
+    environment:
+      SWAGGER_JSON: /workspace/openapi.json
+    volumes:
+      - ../..:/workspace:ro
+
+volumes:
+  empx-cross-chain_pg_data:

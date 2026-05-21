@@ -62,7 +62,8 @@ Required engineering tasks:
 5. Fill env-backed contract and token addresses.
    - `CHAIN_<id>_ROUTER_V1`
    - `CHAIN_<id>_RECEIVER_V1`
-   - `CHAIN_<id>_TOKEN_USDC|USDT|ETH`
+   - Preferred: `CHAIN_<id>_TOKEN_<RAIL>_<TOKEN>` (for example `CHAIN_<id>_TOKEN_CCTP_USDC`, `CHAIN_<id>_TOKEN_AXELAR_USDC`)
+   - Legacy fallback: `CHAIN_<id>_TOKEN_USDC|USDT|ETH`
    - Optional `CHAIN_<id>_SWAP_PLUGIN_ID`
 6. Add rail kill-switch config.
    - Global and per-chain/per-rail switches used by route builder.

@@ -13,10 +13,12 @@ export enum SettlementToken {
 export enum Rail {
   // ── Messaging rails (bridge-based, ReceiverV1 on destination) ─────────────
   CCTP      = 'CCTP',       // Free, native USDC, ~25s. EVM + Solana.
+  CCTP_FAST = 'CCTP_FAST',  // $5-10, native USDC, ~15s. EVM only, CCTP fast liquidity pool.
   AXELAR    = 'AXELAR',     // $0.50, 60+ chains, GMP + tokens
   LAYERZERO = 'LAYERZERO',  // $0.35, 80+ chains, configurable DVN
   VIA_LABS  = 'VIA_LABS',   // $0.25, 30+ chains, API-first
   WORMHOLE  = 'WORMHOLE',   // EVM↔SVM SPL tokens + NTT, 30+ chains
+  GASZIP    = 'GASZIP',     // Provider-direct destination native gas delivery via Gas.zip API
 
   // ── Liquidity rail (AMM-based, direct native delivery, no ReceiverV1) ─────
   THORCHAIN = 'THORCHAIN',  // Free+slip, native BTC/ETH/SOL/DOGE/AVAX/BSC/BASE
@@ -24,7 +26,7 @@ export enum Rail {
 
 // ── Rail category helpers ──────────────────────────────────────────────────────
 export const LIQUIDITY_RAILS = new Set([Rail.THORCHAIN]);
-export const MESSAGING_RAILS = new Set([Rail.CCTP, Rail.AXELAR, Rail.LAYERZERO, Rail.VIA_LABS, Rail.WORMHOLE]);
+export const MESSAGING_RAILS = new Set([Rail.CCTP, Rail.CCTP_FAST, Rail.AXELAR, Rail.LAYERZERO, Rail.VIA_LABS, Rail.WORMHOLE, Rail.GASZIP]);
 
 // ── Non-EVM pseudo chain IDs (used internally, never on-chain) ────────────────
 export const CHAIN_ID = {
@@ -58,6 +60,7 @@ export type ChainId = typeof CHAIN_ID[keyof typeof CHAIN_ID];
 export enum IntentStatus {
   CREATED              = 'CREATED',
   QUOTED               = 'QUOTED',
+  CANCELLED            = 'CANCELLED',
   SUBMITTED            = 'SUBMITTED',
   IN_TRANSIT           = 'IN_TRANSIT',
   DESTINATION_RECEIVED = 'DESTINATION_RECEIVED',
@@ -65,6 +68,34 @@ export enum IntentStatus {
   STUCK                = 'STUCK',
   RECOVERING           = 'RECOVERING',
   FAILED               = 'FAILED',
+}
+
+export enum RefundCaseStatus {
+  REQUESTED    = 'REQUESTED',
+  UNDER_REVIEW = 'UNDER_REVIEW',
+  APPROVED     = 'APPROVED',
+  REJECTED     = 'REJECTED',
+  PROCESSING   = 'PROCESSING',
+  COMPLETED    = 'COMPLETED',
+}
+
+export enum RefundResolutionKind {
+  ONCHAIN_RESCUE       = 'ONCHAIN_RESCUE',
+  OFFCHAIN_COMPENSATION = 'OFFCHAIN_COMPENSATION',
+  PROTOCOL_RECOVERY    = 'PROTOCOL_RECOVERY',
+}
+
+export enum RefundCustodyLocation {
+  UNKNOWN            = 'UNKNOWN',
+  ROUTER             = 'ROUTER',
+  RECEIVER           = 'RECEIVER',
+  AXELAR_ADAPTER     = 'AXELAR_ADAPTER',
+  LAYERZERO_ADAPTER  = 'LAYERZERO_ADAPTER',
+  THORCHAIN_ROUTER   = 'THORCHAIN_ROUTER',
+  CCTP_PROTOCOL      = 'CCTP_PROTOCOL',
+  AXELAR_PROTOCOL    = 'AXELAR_PROTOCOL',
+  LAYERZERO_PROTOCOL = 'LAYERZERO_PROTOCOL',
+  EXTERNAL_PROTOCOL  = 'EXTERNAL_PROTOCOL',
 }
 
 export interface ChainConfig {
@@ -105,7 +136,15 @@ export interface QuoteRequest {
   dstChainId:   number;
   userAddress:  string;
   nativeDstAddress?: string;  // Required for BTC/SOL destinations
+  destinationGas?: DestinationGasRequest[];
   urgency?:     'fast' | 'normal';
+}
+
+export interface DestinationGasRequest {
+  provider?: 'gaszip';
+  chainId: number;
+  amountWei: string;
+  recipient?: string;
 }
 
 export interface QuoteResult {
@@ -117,14 +156,22 @@ export interface QuoteResult {
   amountIn:          bigint;
   estimatedOut:      bigint;
   minAmountOut:      bigint;
+  minSrcSwapOut:     bigint;
   feeAmountUSD:      number;
   feeAmountToken:    bigint;
   rail:              Rail;
   railType:          'messaging' | 'liquidity';
   settlementToken:   SettlementToken;
+  routeAsset?:       RouteAssetRef;
+  settlementAssetId: string;    // bytes32-like provider/canonical asset id for source settlement
+  expectedDstSettlementToken: string; // destination settlement token expected by ReceiverV1
+  expectedDstSettlementAssetId: string; // bytes32-like expected destination settlement asset id
+  minSettlementAmount: bigint;  // min settlement amount required before destination execution
+  dstGasLimit:        number;   // destination execution gas budget for messaging rails
   etaSeconds:        number;
   expiresAt:         number;
   railPluginId:      string;
+  railData:          string;    // ABI-encoded rail params (e.g. CCTP fast maxFee/finality)
   swapPluginIdSrc:   string;
   swapPluginIdDst:   string;
   swapDataSrc:       string;
@@ -132,8 +179,122 @@ export interface QuoteResult {
   // THORChain-specific
   thorAsset?:        string;    // e.g. "BTC.BTC", "SOL.SOL"
   minThorOutput?:    bigint;    // 8-decimal THORChain units
+  layerZeroValueTransferApiQuoteId?: string; // LayerZero Value Transfer API quote/transfer id
+  layerZeroValueTransferApiRouteSteps?: unknown[];
+  layerZeroValueTransferApiUserSteps?: unknown[];
   nativeDstAddress?: string;    // User's BTC/SOL/DOGE address
+  selectedByUser?:   boolean;   // true when intent came from explicit offer selection
 }
+
+export interface ProviderAssetRef {
+  canonicalAssetId: string;
+  providerAssetId: string;
+  tokenAddress?: string;
+  srcTokenAddress?: string;
+  dstTokenAddress?: string;
+  decimals: number;
+  assetKind: 'erc20' | 'native' | 'btc' | 'sol' | 'doge' | 'cosmos';
+  assetStandard?: 'erc20' | 'native' | 'oft' | 'oft_adapter' | 'stargate_pool' | 'stargate_oft' | 'thor_native';
+}
+
+export type RailOfferType =
+  | 'cctp_standard'
+  | 'cctp_fast'
+  | 'axelar_direct'
+  | 'axelar_dst_swap'
+  | 'lz_oft'
+  | 'lz_oft_adapter'
+  | 'lz_stargate_pool'
+  | 'lz_stargate_oft'
+  | 'lz_api_direct'
+  | 'gaszip_api_direct'
+  | 'thor_api_direct';
+
+export type DeliveryShape =
+  | 'direct'
+  | 'src_swap_required'
+  | 'dst_swap_required'
+  | 'src_and_dst_swap_required';
+
+export type ExecutionMode = 'router_intent' | 'provider_direct';
+
+export type RouteAssetRef = ProviderAssetRef;
+
+export interface OfferEconomics {
+  providerFeeUSD: number;
+  protocolFeeUSD: number;
+  sourceGasUSD: number;
+  destinationGasUSD?: number;
+  outboundFeeUSD?: number;
+  slippageBps?: number;
+  priceImpactPct?: number;
+  settlementTimeSeconds: number;
+  minimumInput?: string;
+}
+
+export interface RailOffer {
+  offerId: string;
+  rail: Rail;
+  offerType?: RailOfferType;
+  railType: 'messaging' | 'liquidity';
+  srcChainId: number;
+  dstChainId: number;
+  tokenIn: string;
+  tokenOut: string;
+  amountIn: bigint;
+  estimatedOut: bigint;
+  minAmountOut: bigint;
+  expiresAt: number;
+  deliveryShape?: DeliveryShape;
+  executionMode?: ExecutionMode;
+  routeAsset?: RouteAssetRef;
+  sourceSettlementAsset: ProviderAssetRef;
+  destinationSettlementAsset: ProviderAssetRef;
+  economics: OfferEconomics;
+  execution: Record<string, unknown>;
+}
+
+export interface OfferSet {
+  offerSetId: string;
+  expiresAt: number;
+  offers: RailOffer[];
+  bestOfferId?: string;
+}
+
+export interface GasZipCompositionStep {
+  step: number;
+  offerId: string;
+  rail: Rail;
+  executionMode?: ExecutionMode;
+  label: 'primary_transfer' | 'gaszip_destination_gas';
+}
+
+export interface GasZipOfferComposition {
+  kind: 'primary_transfer_with_gaszip_destination_gas';
+  primaryTransferOfferId: string;
+  gasZipDestinationGasOfferId: string;
+  primaryTransferOffer: RailOffer;
+  gasZipDestinationGasOffer: RailOffer;
+  executionPlan: GasZipCompositionStep[];
+  uxHints: {
+    destinationGasProvider: 'gaszip';
+    destinationGasIncluded: true;
+    recommendedExecution: 'primary_then_gas';
+    atomic: false;
+  };
+}
+
+export type ComposedIntentStatus =
+  | 'QUOTED'
+  | 'SUBMITTED'
+  | 'IN_TRANSIT'
+  | 'PARTIALLY_SETTLED'
+  | 'SETTLED'
+  | 'STUCK'
+  | 'RECOVERING'
+  | 'PARTIALLY_FAILED'
+  | 'FAILED'
+  | 'CANCELLED';
 
 export interface Intent {
   intentId:         string;
@@ -151,10 +312,67 @@ export interface Intent {
   partnerApiKey?:   string;
 }
 
+export interface IntentRefundCase {
+  intentId: string;
+  status: RefundCaseStatus;
+  reason: string;
+  requestedBy?: string;
+  requestedAt: number;
+  updatedAt: number;
+  reviewedBy?: string;
+  reviewedAt?: number;
+  reviewNotes?: string;
+  adminNotes?: string;
+  custodyLocation: RefundCustodyLocation;
+  resolutionKind?: RefundResolutionKind;
+  rescueContract?: string;
+  rescueToken?: string;
+  rescueAmount?: string;
+  rescueTxHash?: string;
+  payoutAddress?: string;
+  payoutTxHash?: string;
+}
+
+export type ProviderTransferProvider = 'layerzero_value_transfer_api' | 'thorchain_api';
+
+export type ProviderTransferStatus =
+  | 'CREATED'
+  | 'USER_STEPS_BUILT'
+  | 'SUBMITTED'
+  | 'IN_TRANSIT'
+  | 'SETTLED'
+  | 'FAILED'
+  | 'EXPIRED';
+
+export interface ProviderTransfer {
+  intentId: string;
+  provider: ProviderTransferProvider;
+  providerQuoteId: string;
+  status: ProviderTransferStatus;
+  sourceTxHash?: string;
+  sourceSignature?: string;
+  destinationTxHash?: string;
+  latestProviderStatus?: string;
+  routeStepTypes: string[];
+  metadata: Record<string, unknown>;
+  rawErrorPayload?: unknown;
+  lastPolledAt?: number;
+  createdAt: number;
+  updatedAt: number;
+}
+
+export type ProviderTransferUpsert = Omit<Partial<ProviderTransfer>, 'intentId' | 'provider' | 'providerQuoteId' | 'createdAt' | 'updatedAt'> & {
+  intentId: string;
+  provider: ProviderTransferProvider;
+  providerQuoteId: string;
+  status: ProviderTransferStatus;
+};
+
 export interface RailScore {
   rail:              Rail;
   config:            RailConfig;
   score:             number;
+  routeAssetAlias:   string;
   settlementToken:   SettlementToken;
   requiresTokenHop:  boolean;
 }
@@ -181,6 +399,7 @@ export interface Hop {
   rail:               Rail;
   srcChainId:         number;
   dstChainId:         number;
+  routeAssetAlias:    string;
   /** Settlement token entering this bridge leg (output of prior hop or src swap). */
   settlementTokenIn:  SettlementToken;
   /** Settlement token exiting this bridge leg (may differ if hub has aggregator). */

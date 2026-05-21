@@ -5,15 +5,16 @@
 import express, { Request, Response, NextFunction } from 'express';
 import { ApiKeyManager, PartnerTier } from '../services/ApiKeyManager';
 import { IntentEngine } from '../services/IntentEngine';
+import { IntentService } from '../services/IntentService';
 import { QuoteEngine } from '../services/QuoteEngine';
-import { getChainConfig } from '../config/chains';
-import { parseQuoteRequest, serializeQuote } from './quoteCodec';
-
-const ZERO_ADDR = '0x0000000000000000000000000000000000000000';
+import { buildSelectedOfferIntegration } from '../services/DirectRailIntegrationBuilder';
+import { Intent } from '../types';
+import { parseOfferSelection, parseQuoteRequest, serializeOfferSet, serializeQuote } from './quoteCodec';
+import { getRailVariantLabel } from '../rails/registry';
 
 export function buildPartnerAPI(
   keyManager: ApiKeyManager,
-  intentEngine: IntentEngine,
+  intentService: IntentService,
   quoteEngine: QuoteEngine,
 ): express.Router {
   const router = express.Router();
@@ -29,6 +30,9 @@ export function buildPartnerAPI(
     const partner = keyManager.registerPartner({
       name, contactEmail, payoutAddress, webhookUrl,
       tier: PartnerTier.FREE,
+      feeShareBps: 0,
+      quotesPerMin: 60,
+      maxTxPerDay: 500,
       active: true,
     });
     res.status(201).json({
@@ -80,47 +84,101 @@ export function buildPartnerAPI(
       }
       if (!quoteReq.userAddress) return res.status(400).json({ error: 'userAddress required' });
 
-      const quote = await quoteEngine.getQuote(quoteReq);
-      if (!quote) return res.status(400).json({ error: 'NO_ROUTE', message: 'No route available for this chain pair and token combination' });
-
-      const intent = intentEngine.create(quote, quoteReq.userAddress);
-      const { partnerRebate } = keyManager.splitFee(quote.feeAmountToken, check.partner);
-      const routerAddress = getRouterAddress(quote.srcChainId);
-      if (routerAddress === ZERO_ADDR) {
-        return res.status(503).json({
-          error: 'CHAIN_NOT_CONFIGURED',
-          message: `RouterV1 address missing for source chain ${quote.srcChainId}`,
-        });
+      const offerSet = await quoteEngine.getOffers(quoteReq);
+      if (!offerSet) {
+        return res.status(400).json({ error: 'NO_ROUTE', message: 'No route available for this chain pair and token combination' });
       }
+      const quote = await quoteEngine.getQuote(quoteReq);
+      const bestFeeAmountToken = quote?.feeAmountToken ?? 0n;
+      const { partnerRebate } = keyManager.splitFee(bestFeeAmountToken, check.partner);
 
       res.json({
-        intentId:   intent.intentId,
-        quote: serializeQuote(quote),
+        offerSet: serializeOfferSet(offerSet),
+        ...(quote ? { quote: serializeQuote(quote) } : {}),
         partnerEarnings: {
           rebatePerTx:   partnerRebate.toString(),
           feeShareBps:   check.partner.feeShareBps,
           claimableNow:  keyManager.getRebateSummary(apiKey).totalUSDC,
         },
-        integration: {
-          contractAddress: routerAddress,
-          calldata:        buildRouterCalldata(intent.intentId, serializeQuote(quote)),
-          value:           estimateNativeGas(quote),
-          expiresAt:       quote.expiresAt,
-        },
       });
     } catch (err) {
       const msg = String(err);
-      const code = msg.toLowerCase().includes('amountin') || msg.toLowerCase().includes('payload') ? 400 : 500;
+      const code = msg.toLowerCase().includes('amountin')
+        || msg.toLowerCase().includes('payload')
+        || msg.toLowerCase().includes('calldata')
+        || msg.toLowerCase().includes('routerv1')
+        ? 400
+        : 500;
+      res.status(code).json({ error: code === 400 ? 'INVALID_REQUEST' : 'INTERNAL', message: msg });
+    }
+  });
+
+  router.post('/quote/select', async (req: Request, res: Response) => {
+    const apiKey = (req as any).apiKey;
+    const check  = keyManager.validateKey(apiKey);
+    if (!check.allowed) {
+      return res.status(401).json({ error: check.reason });
+    }
+
+    try {
+      const { offerSetId, offerId } = parseOfferSelection(req.body);
+      const userAddress = typeof req.body?.userAddress === 'string' ? req.body.userAddress.trim() : '';
+      if (!userAddress) return res.status(400).json({ error: 'userAddress required' });
+
+      const selection = await quoteEngine.selectOffer(offerSetId, offerId);
+      if (!selection.offer) {
+        if (selection.fallbackOfferSet) {
+          return res.status(409).json({
+            error: 'OFFER_UNAVAILABLE',
+            message: 'Selected offer is unavailable. Please select a fallback offer.',
+            fallbackOfferSet: serializeOfferSet(selection.fallbackOfferSet),
+          });
+        }
+        return res.status(404).json({
+          error: selection.reason ?? 'OFFER_NOT_FOUND',
+          message: 'Offer selection is unavailable or expired.',
+        });
+      }
+
+      const intent = await intentService.createQuotedIntentFromOffer(selection.offer, userAddress, apiKey);
+      const { partnerRebate } = keyManager.splitFee(intent.quote.feeAmountToken, check.partner);
+      const selectedIntegration = await buildSelectedOfferIntegration(intent.intentId, selection.offer, userAddress);
+      const integration = selectedIntegration.mode === 'router_intent'
+        ? selectedIntegration.integration
+        : selectedIntegration;
+
+      res.json({
+        intentId: intent.intentId,
+        quote: serializeQuote(intent.quote),
+        partnerEarnings: {
+          rebatePerTx: partnerRebate.toString(),
+          feeShareBps: check.partner.feeShareBps,
+          claimableNow: keyManager.getRebateSummary(apiKey).totalUSDC,
+        },
+        integration,
+      });
+    } catch (err) {
+      const msg = String(err);
+      const code = msg.toLowerCase().includes('amountin')
+        || msg.toLowerCase().includes('payload')
+        || msg.toLowerCase().includes('calldata')
+        || msg.toLowerCase().includes('routerv1')
+        ? 400
+        : 500;
       res.status(code).json({ error: code === 400 ? 'INVALID_REQUEST' : 'INTERNAL', message: msg });
     }
   });
 
   // ── GET /partner/intent/:id ────────────────────────────────────────────────
-  router.get('/intent/:id', (req: Request, res: Response) => {
+  router.get('/intent/:id', async (req: Request, res: Response) => {
     const check = keyManager.validateKey((req as any).apiKey);
     if (!check.allowed) return res.status(401).json({ error: check.reason });
 
-    const intent = intentEngine.get(req.params.id);
+    const intentId = String(req.params.id);
+    const intent = await loadIntent(intentId);
+    if (intent === 'unavailable') {
+      return res.status(503).json({ error: 'STATUS_UNAVAILABLE' });
+    }
     if (!intent) return res.status(404).json({ error: 'NOT_FOUND' });
 
     res.json({
@@ -130,10 +188,15 @@ export function buildPartnerAPI(
       dstTxHash:   intent.dstTxHash,
       railTxId:    intent.railTxId,
       rail:        intent.quote.rail,
+      railVariant: getRailVariantLabel(intent.quote.rail, intent.quote.railPluginId),
       etaSeconds:  intent.quote.etaSeconds,
       settled:     intent.status === 'SETTLED',
-      failed:      intent.status === 'FAILED',
+      failed:      intent.status === 'FAILED' || intent.status === 'CANCELLED',
       errorMessage: intent.errorMessage,
+      canCancel:   intentService.canCancel(intent.status),
+      canCancelInWallet: intent.status === 'SUBMITTED' && Boolean(intent.srcTxHash),
+      canRequestRefund: intentService.canRequestRefund(intent.status),
+      refund:      await intentService.getRefundCase(intent.intentId),
     });
   });
 
@@ -202,6 +265,15 @@ export function buildPartnerAPI(
   });
 
   return router;
+
+  async function loadIntent(intentId: string): Promise<Intent | 'unavailable' | undefined> {
+    try {
+      return (await intentService.getIntent(intentId)) ?? undefined;
+    } catch (err) {
+      console.error(`[PartnerAPI] failed to load intent ${intentId}`, err);
+      return 'unavailable';
+    }
+  }
 }
 
 // ── Webhook push helper ────────────────────────────────────────────────────────
@@ -240,12 +312,3 @@ const LIMIT_MESSAGES: Record<string, string> = {
   DAILY_LIMIT:    'Daily transaction limit reached. Resets at UTC midnight or upgrade.',
   ABUSE_DETECTED: 'Unusual quote pattern detected. Contact support if this is in error.',
 };
-
-// ── Stubs ──────────────────────────────────────────────────────────────────────
-function getRouterAddress(chainId: number): string {
-  return getChainConfig(chainId)?.routerV1 ?? ZERO_ADDR;
-}
-function buildRouterCalldata(_intentId: string, _quote: any): string {
-  return '0x'; // TODO: encode RouterV1.initiateSwap(intent, swapPluginId, railPluginId)
-}
-function estimateNativeGas(_quote: any): string { return '0'; }

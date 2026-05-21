@@ -22,15 +22,14 @@
 //  All messaging-rail routes are evaluated in parallel with THORChain routes.
 // ─────────────────────────────────────────────────────────
 
-import {
-  Rail, SettlementToken, Route, RouteType, Hop,
-} from '../types';
-import { RAIL_CONFIGS, CHAIN_RAILS, RailSelector } from './RailSelector';
+import { SettlementToken, Route, RouteType, Hop } from '../types';
+import { RailSelector } from './RailSelector';
 import { getChainConfig, hasAggregator, HUB_CHAIN_IDS } from '../config/chains';
+import { getChainRails, getRailConfig } from '../rails/registry';
 
 // ── Route scoring ──────────────────────────────────────────────────────────────
-// Composite score for the full route (all hops combined).
-// Multi-hop routes are penalised for added complexity and latency.
+// Composite score for route ordering only. Lower layers now materialize every
+// viable direct route into an offer instead of collapsing to a single winner.
 function scoreRoute(
   totalFeeUSD: number,
   totalEtaSeconds: number,
@@ -54,7 +53,7 @@ function scoreRoute(
 // ── RouteBuilder ───────────────────────────────────────────────────────────────
 
 export class RouteBuilder {
-  private readonly selector = new RailSelector();
+  constructor(private readonly selector = new RailSelector()) {}
 
   /**
    * Build and rank all viable routes for a given chain pair.
@@ -83,7 +82,9 @@ export class RouteBuilder {
     // Deduplicate: same rail sequence + route type → keep best score
     const seen = new Map<string, Route>();
     for (const r of candidates) {
-      const key = r.hops.map(h => `${h.rail}:${h.srcChainId}>${h.dstChainId}`).join('|') + `|${r.routeType}`;
+      const key = r.hops
+        .map((h) => `${h.rail}:${h.srcChainId}>${h.dstChainId}:${h.routeAssetAlias}`)
+        .join('|') + `|${r.routeType}`;
       const existing = seen.get(key);
       if (!existing || r.score > existing.score) seen.set(key, r);
     }
@@ -103,42 +104,27 @@ export class RouteBuilder {
     amountUSD: number,
     urgency: 'fast' | 'normal',
   ): Route[] {
-    const srcRails = new Set(CHAIN_RAILS[srcChainId] ?? []);
-    const dstRails = new Set(CHAIN_RAILS[dstChainId] ?? []);
-    const shared   = [...srcRails].filter(r => dstRails.has(r));
-
-    if (shared.length === 0) return [];
-
     const dstChain = getChainConfig(dstChainId);
     const srcHasAgg = hasAggregator(srcChainId);
     const dstHasAgg = hasAggregator(dstChainId);
     const routeType = this._classifyRouteType(srcHasAgg, dstHasAgg);
+    const dstCfg = dstChain ?? { chainId: dstChainId, nativeStable: SettlementToken.USDC } as any;
+    const rankedRails = this.selector.selectRail(srcChainId, dstChainId, dstCfg, amountUSD, urgency);
+    if (rankedRails.length === 0) return [];
 
-    return shared.map(rail => {
-      const config    = RAIL_CONFIGS[rail];
-      const dstCfg    = dstChain ?? { chainId: dstChainId, nativeStable: SettlementToken.USDC } as any;
-      const railScore = this.selector.selectRail(srcChainId, dstChainId, dstCfg, amountUSD, urgency)
-                            .find(s => s.rail === rail);
-
-      const settlementToken = railScore?.settlementToken ?? SettlementToken.USDC;
+    return rankedRails.map((railScore) => {
+      const config = railScore.config;
+      const settlementToken = railScore.settlementToken;
 
       const hop: Hop = {
-        rail,
+        rail: railScore.rail,
         srcChainId,
         dstChainId,
+        routeAssetAlias:   railScore.routeAssetAlias,
         settlementTokenIn:  settlementToken,
         settlementTokenOut: settlementToken,
         hubSwapNeeded:      false,
       };
-
-      const score = scoreRoute(
-        config.fee,
-        config.etaSeconds,
-        config.reliabilityScore,
-        1,
-        urgency,
-        amountUSD,
-      );
 
       return {
         hops: [hop],
@@ -147,7 +133,7 @@ export class RouteBuilder {
         dstSwap: dstHasAgg,
         totalFeeUSD:     config.fee,
         totalEtaSeconds: config.etaSeconds,
-        score,
+        score: railScore.score,
         viable: true,
       } satisfies Route;
     });
@@ -172,13 +158,13 @@ export class RouteBuilder {
   ): Route[] {
     const routes: Route[] = [];
 
-    const srcRails = new Set(CHAIN_RAILS[srcChainId] ?? []);
-    const dstRails = new Set(CHAIN_RAILS[dstChainId] ?? []);
+    const srcRails = new Set(getChainRails(srcChainId));
+    const dstRails = new Set(getChainRails(dstChainId));
 
     for (const hubId of HUB_CHAIN_IDS) {
       if (hubId === srcChainId || hubId === dstChainId) continue;
 
-      const hubRails  = new Set(CHAIN_RAILS[hubId] ?? []);
+      const hubRails  = new Set(getChainRails(hubId));
       const leg1Rails = [...srcRails].filter(r => hubRails.has(r));
       const leg2Rails = [...hubRails].filter(r => dstRails.has(r));
 
@@ -198,14 +184,18 @@ export class RouteBuilder {
         for (const r2 of leg2Rails) {
           // Prefer not using the same rail twice when alternatives exist.
           if (r1 === r2 && leg1Rails.length > 1 && leg2Rails.length > 1) continue;
-          const c1 = RAIL_CONFIGS[r1];
-          const c2 = RAIL_CONFIGS[r2];
+          const c1 = getRailConfig(r1);
+          const c2 = getRailConfig(r2);
 
-          const st1 = leg1Scores.find(s => s.rail === r1)?.settlementToken ?? SettlementToken.USDC;
-          const st2 = leg2Scores.find(s => s.rail === r2)?.settlementToken ?? SettlementToken.USDC;
+          const leg1 = leg1Scores.find((s) => s.rail === r1);
+          const leg2 = leg2Scores.find((s) => s.rail === r2);
+          const asset1 = leg1?.routeAssetAlias ?? 'USDC';
+          const asset2 = leg2?.routeAssetAlias ?? 'USDC';
+          const st1 = leg1?.settlementToken ?? this._settlementTokenForRouteAssetAlias(asset1);
+          const st2 = leg2?.settlementToken ?? this._settlementTokenForRouteAssetAlias(asset2);
 
           // If settlement tokens differ across legs, hub aggregator must convert
-          const tokenMismatch  = st1 !== st2;
+          const tokenMismatch  = asset1 !== asset2;
           const hubSwapNeeded  = tokenMismatch;
 
           // A token mismatch without a hub aggregator makes the route non-viable
@@ -216,11 +206,13 @@ export class RouteBuilder {
 
           const hop1: Hop = {
             rail: r1, srcChainId, dstChainId: hubId,
+            routeAssetAlias: asset1,
             settlementTokenIn: st1, settlementTokenOut: st1,
             hubSwapNeeded: false,
           };
           const hop2: Hop = {
             rail: r2, srcChainId: hubId, dstChainId,
+            routeAssetAlias: asset2,
             settlementTokenIn: st2, settlementTokenOut: st2,
             hubSwapNeeded,
           };
@@ -283,11 +275,33 @@ export class RouteBuilder {
       case RouteType.FULL_SWAP:
         return `Full swap [${hops}] via ${rail}: any token in → any token out`;
       case RouteType.SRC_SWAP:
-        return `Source swap [${hops}] via ${rail}: any token in → deliver ${route.hops[route.hops.length - 1].settlementTokenOut}`;
+        return `Source swap [${hops}] via ${rail}: any token in → deliver ${route.hops[route.hops.length - 1].routeAssetAlias}`;
       case RouteType.DST_SWAP:
-        return `Destination swap [${hops}] via ${rail}: provide ${route.hops[0].settlementTokenIn} → any token out`;
+        return `Destination swap [${hops}] via ${rail}: provide ${route.hops[0].routeAssetAlias} → any token out`;
       case RouteType.BRIDGE_ONLY:
-        return `Bridge only [${hops}] via ${rail}: provide ${route.hops[0].settlementTokenIn} → receive ${route.hops[route.hops.length - 1].settlementTokenOut}`;
+        return `Bridge only [${hops}] via ${rail}: provide ${route.hops[0].routeAssetAlias} → receive ${route.hops[route.hops.length - 1].routeAssetAlias}`;
+    }
+  }
+
+  private _settlementTokenForRouteAssetAlias(routeAssetAlias: string): SettlementToken {
+    switch (routeAssetAlias.trim().toUpperCase()) {
+      case 'USDT':
+        return SettlementToken.USDT;
+      case 'ETH':
+      case 'WETH':
+      case 'ETH.ETH':
+      case 'DOGE':
+      case 'DOGE.DOGE':
+        return SettlementToken.ETH;
+      case 'BTC':
+      case 'BTC.BTC':
+        return SettlementToken.BTC;
+      case 'SOL':
+      case 'SOL.SOL':
+        return SettlementToken.SOL;
+      case 'USDC':
+      default:
+        return SettlementToken.USDC;
     }
   }
 }

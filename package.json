@@ -1,13 +1,39 @@
 {
   "scripts": {
+    "db:migrate": "tsx src/vps/db/migrate.ts",
     "sol:build": "forge build --config-path config/foundry.toml",
-    "sol:test": "forge test --config-path config/foundry.toml -vv"
+    "sol:test": "forge test --config-path config/foundry.toml -vv",
+    "sol:deploy:all": "set -a; [ -f .env ] && . ./.env; set +a; test -n \"$RPC_URL\" || (echo \"RPC_URL is required (set env or .env)\" && exit 1); forge script config/foundry/scripts/DeployAll.s.sol:DeployAll --config-path config/foundry.toml --rpc-url \"$RPC_URL\" --broadcast --slow -vvv",
+    "sol:deploy:oft": "set -a; [ -f .env ] && . ./.env; set +a; test -n \"$RPC_URL\" || (echo \"RPC_URL is required (set env or .env)\" && exit 1); forge script config/foundry/scripts/DeployOFT.s.sol:DeployOFT --config-path config/foundry.toml --rpc-url \"$RPC_URL\" --broadcast -vvv",
+    "sol:deploy:its": "set -a; [ -f .env ] && . ./.env; set +a; test -n \"$RPC_URL\" || (echo \"RPC_URL is required (set env or .env)\" && exit 1); forge script config/foundry/scripts/DeployITS.s.sol:DeployITS --config-path config/foundry.toml --rpc-url \"$RPC_URL\" --broadcast -vvv",
+    "sol:configure:all": "ENV_FILE=\"${FOUNDRY_ENV_FILE:-.env}\"; set -a; [ -f \"$ENV_FILE\" ] && . \"$ENV_FILE\"; set +a; test -n \"$RPC_URL\" || (echo \"RPC_URL is required (set env or $ENV_FILE)\" && exit 1); forge script config/foundry/scripts/ConfigureAll.s.sol:ConfigureAll --config-path config/foundry.toml --rpc-url \"$RPC_URL\" --broadcast --slow -vvv",
+    "vps:route-config-plan": "tsx src/vps/scripts/printRouteConfigPlan.ts",
+    "tx:send:calldata": "node src/vps/scripts/sendBridgeCalldata.js",
+    "tx:send:thor": "node src/vps/scripts/sendThorchainTx.js",
+    "vps:api": "tsx src/vps/app/api.ts",
+    "vps:worker": "tsx src/vps/app/worker.ts"
   },
   "devDependencies": {
     "@openzeppelin/contracts": "^5.6.1",
+    "@types/express": "^5.0.4",
+    "@types/pg": "^8.20.0",
+    "@types/ws": "^8.18.1",
+    "acorn": "^8.16.0",
+    "tsx": "^4.20.6",
     "typescript": "^6.0.2"
   },
   "dependencies": {
-    "agentic-flow": "^2.0.7"
+    "@layerzerolabs/lz-evm-messagelib-v2": "^3.0.168",
+    "@layerzerolabs/lz-evm-protocol-v2": "^3.0.168",
+    "@layerzerolabs/lz-evm-v1-0.7": "^3.0.168",
+    "@layerzerolabs/lz-v2-utilities": "^3.0.168",
+    "@layerzerolabs/oapp-evm": "^0.4.1",
+    "@layerzerolabs/oft-evm": "^4.0.1",
+    "agentic-flow": "^2.0.7",
+    "ethers": "^6.16.0",
+    "express": "^5.1.0",
+    "pg": "^8.20.0",
+    "redis": "^5.8.3",
+    "ws": "^8.18.3"
   }
 }

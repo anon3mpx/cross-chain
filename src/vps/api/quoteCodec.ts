@@ -1,6 +1,14 @@
-import { QuoteRequest, QuoteResult } from '../types';
+import { DestinationGasRequest, GasZipOfferComposition, OfferSet, QuoteRequest, QuoteResult } from '../types';
 
 type Json = null | boolean | number | string | Json[] | { [k: string]: Json };
+const EMPTY_TEXT_VALUES = new Set(['', 'undefined', 'null']);
+
+function parseOptionalText(raw: unknown): string | undefined {
+  if (raw === null || raw === undefined) return undefined;
+  const value = String(raw).trim();
+  if (EMPTY_TEXT_VALUES.has(value.toLowerCase())) return undefined;
+  return value;
+}
 
 function parseAmountIn(raw: unknown): bigint {
   if (typeof raw === 'bigint') {
@@ -35,13 +43,58 @@ export function parseQuoteRequest(input: any, defaultUrgency: 'fast' | 'normal' 
     srcChainId: Number(input.srcChainId),
     dstChainId: Number(input.dstChainId),
     userAddress: String(input.userAddress ?? ''),
-    nativeDstAddress: input.nativeDstAddress ? String(input.nativeDstAddress) : undefined,
+    nativeDstAddress: parseOptionalText(input.nativeDstAddress),
+    destinationGas: parseDestinationGasRequests(input.destinationGas),
     urgency: input.urgency ? urgency : defaultUrgency,
   };
 }
 
+function parseDestinationGasRequests(raw: unknown): DestinationGasRequest[] | undefined {
+  if (!Array.isArray(raw)) return undefined;
+
+  const parsed = raw.flatMap((entry) => {
+    if (!entry || typeof entry !== 'object') return [];
+    const item = entry as Record<string, unknown>;
+    const amountWei = parseOptionalText(item.amountWei);
+    const recipient = parseOptionalText(item.recipient);
+    const provider = parseOptionalText(item.provider);
+    const chainId = Number(item.chainId);
+
+    if (!Number.isFinite(chainId) || !amountWei) return [];
+
+    return [{
+      chainId,
+      amountWei,
+      recipient,
+      provider: provider === 'gaszip' ? 'gaszip' : undefined,
+    } satisfies DestinationGasRequest];
+  });
+
+  return parsed.length > 0 ? parsed : undefined;
+}
+
 export function serializeQuote(quote: QuoteResult): Json {
   return toJSONSafe(quote);
+}
+
+export function serializeOfferSet(offerSet: OfferSet): Json {
+  return toJSONSafe(offerSet);
+}
+
+export function serializeGasZipComposition(composition: GasZipOfferComposition): Json {
+  return toJSONSafe(composition);
+}
+
+export function parseOfferSelection(input: any): { offerSetId: string; offerId: string } {
+  if (!input || typeof input !== 'object') throw new Error('Invalid payload');
+
+  const offerSetId = parseOptionalText(input.offerSetId);
+  const offerId = parseOptionalText(input.offerId ?? input.selectedOfferId);
+
+  if (!offerSetId) throw new Error('offerSetId required');
+  if (!offerId) throw new Error('offerId required');
+
+  return { offerSetId, offerId };
 }
 
 export function toJSONSafe(value: unknown): Json {

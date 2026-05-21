@@ -17,7 +17,7 @@ import "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
 ///
 ///      Token → ETH rate is provided by our off-chain VPS signer (not on-chain oracle)
 ///      to keep gas costs low. The signer key is rotated regularly.
-contract RufloPaymaster is Ownable2Step, ReentrancyGuard {
+contract Paymaster is Ownable2Step, ReentrancyGuard {
     using SafeERC20 for IERC20;
 
     // EIP-4337 EntryPoint v0.7
@@ -48,6 +48,7 @@ contract RufloPaymaster is Ownable2Step, ReentrancyGuard {
     error GasLimitExceeded(uint256 limit, uint256 max);
     error InsufficientTokenBalance(address user, address token);
     error OnlyEntryPoint();
+    error TokenFeeExceedsMax(uint256 tokenFee, uint256 maxTokenFee);
 
     modifier onlyEntryPoint() {
         if (msg.sender != entryPoint) revert OnlyEntryPoint();
@@ -63,10 +64,8 @@ contract RufloPaymaster is Ownable2Step, ReentrancyGuard {
 
     /// @notice Called by EntryPoint before execution. Validates we'll cover the gas.
     /// @dev paymasterAndData layout:
-    ///        [0:20]  paymaster address (this contract)
-    ///        [20:40] token address (what user pays gas in)
-    ///        [40:72] maxTokenFee (uint256 — max we'll charge)
-    ///        [72:136] VPS signature (bytes32 r, bytes32 s, uint8 v) + expiry uint48
+    ///        [0:20] paymaster address (this contract)
+    ///        [20:]  abi.encode(token, maxTokenFee, signature, expiry)
     function validatePaymasterUserOp(
         UserOperation calldata userOp,
         bytes32 userOpHash,
@@ -88,12 +87,13 @@ contract RufloPaymaster is Ownable2Step, ReentrancyGuard {
         uint256 rate = tokenToEthRate[token];
         if (rate == 0) revert UnsupportedToken(token);
 
-        uint256 tokenFee = _ethToToken(maxCost, rate);
+        uint256 tokenFee = _ethToToken(maxCost * GAS_MARKUP_BPS / 10_000, rate);
+        if (tokenFee > maxTokenFee) revert TokenFeeExceedsMax(tokenFee, maxTokenFee);
         if (IERC20(token).balanceOf(userOp.sender) < tokenFee)
             revert InsufficientTokenBalance(userOp.sender, token);
 
         // Pass context to postOp
-        context = abi.encode(userOp.sender, token, tokenFee, rate);
+        context = abi.encode(userOp.sender, token, maxTokenFee, rate);
     }
 
     /// @notice Called by EntryPoint after execution. Collect token fee from user.
@@ -105,11 +105,12 @@ contract RufloPaymaster is Ownable2Step, ReentrancyGuard {
     ) external onlyEntryPoint {
         if (mode == PostOpMode.postOpReverted) return; // UserOp reverted — don't charge
 
-        (address user, address token, , uint256 rate) =
+        (address user, address token, uint256 maxTokenFee, uint256 rate) =
             abi.decode(context, (address, address, uint256, uint256));
 
         // Charge actual cost + markup (not the max quoted)
         uint256 actualTokenFee = _ethToToken(actualGasCost * GAS_MARKUP_BPS / 10_000, rate);
+        if (actualTokenFee > maxTokenFee) revert TokenFeeExceedsMax(actualTokenFee, maxTokenFee);
 
         // Pull token from user (they approved this contract in the UserOp batch)
         IERC20(token).safeTransferFrom(user, address(this), actualTokenFee);

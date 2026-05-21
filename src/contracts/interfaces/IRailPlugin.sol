@@ -16,20 +16,16 @@ interface IRailPlugin {
     /// @param dstChainId Destination EVM chain ID
     function supportsRoute(uint32 srcChainId, uint32 dstChainId) external view returns (bool);
 
-    /// @notice Returns the settlement token address this rail uses on this chain
-    /// @param settlementToken Enum value (USDC=0, USDT=1, ETH=2)
-    function settlementTokenAddress(uint8 settlementToken) external view returns (address);
-
-    /// @notice Returns true if this rail supports a given settlement token
-    function supportsSettlementToken(uint8 settlementToken) external view returns (bool);
-
     /// @notice Estimate bridge fee in native token (wei) for given params
     /// @return fee Estimated cost in native token
     /// @return eta Estimated seconds to destination settlement
     function estimateFee(
         uint32  dstChainId,
         uint256 amount,
-        uint8   settlementToken
+        address routeToken,
+        bytes32 routeAssetId,
+        uint256 dstGasLimit,
+        bytes calldata railData
     ) external view returns (uint256 fee, uint256 eta);
 
     /// @notice Execute the bridge transfer

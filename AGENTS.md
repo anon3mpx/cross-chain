@@ -1,4 +1,4 @@
-# ruflo
+# empx-cross-chain
 
 > Multi-agent orchestration framework for agentic coding
 

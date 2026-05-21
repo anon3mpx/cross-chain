@@ -8,11 +8,12 @@ import { Intent, IntentStatus, QuoteResult, Rail } from '../types';
 
 // Timeout thresholds per rail before marking STUCK
 const STUCK_THRESHOLDS_MS: Record<Rail, number> = {
-  [Rail.CCTP]:      3  * 60 * 1000,  // 3 min (normally 25s)
+  [Rail.CCTP]:      25  * 60 * 1000,  // 25 min (normally 25s)
   [Rail.VIA_LABS]:  8  * 60 * 1000,  // 8 min (normally 3 min)
-  [Rail.AXELAR]:    10 * 60 * 1000,  // 10 min (normally 90s)
+  [Rail.AXELAR]:    30 * 60 * 1000,  // 30 min (normally 90s)
   [Rail.LAYERZERO]: 10 * 60 * 1000,  // 10 min (normally 2 min)
   [Rail.WORMHOLE]:  10 * 60 * 1000,  // 10 min
+  [Rail.GASZIP]:    10 * 60 * 1000,  // provider-direct status polling
   [Rail.THORCHAIN]: 20 * 60 * 1000,  // 20 min incl. native-chain confirmation latency
 };
 
@@ -35,6 +36,12 @@ export class IntentEngine {
     };
     this.intents.set(intent.intentId, intent);
     this._emit(intent);
+    return intent;
+  }
+
+  upsert(intent: Intent, emit = false): Intent {
+    this.intents.set(intent.intentId, intent);
+    if (emit) this._emit(intent);
     return intent;
   }
 

@@ -1,5 +1,10 @@
-import { SettlementToken } from '../types';
+import { Rail, SettlementToken } from '../types';
 import { hasAggregator } from './chains';
+import { getRailEnvAliases } from '../rails/registry';
+import {
+  getDefaultRouteTokenAddress,
+  getRouteMetadataTokenAddress,
+} from './routeMetadata';
 
 const ZERO_ADDR = '0x0000000000000000000000000000000000000000';
 const BYTES32_RE = /^0x[0-9a-fA-F]{64}$/;
@@ -8,6 +13,10 @@ const ADDRESS_RE = /^0x[0-9a-fA-F]{40}$/;
 // EmpsealSwapPlugin.pluginId = keccak256("EMPSEAL_V1")
 const DEFAULT_EMPSEAL_SWAP_PLUGIN_ID =
   '0x62d69a2b9d5c124337a6d3df09e273f71aa045b7b8758c9c6695143a40ad10b6';
+const DEFAULT_UNIV2_SWAP_PLUGIN_ID =
+  '0xd7099269d6f03dcf43069b0eaaa4e0cf1c11e826eeb6895af3e6dc361969a8f7';
+const DEFAULT_UNIV3_SWAP_PLUGIN_ID =
+  '0xa24768123ec9aba5087758f18a2e2e881edf551d7c2f293a97823d0ae43308b4';
 
 function readEnv(key: string): string | undefined {
   const v = process.env[key];
@@ -34,12 +43,29 @@ function tokenEnvKey(chainId: number, token: SettlementToken): string {
 
 /**
  * Returns settlement token address on a given chain.
- * Expected env format: CHAIN_<chainId>_TOKEN_USDC / _USDT / _ETH.
+ * Resolution order:
+ * 1) CHAIN_<chainId>_TOKEN_<RAIL>_<TOKEN> (e.g. CHAIN_84532_TOKEN_AXELAR_USDC)
+ * 2) CHAIN_<chainId>_TOKEN_<TOKEN> (legacy fallback)
  */
 export function getSettlementTokenAddress(
   chainId: number,
   token: SettlementToken,
+  rail?: Rail,
 ): string | undefined {
+  if (rail) {
+    const configured = getRouteMetadataTokenAddress(chainId, rail, token);
+    if (configured) return asAddress(configured);
+  }
+
+  const defaultConfigured = getDefaultRouteTokenAddress(chainId, token);
+  if (defaultConfigured) return asAddress(defaultConfigured);
+
+  if (rail) {
+    for (const railName of getRailEnvAliases(rail)) {
+      const railScoped = asAddress(readEnv(`CHAIN_${chainId}_TOKEN_${railName}_${token}`));
+      if (railScoped) return railScoped;
+    }
+  }
   return asAddress(readEnv(tokenEnvKey(chainId, token)));
 }
 
@@ -51,6 +77,25 @@ export function getSettlementTokenAddress(
 export function getSwapPluginIdForChain(chainId: number): string | undefined {
   const configured = asBytes32(readEnv(`CHAIN_${chainId}_SWAP_PLUGIN_ID`));
   if (configured) return configured;
-  if (hasAggregator(chainId)) return DEFAULT_EMPSEAL_SWAP_PLUGIN_ID;
+  if (!hasAggregator(chainId)) return undefined;
+
+  const kind = getSwapPluginKindForChain(chainId);
+  if (kind === 'UNIV2' || kind === 'UNISWAP_V2') return DEFAULT_UNIV2_SWAP_PLUGIN_ID;
+  if (kind === 'UNIV3' || kind === 'UNISWAP_V3') return DEFAULT_UNIV3_SWAP_PLUGIN_ID;
+  if (kind === 'EMPSEAL') return DEFAULT_EMPSEAL_SWAP_PLUGIN_ID;
   return undefined;
+}
+
+export function getSwapPluginKindForChain(chainId: number): string | undefined {
+  if (!hasAggregator(chainId)) return undefined;
+  return (readEnv(`CHAIN_${chainId}_SWAP_PLUGIN_KIND`) ?? readEnv('DEFAULT_SWAP_PLUGIN_KIND') ?? 'EMPSEAL')
+    .trim()
+    .toUpperCase();
+}
+
+export function getEmpsealRouterAddressForChain(chainId: number): string | undefined {
+  return asAddress(
+    readEnv(`CHAIN_${chainId}_EMPSEAL_ROUTER`)
+    ?? readEnv(`CHAIN_${chainId}_DEX_EMPSEAL_ROUTER`)
+  );
 }

@@ -5,50 +5,126 @@ import "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import "@openzeppelin/contracts/access/Ownable2Step.sol";
 
 /// @title LayerZeroReceiverAdapter
-/// @notice Destination-side adapter that validates LayerZero peer metadata and
-///         forwards settlement + payload into ReceiverV1.execute().
+/// @notice Destination-side LayerZero OFT composer that validates compose
+///         metadata and forwards settlement + payload into ReceiverV1.execute().
 contract LayerZeroReceiverAdapter is Ownable2Step {
     using SafeERC20 for IERC20;
+
+    struct ReceiverPayload {
+        bytes32 intentId;
+        address user;
+        address tokenOut;
+        uint256 minAmountOut;
+        address expectedRouteToken;
+        bytes32 expectedRouteAssetId;
+        uint256 minRouteAmount;
+        bytes swapData;
+        bytes32 swapPluginId;
+    }
 
     address public immutable endpoint;
     address public immutable receiver;
 
-    // srcEid => trusted source OApp/adapter bytes32 address
+    // srcEid => trusted source composeFrom address bytes32.
     mapping(uint32 => bytes32) public trustedPeers;
+    // expected destination settlement asset => configured local settlement token.
+    mapping(bytes32 => address) public settlementTokenByAssetId;
+    // srcEid + expected destination settlement asset => expected compose sender (source OFT).
+    mapping(uint32 => mapping(bytes32 => address)) public expectedComposeSenders;
 
     event TrustedPeerSet(uint32 indexed srcEid, bytes32 indexed peer);
-    event LayerZeroMessageForwarded(uint32 indexed srcEid, bytes32 indexed sender, address token, uint256 amount);
+    event SettlementTokenSet(bytes32 indexed expectedSettlementAssetId, address indexed settlementToken);
+    event ExpectedComposeSenderSet(
+        uint32 indexed srcEid,
+        bytes32 indexed expectedSettlementAssetId,
+        address indexed composeSender
+    );
+    event LayerZeroMessageForwarded(
+        uint32 indexed srcEid,
+        bytes32 indexed composeFrom,
+        bytes32 indexed guid,
+        address token,
+        uint256 amount
+    );
 
     error UnauthorizedEndpoint(address caller);
-    error UntrustedPeer(uint32 srcEid, bytes32 sender, bytes32 expected);
+    error UnauthorizedComposeSender(address from, address expected);
+    error UntrustedPeer(uint32 srcEid, bytes32 composeFrom, bytes32 expected);
+    error UnexpectedSettlementToken(address received, address expected);
+    error UnexpectedSettlementAsset(bytes32 received, bytes32 expected);
+    error MalformedComposeMessage(uint256 length);
+    error UnsupportedSettlementAsset(bytes32 expectedRouteAssetId);
     error ZeroAddress(string field);
 
-    constructor(address _endpoint, address _receiver, address _owner) Ownable(_owner) {
+    constructor(
+        address _endpoint,
+        address _receiver,
+        address _owner
+    ) Ownable(_owner) {
         if (_endpoint == address(0)) revert ZeroAddress("endpoint");
         if (_receiver == address(0)) revert ZeroAddress("receiver");
         endpoint = _endpoint;
         receiver = _receiver;
     }
 
-    /// @notice Generic handler to be called by LayerZero endpoint / local OApp wrapper.
-    function lzReceive(
-        uint32 srcEid,
-        bytes32 sender,
-        address settlementToken,
-        uint256 amount,
-        bytes calldata payload
-    ) external {
-        if (msg.sender != endpoint) revert UnauthorizedEndpoint(msg.sender);
+    /// @notice Official LayerZero composer callback used by OFT/Stargate compose.
+    /// @dev The OFT sends settlement tokens to this adapter before the endpoint calls lzCompose.
+    function lzCompose(
+        address _from,
+        bytes32 _guid,
+        bytes calldata _message,
+        address _executor,
+        bytes calldata _extraData
+    ) external payable {
+        _executor;
+        _extraData;
 
+        if (msg.sender != endpoint) revert UnauthorizedEndpoint(msg.sender);
+        if (_message.length < OFTComposeMsgCodec.COMPOSE_MSG_OFFSET) {
+            revert MalformedComposeMessage(_message.length);
+        }
+
+        uint32 srcEid = OFTComposeMsgCodec.srcEid(_message);
+        bytes32 composeFrom = OFTComposeMsgCodec.composeFrom(_message);
         bytes32 expected = trustedPeers[srcEid];
-        if (expected == bytes32(0) || expected != sender) {
-            revert UntrustedPeer(srcEid, sender, expected);
+        if (expected == bytes32(0) || expected != composeFrom) {
+            revert UntrustedPeer(srcEid, composeFrom, expected);
+        }
+
+        uint256 amount = OFTComposeMsgCodec.amountLD(_message);
+        bytes calldata receiverPayload = OFTComposeMsgCodec.composeMsg(_message);
+
+        ReceiverPayload memory decoded = _decodeReceiverPayload(receiverPayload);
+        decoded.intentId;
+        decoded.user;
+        decoded.tokenOut;
+        decoded.minAmountOut;
+        decoded.minRouteAmount;
+        decoded.swapData;
+        decoded.swapPluginId;
+
+        if (decoded.expectedRouteToken == address(0)) revert ZeroAddress("expectedRouteToken");
+        address settlementToken = settlementTokenByAssetId[decoded.expectedRouteAssetId];
+        if (settlementToken == address(0)) {
+            revert UnsupportedSettlementAsset(decoded.expectedRouteAssetId);
+        }
+        address expectedOft = expectedComposeSenders[srcEid][decoded.expectedRouteAssetId];
+        if (expectedOft == address(0)) revert UnauthorizedComposeSender(_from, address(0));
+        if (_from != expectedOft) revert UnauthorizedComposeSender(_from, expectedOft);
+
+        if (settlementToken != decoded.expectedRouteToken) {
+            revert UnexpectedSettlementToken(settlementToken, decoded.expectedRouteToken);
+        }
+
+        bytes32 receivedRouteAssetId = keccak256(abi.encode(block.chainid, settlementToken));
+        if (receivedRouteAssetId != decoded.expectedRouteAssetId) {
+            revert UnexpectedSettlementAsset(receivedRouteAssetId, decoded.expectedRouteAssetId);
         }
 
         IERC20(settlementToken).safeTransfer(receiver, amount);
-        IReceiverExecutorLZ(receiver).execute(settlementToken, amount, payload);
+        IReceiverExecutorLZ(receiver).execute(settlementToken, amount, receiverPayload);
 
-        emit LayerZeroMessageForwarded(srcEid, sender, settlementToken, amount);
+        emit LayerZeroMessageForwarded(srcEid, composeFrom, _guid, settlementToken, amount);
     }
 
     function setTrustedPeer(uint32 srcEid, bytes32 peer) external onlyOwner {
@@ -56,8 +132,78 @@ contract LayerZeroReceiverAdapter is Ownable2Step {
         emit TrustedPeerSet(srcEid, peer);
     }
 
+    function setTrustedPeerAddress(uint32 srcEid, address peer) external onlyOwner {
+        bytes32 peerBytes32 = OFTComposeMsgCodec.addressToBytes32(peer);
+        trustedPeers[srcEid] = peerBytes32;
+        emit TrustedPeerSet(srcEid, peerBytes32);
+    }
+
+    function setSettlementToken(bytes32 expectedSettlementAssetId, address settlementToken) external onlyOwner {
+        if (settlementToken == address(0)) revert ZeroAddress("settlementToken");
+        settlementTokenByAssetId[expectedSettlementAssetId] = settlementToken;
+        emit SettlementTokenSet(expectedSettlementAssetId, settlementToken);
+    }
+
+    function setExpectedComposeSender(
+        uint32 srcEid,
+        bytes32 expectedSettlementAssetId,
+        address composeSender
+    ) external onlyOwner {
+        if (composeSender == address(0)) revert ZeroAddress("composeSender");
+        expectedComposeSenders[srcEid][expectedSettlementAssetId] = composeSender;
+        emit ExpectedComposeSenderSet(srcEid, expectedSettlementAssetId, composeSender);
+    }
+
     function rescueTokens(address token, uint256 amount) external onlyOwner {
         IERC20(token).safeTransfer(owner(), amount);
+    }
+
+    function _decodeReceiverPayload(bytes calldata receiverPayload)
+        internal
+        pure
+        returns (ReceiverPayload memory decoded)
+    {
+        (
+            decoded.intentId,
+            decoded.user,
+            decoded.tokenOut,
+            decoded.minAmountOut,
+            decoded.expectedRouteToken,
+            decoded.expectedRouteAssetId,
+            decoded.minRouteAmount,
+            decoded.swapData,
+            decoded.swapPluginId
+        ) = abi.decode(
+            receiverPayload,
+            (bytes32, address, address, uint256, address, bytes32, uint256, bytes, bytes32)
+        );
+    }
+}
+
+library OFTComposeMsgCodec {
+    uint256 internal constant NONCE_OFFSET = 8;
+    uint256 internal constant SRC_EID_OFFSET = 12;
+    uint256 internal constant AMOUNT_LD_OFFSET = 44;
+    uint256 internal constant COMPOSE_MSG_OFFSET = 76;
+
+    function srcEid(bytes calldata message) internal pure returns (uint32) {
+        return uint32(bytes4(message[NONCE_OFFSET:SRC_EID_OFFSET]));
+    }
+
+    function amountLD(bytes calldata message) internal pure returns (uint256) {
+        return uint256(bytes32(message[SRC_EID_OFFSET:AMOUNT_LD_OFFSET]));
+    }
+
+    function composeFrom(bytes calldata message) internal pure returns (bytes32) {
+        return bytes32(message[AMOUNT_LD_OFFSET:COMPOSE_MSG_OFFSET]);
+    }
+
+    function composeMsg(bytes calldata message) internal pure returns (bytes calldata) {
+        return message[COMPOSE_MSG_OFFSET:];
+    }
+
+    function addressToBytes32(address a) internal pure returns (bytes32) {
+        return bytes32(uint256(uint160(a)));
     }
 }
 
