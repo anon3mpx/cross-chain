@@ -52,7 +52,7 @@ docker compose -f config/docker/docker-compose.testnet.yml up --build -d
 3. API health:
 
 ```bash
-curl http://localhost:8787/health
+curl http://localhost:8787/api/v1/health
 ```
 
 ## 5) Quote + intent smoke tests
@@ -60,7 +60,7 @@ curl http://localhost:8787/health
 1. Request quote:
 
 ```bash
-curl -X POST http://localhost:8787/quote \\
+curl -X POST http://localhost:8787/api/v1/quote \\
   -H 'content-type: application/json' \\
   -d '{
     "srcChainId": 84532,
@@ -80,7 +80,7 @@ curl -X POST http://localhost:8787/quote \\
 4. Poll:
 
 ```bash
-curl http://localhost:8787/intent/<intentId>
+curl http://localhost:8787/api/v1/intent/<intentId>
 ```
 
 ## 6) Bidirectional mesh check (A↔B)

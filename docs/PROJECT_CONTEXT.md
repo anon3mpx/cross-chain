@@ -82,7 +82,7 @@ Notes:
 
 ```bash
 docker compose -f config/docker/docker-compose.yml up --build -d
-curl http://localhost:8787/health
+curl http://localhost:8787/api/v1/health
 ```
 
 ## VPS Runtime (without docker)
