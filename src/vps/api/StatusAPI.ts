@@ -148,11 +148,15 @@ function readIntEnv(name: string, fallback: number): number {
 }
 
 function clientKey(req: Request): string {
+  const cfConnectingIp = req.headers['cf-connecting-ip'];
+  const firstCfConnectingIp = Array.isArray(cfConnectingIp)
+    ? cfConnectingIp[0]
+    : cfConnectingIp;
   const forwardedFor = req.headers['x-forwarded-for'];
   const firstForwarded = Array.isArray(forwardedFor)
     ? forwardedFor[0]
     : forwardedFor?.split(',')[0];
-  return (firstForwarded || req.ip || req.socket.remoteAddress || 'unknown').trim();
+  return (firstCfConnectingIp || firstForwarded || req.ip || req.socket.remoteAddress || 'unknown').trim();
 }
 
 function buildRateLimitStore(): RateLimitStore {

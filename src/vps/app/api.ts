@@ -9,6 +9,18 @@ function readInt(name: string, fallback: number): number {
   return Number.isFinite(parsed) ? parsed : fallback;
 }
 
+function readTrustProxy(): boolean | number {
+  const raw = process.env.VPS_TRUST_PROXY;
+  if (!raw) return true;
+
+  const normalized = raw.trim().toLowerCase();
+  if (['1', 'true', 'yes', 'on'].includes(normalized)) return true;
+  if (['0', 'false', 'no', 'off'].includes(normalized)) return false;
+
+  const parsed = Number(raw);
+  return Number.isInteger(parsed) && parsed >= 0 ? parsed : true;
+}
+
 async function main(): Promise<void> {
   const runtime = await buildRuntime({
     enableEventMonitor: false,
@@ -16,6 +28,7 @@ async function main(): Promise<void> {
   });
 
   const app = buildStatusAPI(runtime.intentService, runtime.quoteEngine);
+  app.set('trust proxy', readTrustProxy());
   if (runtime.partnerApiRouter) {
     app.use('/partner', runtime.partnerApiRouter);
   }
