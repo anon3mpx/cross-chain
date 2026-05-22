@@ -8,7 +8,7 @@ services:
       POSTGRES_USER: postgres
       POSTGRES_PASSWORD: postgres
     ports:
-      - "5432:5432"
+      - "127.0.0.1:5432:5432"
     volumes:
       - empx-cross-chain_pg_data:/var/lib/postgresql/data
       - ../../src/vps/db/schema.sql:/docker-entrypoint-initdb.d/001_schema.sql:ro
@@ -23,7 +23,7 @@ services:
     container_name: empx-cross-chain-redis
     restart: unless-stopped
     ports:
-      - "6379:6379"
+      - "127.0.0.1:6379:6379"
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
       interval: 5s
@@ -62,7 +62,7 @@ services:
       VPS_QUOTE_RATE_LIMIT_MAX: "20"
     command: ["npm", "run", "vps:api"]
     ports:
-      - "8787:8787"
+      - "127.0.0.1:8787:8787"
 
   worker:
     image: empx-cross-chain-vps:testnet
@@ -101,7 +101,7 @@ services:
       postgres:
         condition: service_healthy
     ports:
-      - "8080:8080"
+      - "127.0.0.1:8080:8080"
     environment:
       ADMINER_DEFAULT_SERVER: postgres
 
@@ -113,11 +113,34 @@ services:
       api:
         condition: service_started
     ports:
-      - "8081:8080"
+      - "127.0.0.1:8081:8080"
     environment:
       SWAGGER_JSON: /workspace/openapi.json
     volumes:
       - ../..:/workspace:ro
 
+  caddy:
+    image: caddy:2-alpine
+    container_name: empx-cross-chain-caddy
+    restart: unless-stopped
+    profiles: ["edge"]
+    depends_on:
+      api:
+        condition: service_started
+    env_file:
+      - path: ../../.env
+        required: false
+    environment:
+      API_DOMAIN: "${API_DOMAIN:-localhost}"
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - empx-cross-chain_caddy_data:/data
+      - empx-cross-chain_caddy_config:/config
+
 volumes:
   empx-cross-chain_pg_data:
+  empx-cross-chain_caddy_data:
+  empx-cross-chain_caddy_config:
