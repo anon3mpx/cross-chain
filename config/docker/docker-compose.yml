@@ -130,8 +130,6 @@ services:
     env_file:
       - path: ../../.env
         required: false
-    environment:
-      API_DOMAIN: "${API_DOMAIN:-localhost}"
     ports:
       - "80:80"
       - "443:443"
