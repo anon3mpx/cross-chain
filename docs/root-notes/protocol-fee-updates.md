@@ -3,7 +3,7 @@
 ## Scope
 This note captures:
 1. The current protocol fee model in the VPS/Router flow.
-2. The suggested model: flat `0.30%` on all transactions across all rails.
+2. The suggested model: flat `0.15%` on all transactions across all rails.
 
 ---
 
@@ -44,40 +44,40 @@ In `RouterV1.sol`:
 
 ---
 
-## Suggested Model: Flat `0.30%` on All Transactions
+## Suggested Model: Flat `0.15%` on All Transactions
 
 ### Target behavior
-- Charge protocol fee as exactly `30 bps` (`0.30%`) on every quote/tx.
+- Charge protocol fee as exactly `15 bps` (`0.15%`) on every quote/tx.
 - Apply consistently regardless of selected rail.
 
 ### Suggested fee formula
-- `FLAT_PROTOCOL_FEE_BPS = 30`
-- `feeAmountToken = amountIn * 30 / 10_000`
+- `FLAT_PROTOCOL_FEE_BPS = 15`
+- `feeAmountToken = amountIn * 15 / 10_000`
 - Optional reporting value:
-  - `feeAmountUSD = amountUSD * 0.003`
+  - `feeAmountUSD = amountUSD * 0.0015`
 
 ### Important design decision
 Choose one of these explicitly:
 
 1. **Pure flat protocol fee only**
 - Do not add rail fee constants to charged user fee.
-- `totalFeeUSD` displayed to user reflects only `0.30%`.
+- `totalFeeUSD` displayed to user reflects only `0.15%`.
 
 2. **Flat protocol fee + rail pass-through**
 - Keep adding rail cost to displayed/charged fee.
-- This is not truly "flat 0.30% on all txs"; effective fee varies by rail.
+- This is not truly "flat 0.15% on all txs"; effective fee varies by rail.
 
 If the product requirement is strict flat fee, use option 1.
 
 ---
 
-## Code Changes (for strict flat 0.30%)
+## Code Changes (for strict flat 0.15%)
 
 ### Primary change
 - File: `src/vps/services/QuoteEngine.ts`
 - Replace dynamic fee composition:
   - remove `railFeeUSD + max(0.50, 0.05%)` charging logic
-  - set fixed `feeRatioBps = 30`
+  - set fixed `feeRatioBps = 15`
 
 ### Keep unchanged
 - `RouterV1.MAX_FEE_BPS = 100` can remain as safety cap.
@@ -94,9 +94,9 @@ If the product requirement is strict flat fee, use option 1.
 ## Expected Impact
 
 ### User pricing
-- Simpler and predictable fee: always `0.30%`.
+- Simpler and predictable fee: always `0.15%`.
 - Small transfers become cheaper vs current `$0.50` minimum.
-- Some large transfers may become more expensive than current `0.05%` protocol component (depends on current rail + min fee effects).
+- Transfers above the old break-even point become more expensive than the prior `0.05%` protocol component (depends on current rail + min fee effects).
 
 ### Ops/business
 - Revenue model becomes volume-proportional and rail-independent.
@@ -106,5 +106,4 @@ If the product requirement is strict flat fee, use option 1.
 
 ## Summary
 Current model is mixed (`rail fee + min($0.50, 0.05%)` with 1% hard cap).  
-Suggested model is a fixed `0.30%` fee (`30 bps`) for every transaction on every rail, best implemented in `QuoteEngine` while keeping Router's on-chain cap as a guardrail.
-
+Suggested model is a fixed `0.15%` fee (`15 bps`) for every transaction on every rail, best implemented in `QuoteEngine` while keeping Router's on-chain cap as a guardrail.

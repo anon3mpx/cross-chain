@@ -5,6 +5,7 @@
 export enum SettlementToken {
   USDC = 'USDC',
   USDT = 'USDT',
+  WETH = 'WETH',
   ETH  = 'ETH',
   BTC  = 'BTC',  // THORChain / Chainflip native BTC delivery
   SOL  = 'SOL',  // THORChain / Chainflip / CCTP(USDC) Solana delivery

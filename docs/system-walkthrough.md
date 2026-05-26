@@ -57,7 +57,7 @@ EMPX-Cross-Chain is a **cross-chain swap router** that lets users move any token
 - User signs + submits `RouterV1.initiateSwap(intent, swapPluginId, railPluginId)`
 - RouterV1 validates: deadline, fee cap, replay guard, zero-address checks
 - RouterV1 pulls ARB from user wallet
-- RouterV1 takes protocol fee (e.g. $0.50 worth of ARB)
+- RouterV1 takes a fixed `0.15%` protocol fee from the input token
 - RouterV1 swaps ARB → USDC via UniswapV3Plugin (enforces `minSrcSwapOut` — no sandwich)
 - RouterV1 calls `CCTPRailPlugin.bridge()` with USDC + encoded destination calldata
 - CCTP burns USDC on Arbitrum; emits burn event
@@ -120,7 +120,7 @@ EMPX-Cross-Chain is a **cross-chain swap router** that lets users move any token
 - Axelar or LayerZero selected
 - If tokenOut is not a stable: settlement token = ETH (via axlETH or LZ ETH)
 - Destination: axlETH → tokenOut via local DEX
-- Fee is slightly higher (~$0.50 Axelar fee vs $0 CCTP)
+- User fee remains fixed at `0.15%`; internal rail cost is higher on Axelar than CCTP
 
 ---
 
@@ -201,24 +201,24 @@ EMPX-Cross-Chain is a **cross-chain swap router** that lets users move any token
 
 ### 6A — Protocol Fee (primary)
 - Charged on every swap as `feeAmount` in the intent
-- VPS quotes: `max($0.50, 0.05% of transfer value)`
+- VPS quotes: fixed `0.15% of transfer value`
 - Collected in `tokenIn` by RouterV1, sent to `feeRecipient` multisig
-- **Example at $1M daily volume:** ~$500/day → ~$182K/year
+- **Example at $1M daily volume:** ~$1,500/day → ~$547.5K/year
 
 ### 6B — Partner Fee Share (distribution cost)
 - Partners earn BPS rebate on every intent they refer
 - FREE: 0% | GROWTH: 15% | PARTNER: 20% | ENTERPRISE: 30%
 - Partners pull their yield via `POST /partner/withdraw` to their payout address
-- **Net to protocol at PARTNER tier:** 80% of $0.50 = $0.40/swap
+- **Net to protocol at PARTNER tier:** 80% of the `0.15%` fee
 
 ### 6C — Volume projections
 
 | Stage | Daily Intents | Avg Size | Daily Vol | Daily Revenue | Monthly |
 |---|---|---|---|---|---|
-| **T1 — Launch** | 500 | $250 | $125K | $250 | $7.5K |
-| **T2 — Growth** | 5,000 | $400 | $2M | $1,000 | $30K |
-| **T3 — Scale** | 50,000 | $600 | $30M | $15,000 | $450K |
-| **T4 — Mature** | 200,000 | $800 | $160M | $80,000 | $2.4M |
+| **T1 — Launch** | 500 | $250 | $125K | $187.5 | $5.625K |
+| **T2 — Growth** | 5,000 | $400 | $2M | $3,000 | $90K |
+| **T3 — Scale** | 50,000 | $600 | $30M | $45,000 | $1.35M |
+| **T4 — Mature** | 200,000 | $800 | $160M | $240,000 | $7.2M |
 
 *T3 comparable to 1inch cross-chain volume in 2024 Q4.*
 

@@ -15,7 +15,7 @@ export interface DestinationGasConfig {
  */
 export const RAIL_SETTLEMENT_ASSET_ALLOWLISTS: RailSettlementAssetAllowlist = {
   [Rail.CCTP]: ['USDC'],
-  [Rail.LAYERZERO]: ['USDC', 'USDT', 'WETH'],
+  [Rail.LAYERZERO]: ['USDC', 'USDT', 'WETH', "ETH"],
   // [Rail.AXELAR]: ['USDC', 'USDT', 'WETH'],
   // [Rail.VIA_LABS]: ['USDC', 'USDT', 'WETH'],
   [Rail.THORCHAIN]: ['USDC', 'USDT', 'WETH'],
