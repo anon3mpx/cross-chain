@@ -14,14 +14,14 @@ This stack can now publish the VPS API through a Docker-managed edge proxy inste
 Set these on the VPS before starting the stack:
 
 ```bash
-API_DOMAIN=bridge.empx.io
+API_DOMAIN=crosschain.empx.io
 VPS_CORS_ORIGIN=https://app.example.com
 VPS_TRUST_PROXY=true
 ```
 
 Notes:
 
-- `API_DOMAIN` is the public API hostname served by Caddy. For this service, use `bridge.empx.io`.
+- `API_DOMAIN` is the public API hostname served by Caddy. For this service, use `crosschain.empx.io`.
 - `VPS_CORS_ORIGIN` should be the frontend origin that consumes this API.
 - `VPS_TRUST_PROXY=true` ensures Express respects the reverse-proxy chain.
 
@@ -63,7 +63,7 @@ curl http://127.0.0.1:8787/api/v1/health
 From the public hostname after DNS resolves:
 
 ```bash
-curl https://bridge.empx.io/api/v1/health
+curl https://crosschain.empx.io/api/v1/health
 ```
 
 ## Operational notes

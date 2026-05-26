@@ -32,7 +32,7 @@ Paymaster (EIP-4337)                  (direct delivery for native chains)
 
 ## Five-Rail Coverage
 
-| Rail | Type | Cost | Speed | Chains | Unique Capability |
+| Rail | Type | Indicative Rail Cost (internal) | Speed | Chains | Unique Capability |
 |---|---|---|---|---|---|
 | **CCTP** | Messaging | Free | 25s | 16 EVM + Solana | Native USDC, no wrapped tokens |
 | **Via Labs** | Messaging | $0.25 | 3min | 30+ | Fast fallback, API-first |
@@ -41,6 +41,8 @@ Paymaster (EIP-4337)                  (direct delivery for native chains)
 | **THORChain** | Liquidity | Slip% | 60s | EVM+BTC+SOL+DOGE | **Native BTC, SOL, DOGE delivery** |
 
 Rail selection is automatic. Priority: `CCTP → Via Labs → Axelar → LayerZero → THORChain`.
+
+User-facing protocol pricing is fixed at `0.15%` regardless of the selected rail.
 
 ---
 

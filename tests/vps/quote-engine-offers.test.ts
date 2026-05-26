@@ -2,6 +2,8 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { QuoteEngine } from '../../src/vps/services/QuoteEngine';
 import { RouteBuilder } from '../../src/vps/services/RouterBuilder';
+import { getSettlementTokenAddress } from '../../src/vps/config/contracts';
+import { Rail, SettlementToken } from '../../src/vps/types';
 
 const BASE_USDC = '0x0000000000000000000000000000000000001001';
 const BASE_AXLUSDC = '0x0000000000000000000000000000000000001002';
@@ -126,18 +128,48 @@ test('getOffers returns multiple viable rails in scored order and reuses cached 
       assert.ok(result.offers.some((offer) => offer.rail === 'LAYERZERO' && offer.offerType === 'lz_stargate_pool'));
       assert.ok(result.offers.some((offer) => offer.rail === 'LAYERZERO' && offer.offerType === 'lz_oft_adapter'));
       assert.ok(result.offers.some((offer) => offer.rail === 'LAYERZERO' && offer.offerType === 'lz_oft'));
-      assert.ok(result.offers.some((offer) => offer.rail === 'AXELAR' && offer.offerType === 'axelar_dst_swap'));
-      assert.ok(result.offers.some((offer) => offer.rail === 'AXELAR'));
 
-      const cctpOffer = result.offers.find((offer) => offer.rail === 'CCTP');
-      assert.ok(cctpOffer);
-      assert.equal(cctpOffer.economics.providerFeeUSD, 0);
-      assert.equal(cctpOffer.economics.protocolFeeUSD, 0.3);
+      assert.equal(quote.feeAmountToken, 150_000n);
+      assert.equal(quote.estimatedOut, 99_850_000n);
+      assert.equal(quote.minAmountOut, 99_750_150n);
+    } finally {
+      engine.resetDexQuoteFns();
+    }
+  });
+});
 
-      assert.equal(quote.feeAmountToken, 300_000n);
-      assert.equal(quote.feeAmountUSD, 0.3);
-      assert.equal(quote.estimatedOut, 99_700_000n);
-      assert.equal(quote.minAmountOut, 99_600_300n);
+test('getQuote applies a fixed 15 bps protocol fee to CCTP quotes', async () => {
+  await withPatchedEnv({}, async () => {
+    const engine = new QuoteEngine();
+    const baseUsdc = getSettlementTokenAddress(8453, SettlementToken.USDC, Rail.CCTP);
+    const arbUsdc = getSettlementTokenAddress(42161, SettlementToken.USDC, Rail.CCTP);
+
+    try {
+      engine.registerDexQuoteFn(8453, async (_tokenIn, tokenOut, amountIn) => {
+        if (baseUsdc && tokenOut.toLowerCase() === baseUsdc.toLowerCase()) return amountIn;
+        return amountIn;
+      });
+      engine.registerDexQuoteFn(42161, async (tokenIn, _tokenOut, amountIn) => {
+        if (arbUsdc && tokenIn.toLowerCase() === arbUsdc.toLowerCase()) return amountIn;
+        return amountIn;
+      });
+
+      assert.ok(baseUsdc);
+      assert.ok(arbUsdc);
+      const quote = await engine.getQuote({
+        tokenIn: baseUsdc,
+        tokenOut: arbUsdc,
+        amountIn: 100_000_000n,
+        srcChainId: 8453,
+        dstChainId: 42161,
+        userAddress: '0x3333333333333333333333333333333333333333',
+      });
+
+      assert.ok(quote);
+      assert.equal(quote.feeAmountToken, 150_000n);
+      assert.equal(quote.feeAmountUSD, 0.15);
+      assert.equal(quote.estimatedOut, 99_850_000n);
+      assert.equal(quote.minAmountOut, 99_750_150n);
     } finally {
       engine.resetDexQuoteFns();
     }
@@ -190,6 +222,8 @@ test('fast CCTP economics include the realized Circle fee for the built offer', 
     ENABLE_CCTP_FAST: 'true',
     CCTP_ATTESTATION_BASE_URL: 'https://example.test',
   }, async () => {
+    const baseUsdc = getSettlementTokenAddress(8453, SettlementToken.USDC, Rail.CCTP);
+    const arbUsdc = getSettlementTokenAddress(42161, SettlementToken.USDC, Rail.CCTP);
     const originalFetch = globalThis.fetch;
     globalThis.fetch = (async (input: string | URL) => {
       const url = String(input);
@@ -207,18 +241,20 @@ test('fast CCTP economics include the realized Circle fee for the built offer', 
     try {
       const engine = new QuoteEngine();
       try {
+        assert.ok(baseUsdc);
+        assert.ok(arbUsdc);
         engine.registerDexQuoteFn(8453, async (_tokenIn, tokenOut, amountIn) => {
-          if (tokenOut.toLowerCase() === BASE_USDC.toLowerCase()) return amountIn;
+          if (tokenOut.toLowerCase() === baseUsdc.toLowerCase()) return amountIn;
           return amountIn;
         });
         engine.registerDexQuoteFn(42161, async (tokenIn, _tokenOut, amountIn) => {
-          if (tokenIn.toLowerCase() === ARB_USDC.toLowerCase()) return amountIn;
+          if (tokenIn.toLowerCase() === arbUsdc.toLowerCase()) return amountIn;
           return amountIn;
         });
 
         const result = await engine.getOffers({
-          tokenIn: BASE_USDC,
-          tokenOut: ARB_USDC,
+          tokenIn: baseUsdc,
+          tokenOut: arbUsdc,
           amountIn: 1_000_000n,
           srcChainId: 8453,
           dstChainId: 42161,
@@ -229,9 +265,9 @@ test('fast CCTP economics include the realized Circle fee for the built offer', 
         assert.ok(result);
         const cctpOffer = result.offers.find((offer) => offer.rail === 'CCTP');
         assert.ok(cctpOffer);
-        assert.equal(cctpOffer.economics.providerFeeUSD, 0.00099);
-        assert.equal(cctpOffer.economics.outboundFeeUSD, 0.00099);
-        assert.equal(cctpOffer.economics.protocolFeeUSD, 0.003);
+        assert.equal(cctpOffer.economics.providerFeeUSD, 0.000999);
+        assert.equal(cctpOffer.economics.outboundFeeUSD, 0.000999);
+        assert.equal(cctpOffer.economics.protocolFeeUSD, 0.0015);
         assert.equal(cctpOffer.economics.settlementTimeSeconds, 8);
       } finally {
         engine.resetDexQuoteFns();

@@ -6,25 +6,25 @@
 ## 1. Revenue Projections
 
 ### Fee Model Assumed
-| Transfer Size | Protocol Fee | Rail Fee (avg) | Total Fee | Net Margin |
+| Transfer Size | Protocol Fee | Rail Cost (internal avg) | User-Facing Total Fee | Margin Note |
 |---|---|---|---|---|
-| < $100 | $0.50 flat | $0 (CCTP) | $0.50 | ~$0.50 |
-| $100–$1k | 0.05% | $0 (CCTP) | $0.50–$0.50 | ~$0.45 |
-| $1k–$10k | 0.05% | $0–$0.25 | $0.50–$5 | ~$0.40–$4.75 |
-| > $10k | 0.03% | $0–$0.50 | $3–$30 | ~$2.50–$29.50 |
+| $50 | $0.075 (0.15%) | $0–$0.50 | $0.075 | Negative on expensive rails |
+| $500 | $0.75 (0.15%) | $0–$0.50 | $0.75 | Positive on all current rails |
+| $5k | $7.50 (0.15%) | $0–$0.50 | $7.50 | Rail cost is negligible |
+| $50k | $75 (0.15%) | $0–$0.50 | $75 | Fully volume-driven |
 
-> Rail fee on CCTP = $0 (we keep 100% of protocol fee). On Axelar/LZ = ~$0.30–$0.50 which we pass to user.
+> User-facing pricing is fixed at `0.15%` regardless of rail. Rail costs remain internal execution costs that affect margin, not the quoted fee.
 
 ### Scenario Projections (Monthly)
 
 | Daily Volume | Avg Tx Size | Daily Tx Count | Monthly Revenue | VPS Tier |
 |---|---|---|---|---|
-| $500k | $500 | 1,000 | ~$7,500 | Tier 1 |
-| $5M | $750 | 6,667 | ~$62,500 | Tier 2 |
-| $50M | $1,000 | 50,000 | ~$500,000 | Tier 3 |
-| $500M | $2,000 | 250,000 | ~$4,000,000 | Tier 4 |
+| $500k | $500 | 1,000 | ~$22,500 | Tier 1 |
+| $5M | $750 | 6,667 | ~$225,000 | Tier 2 |
+| $50M | $1,000 | 50,000 | ~$2,250,000 | Tier 3 |
+| $500M | $2,000 | 250,000 | ~$22,500,000 | Tier 4 |
 
-Revenue assumptions: 0.05% on mid-range, CCTP dominant (70% of volume, zero rail cost).
+Revenue assumptions: fixed `0.15%` user fee, CCTP dominant (70% of volume), rail costs absorbed by the protocol.
 
 ---
 

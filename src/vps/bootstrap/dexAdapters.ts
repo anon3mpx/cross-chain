@@ -44,7 +44,10 @@ export function registerDexQuoteAdapters(
       continue;
     }
 
-    const feeBps = readInt(env[`CHAIN_${chainId}_DEX_MOCK_FEE_BPS`], 30);
+    const mockFeeBps = env[`CHAIN_${chainId}_DEX_MOCK_FEE_BPS`]?.trim();
+    if (!mockFeeBps) continue;
+
+    const feeBps = readInt(mockFeeBps, 30);
     quoteEngine.registerDexQuoteFn(chainId, async (_tokenIn, _tokenOut, amountIn) => {
       const fee = BigInt(Math.max(0, Math.min(9_900, feeBps)));
       return (amountIn * (10_000n - fee)) / 10_000n;

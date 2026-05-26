@@ -7,9 +7,9 @@
 ## 1. Revenue & Volume Projections
 
 ### Fee Model Assumption
-- **Base fee:** 0.05% of transfer value (competitive vs. Li.Fi ~0.1%, Socket ~0.08%)
-- **Minimum fee:** $0.50 per swap (covers rail costs on small transfers)
-- **Rail cost passthrough:** Rail fees (CCTP=free, Via Labs=$0.25, Axelar~$0.50, LZ~$0.30) are baked into the quoted fee
+- **User-facing protocol fee:** fixed `0.15%` of transfer value on every swap
+- **No rail-based surcharge:** quoted user fee does not vary by selected rail
+- **Internal execution costs:** rail fees (CCTP=free, Via Labs=$0.25, Axelar~$0.50, LZ~$0.30) affect margin, not quoted price
 
 ---
 
@@ -21,9 +21,9 @@
 | Avg swap size | $500 |
 | Daily volume | $100,000 |
 | Monthly volume | ~$3M |
-| Gross revenue (0.05%) | $1,500/month |
+| Gross revenue (0.15%) | $4,500/month |
 | Rail cost (avg $0.25/swap, ~50% Via/Axelar) | ~$750/month |
-| **Net revenue** | **~$750/month** |
+| **Net revenue** | **~$3,750/month** |
 
 ---
 
@@ -35,9 +35,9 @@
 | Avg swap size | $800 |
 | Daily volume | $1.6M |
 | Monthly volume | ~$48M |
-| Gross revenue (0.05%) | $24,000/month |
+| Gross revenue (0.15%) | $72,000/month |
 | Rail cost | ~$6,000/month |
-| **Net revenue** | **~$18,000/month** |
+| **Net revenue** | **~$66,000/month** |
 
 ---
 
@@ -49,9 +49,9 @@
 | Avg swap size | $1,200 |
 | Daily volume | $18M |
 | Monthly volume | ~$540M |
-| Gross revenue (0.05%) | $270,000/month |
+| Gross revenue (0.15%) | $810,000/month |
 | Rail cost | ~$45,000/month |
-| **Net revenue** | **~$225,000/month** |
+| **Net revenue** | **~$765,000/month** |
 
 ---
 
@@ -63,9 +63,9 @@
 | Avg swap size | $1,500 |
 | Daily volume | $150M |
 | Monthly volume | ~$4.5B |
-| Gross revenue (0.05%) | $2.25M/month |
+| Gross revenue (0.15%) | $6.75M/month |
 | Rail cost (CCTP dominant = lower) | ~$200,000/month |
-| **Net revenue** | **~$2.05M/month** |
+| **Net revenue** | **~$6.55M/month** |
 
 > **Note:** At scale, CCTP route dominance drives rail costs down dramatically (free per transfer). Optimizing toward CCTP chains first is a revenue multiplier.
 
@@ -219,7 +219,7 @@ function selectSettlementToken(srcChain, dstChain, railAvailable):
     return { token: USDC, rail: ViaLabs }    // $0.25
 
   if Axelar.supports(srcChain, dstChain):
-    return { token: USDC, rail: Axelar }     // ~$0.50, wider coverage
+    return { token: USDC, rail: Axelar }     // internal rail cost ~$0.50, wider coverage
 
   if LayerZero.supports(srcChain, dstChain):
     return { token: USDC, rail: LayerZero }  // Stargate USDC
@@ -246,7 +246,7 @@ Steps:
 3. CCTP burn on Ethereum → Circle attestation (~20s) → mint on Arbitrum
 4. USDC delivered directly to user wallet
 
-Cost:    ~$0 rail fee + $2 Ethereum gas
+User fee: 0.15% + $2 Ethereum gas
 Time:    ~25 seconds
 Rail:    CCTP only
 Hops:    1 rail, 1 settlement token (USDC)
@@ -268,7 +268,7 @@ Steps:
 4. On Optimism: USDC → OP via our aggregator
 5. OP delivered to user
 
-Cost:    ~$0 rail + $0.02 total gas (L2 cheap)
+User fee: 0.15% + ~$0.02 total gas (L2 cheap)
 Time:    ~30 seconds
 Rails:   CCTP
 Hops:    1 rail, 1 settlement token
@@ -291,7 +291,7 @@ Steps:
 4. On BSC: USDC → BNB via our aggregator (PancakeSwap plugin)
 5. BNB delivered to user
 
-Cost:    $0.25 rail + gas
+User fee: 0.15% + gas (internal Via Labs rail cost ~$0.25)
 Time:    ~2.5 minutes
 Rails:   Via Labs
 Hops:    1 rail, 1 settlement token (USDC)
@@ -316,7 +316,7 @@ Steps:
 4. On Plasma: axlUSDT → native USDT (Plasma DEX, near-zero slippage)
 5. USDT delivered to user
 
-Cost:    ~$0.50 Axelar + minimal swap fees
+User fee: 0.15% + swap fees (internal Axelar rail cost ~$0.50)
 Time:    ~2 minutes
 Rails:   Axelar (1 hop)
 Settlement: USDC → USDT (hop before bridge)
@@ -345,7 +345,7 @@ Steps:
 4. No aggregator on Kava: deliver USDC directly to user wallet
 5. [Future: when aggregator on Kava] swap USDC → Token X
 
-Cost:    ~$0.40 LZ fee + gas
+User fee: 0.15% + gas (internal LayerZero rail cost ~$0.40)
 Time:    ~2 minutes
 Rails:   LayerZero
 Settlement: USDC (OFT)
@@ -374,7 +374,7 @@ VPS behavior:
   - Auto-fallback: yes, no user action needed
   - Status API reflects: IN_TRANSIT → RECOVERING → SETTLED
 
-Cost:    $0.25 (fallback rail, no refund on original attempt gas)
+User fee: 0.15% + gas (internal fallback rail cost ~$0.25; no refund on original attempt gas)
 Time:    ~6 minutes total (3 wait + 2 min Via Labs + buffer)
 Complexity: ★★★★☆ (handled automatically)
 ```
@@ -395,7 +395,7 @@ Steps:
 3. LayerZero: ETH OFT Solana → ETH on target chain
 4. ETH delivered to user (or swapped to target token if aggregator present)
 
-Cost:    ~$0.50 LZ + $0.10 swap fees
+User fee: 0.15% + ~$0.10 swap fees (internal LayerZero rail cost ~$0.50)
 Time:    ~3 minutes
 Settlement: ETH (fallback token)
 Hops:    1 rail, USDC→ETH on source
@@ -441,10 +441,10 @@ START
   │       └─ YES → Swap to USDT on source → Axelar axlUSDT
   │
   ├─ Standard USDC path via Via Labs?
-  │   └─ YES → Via Labs + USDC ($0.25 flat)
+  │   └─ YES → Via Labs + USDC (internal rail cost ~$0.25)
   │
   ├─ Axelar covers the pair?
-  │   └─ YES → Axelar + axlUSDC (~$0.50)
+  │   └─ YES → Axelar + axlUSDC (internal rail cost ~$0.50)
   │
   ├─ LayerZero covers the pair?
   │   ├─ USDC OFT available? → YES → LZ Stargate + USDC

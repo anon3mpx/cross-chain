@@ -21,7 +21,7 @@ const EMPSEAL_ROUTER_RESULT_INTERFACES = [
 ];
 
 const abiCoder = AbiCoder.defaultAbiCoder();
-const DEFAULT_MAX_STEPS = 3n;
+const DEFAULT_MAX_STEPS = 2n;
 
 export interface EmpsealTrade {
   amountIn: bigint;
