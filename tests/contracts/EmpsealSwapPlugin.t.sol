@@ -4,6 +4,7 @@ pragma solidity ^0.8.24;
 import {ERC20} from "@openzeppelin/contracts/token/ERC20/ERC20.sol";
 import {IEmpsealRouter} from "../../src/contracts/interfaces/IEmpsealRouter.sol";
 import {EmpsealSwapPlugin} from "../../src/contracts/plugins/EmpsealSwapPlugin.sol";
+import {EmpsealSwapPluginV2} from "../../src/contracts/plugins/EmpsealSwapPluginV2.sol";
 import {IntentTypes} from "../../src/contracts/interfaces/IIntentTypes.sol";
 
 contract MockUSDCForEmpseal is ERC20 {
@@ -15,6 +16,7 @@ contract MockUSDCForEmpseal is ERC20 {
 contract MockEmpsealRouter is IEmpsealRouter {
     mapping(bytes32 => uint256) public quotes;
     uint256 public fixedOutput;
+    uint256 public lastFeeBps;
 
     function setQuote(address tokenIn, address tokenOut, uint256 amountOut) external {
         quotes[keccak256(abi.encode(tokenIn, tokenOut))] = amountOut;
@@ -30,7 +32,7 @@ contract MockEmpsealRouter is IEmpsealRouter {
         address,
         uint256
     ) external pure returns (FormattedOffer memory) {
-        return FormattedOffer(new uint256[](0), new address[](0), new address[](0), new uint256[](0));
+        return FormattedOffer(new uint256[](0), new address[](0), new address[](0));
     }
 
     function findBestPathWithGas(
@@ -40,7 +42,7 @@ contract MockEmpsealRouter is IEmpsealRouter {
         uint256,
         uint256
     ) external pure returns (FormattedOffer memory) {
-        return FormattedOffer(new uint256[](0), new address[](0), new address[](0), new uint256[](0));
+        return FormattedOffer(new uint256[](0), new address[](0), new address[](0));
     }
 
     function queryNoSplit(
@@ -52,7 +54,8 @@ contract MockEmpsealRouter is IEmpsealRouter {
         return Query(address(this), _tokenIn, _tokenOut, out);
     }
 
-    function swapNoSplit(Trade calldata _trade, address _to, uint256) external {
+    function swapNoSplit(Trade calldata _trade, address _to, uint256 feeBps) external {
+        lastFeeBps = feeBps;
         ERC20(_trade.path[0]).transferFrom(msg.sender, address(this), _trade.amountIn);
         ERC20(_trade.path[_trade.path.length - 1]).transfer(_to, fixedOutput);
     }
@@ -158,3 +161,66 @@ contract EmpsealSwapPluginTest {
     }
 }
 
+contract EmpsealSwapPluginV2Test {
+    MockUSDCForEmpseal private tokenIn;
+    MockUSDCForEmpseal private tokenOut;
+    MockEmpsealRouter private router;
+    EmpsealSwapPluginV2 private plugin;
+
+    function setUp() public {
+        tokenIn = new MockUSDCForEmpseal();
+        tokenOut = new MockUSDCForEmpseal();
+        router = new MockEmpsealRouter();
+        plugin = new EmpsealSwapPluginV2(address(router), address(this));
+
+        tokenIn.mint(address(this), 1_000_000e6);
+        tokenOut.mint(address(router), 1_000_000e6);
+        router.setFixedOutput(105e6);
+        router.setQuote(address(tokenIn), address(tokenOut), 100e6);
+    }
+
+    function testSwapPassesDynamicRouterFee() public {
+        IEmpsealRouter.Trade memory trade = _trade(address(tokenIn), address(tokenOut), 100e6, 100e6);
+        bytes memory data = abi.encode(trade, uint256(28));
+
+        tokenIn.approve(address(plugin), 100e6);
+
+        IntentTypes.SwapParams memory params = IntentTypes.SwapParams({
+            tokenIn: address(tokenIn),
+            tokenOut: address(tokenOut),
+            amountIn: 100e6,
+            minAmountOut: 100e6,
+            data: data
+        });
+
+        uint256 out = plugin.swap(params);
+
+        _assertEq(out, 105e6, "unexpected out");
+        _assertEq(router.lastFeeBps(), 28, "router fee bps mismatch");
+    }
+
+    function _trade(
+        address _tokenIn,
+        address _tokenOut,
+        uint256 amountIn,
+        uint256 amountOut
+    ) internal pure returns (IEmpsealRouter.Trade memory t) {
+        address[] memory path = new address[](2);
+        path[0] = _tokenIn;
+        path[1] = _tokenOut;
+
+        address[] memory adapters = new address[](1);
+        adapters[0] = address(0xA11CE);
+
+        t = IEmpsealRouter.Trade({
+            amountIn: amountIn,
+            amountOut: amountOut,
+            path: path,
+            adapters: adapters
+        });
+    }
+
+    function _assertEq(uint256 a, uint256 b, string memory err) internal pure {
+        require(a == b, err);
+    }
+}

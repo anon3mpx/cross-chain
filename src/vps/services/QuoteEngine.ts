@@ -63,7 +63,6 @@ import {
 import {
   EmpsealQuoteWorker,
   type EmpsealQuoteWorkerLike,
-  type EmpsealTrade,
 } from './empseal/EmpsealQuoteWorker';
 import { RailSelector } from './RailSelector';
 import {
@@ -1251,20 +1250,13 @@ export class QuoteEngine {
       if (!plan) return null;
       return {
         amountOut: plan.amountOut,
-        data: this._encodeEmpsealTrade(plan.trade),
+        data: plan.data,
       };
     }
 
     const quoted = await this._getSwapQuote(chainId, tokenIn, tokenOut, amountIn);
     if (quoted === null) return null;
     return { amountOut: quoted, data: '0x' };
-  }
-
-  private _encodeEmpsealTrade(trade: EmpsealTrade): string {
-    return abiCoder.encode(
-      ['tuple(uint256 amountIn,uint256 amountOut,address[] path,address[] adapters)'],
-      [trade],
-    );
   }
 
   private _isEmpsealSwapChain(chainId: number): boolean {

@@ -1,6 +1,11 @@
 import { AbiCoder, Interface, JsonRpcProvider, getAddress } from 'ethers';
 import { getChainConfig } from '../../config/chains';
-import { getEmpsealRouterAddressForChain } from '../../config/contracts';
+import {
+  getEmpsealRouterAddressForChain,
+  getEmpsealRouterFeeBpsForChain,
+  getSwapPluginIdForChain,
+} from '../../config/contracts';
+import { applyEmpsealRouterFee, encodeEmpsealSwapData } from './swapData';
 
 const EMPSEAL_ROUTER_CALL_INTERFACE = new Interface([
   'function findBestPath(uint256 _amountIn, address _tokenIn, address _tokenOut, uint256 _maxSteps)',
@@ -33,6 +38,8 @@ export interface EmpsealTrade {
 export interface EmpsealSwapPlan {
   amountOut: bigint;
   trade: EmpsealTrade;
+  data: string;
+  feeBps: number;
 }
 
 export interface EmpsealSwapPlanRequest {
@@ -83,15 +90,22 @@ export class EmpsealQuoteWorker implements EmpsealQuoteWorkerLike {
 
       const amountOut = amounts[amounts.length - 1];
       if (amountOut <= 0n) return null;
+      const feeBps = getEmpsealRouterFeeBpsForChain(input.chainId);
+      const netAmountOut = applyEmpsealRouterFee(amountOut, feeBps);
+      if (netAmountOut <= 0n) return null;
+
+      const trade: EmpsealTrade = {
+        amountIn: input.amountIn,
+        amountOut,
+        path,
+        adapters,
+      };
 
       return {
-        amountOut,
-        trade: {
-          amountIn: input.amountIn,
-          amountOut,
-          path,
-          adapters,
-        },
+        amountOut: netAmountOut,
+        trade,
+        data: encodeEmpsealSwapData(getSwapPluginIdForChain(input.chainId), trade, feeBps),
+        feeBps,
       };
     } catch {
       return null;

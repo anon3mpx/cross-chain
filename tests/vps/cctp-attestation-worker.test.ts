@@ -1,7 +1,10 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { AbiCoder } from 'ethers';
-import { buildReceiverExecutionPayloadFromIntent } from '../../src/vps/services/CctpAttestationWorker';
+import {
+  buildReceiverExecutionPayloadFromIntent,
+  recoverFastTransferExecuteAmountFromReceiverBalance,
+} from '../../src/vps/services/CctpAttestationWorker';
 
 const abiCoder = AbiCoder.defaultAbiCoder();
 
@@ -33,4 +36,42 @@ test('buildReceiverExecutionPayloadFromIntent matches ReceiverV1 execution paylo
   assert.equal(decoded[6], intent.minRouteAmount);
   assert.equal(decoded[7], intent.swapDataDst);
   assert.equal(decoded[8], intent.dstSwapPluginId);
+});
+
+test('recoverFastTransferExecuteAmountFromReceiverBalance uses receiver balance when it satisfies min route amount', () => {
+  const intent = {
+    intentId: '0x9b59aab47dda4ef20f1048cc442794d3988ec1b997e27c9a142a57b1d0a8320f',
+    user: '0x05f8cc8753d90d67dbb8c02118440b8283f941c9',
+    tokenOut: '0x0b2c639c533813f4aa9d7837caf62653d097ff85',
+    minAmountOut: 996_827n,
+    expectedDstRouteToken: '0x0b2c639c533813f4aa9d7837caf62653d097ff85',
+    expectedDstRouteAssetId: '0xc9e6c698b6a822819702171c2ca95ee8e0bd8b87d4d4954b42a3ef3815a80042',
+    minRouteAmount: 996_827n,
+    swapDataDst: '0x',
+    dstSwapPluginId: '0x0000000000000000000000000000000000000000000000000000000000000000',
+  };
+
+  const payload = buildReceiverExecutionPayloadFromIntent(intent);
+  const recovered = recoverFastTransferExecuteAmountFromReceiverBalance(996_871n, payload);
+  assert.equal(recovered, 996_871n);
+});
+
+test('recoverFastTransferExecuteAmountFromReceiverBalance throws when receiver balance is below min route amount', () => {
+  const intent = {
+    intentId: '0x9b59aab47dda4ef20f1048cc442794d3988ec1b997e27c9a142a57b1d0a8320f',
+    user: '0x05f8cc8753d90d67dbb8c02118440b8283f941c9',
+    tokenOut: '0x0b2c639c533813f4aa9d7837caf62653d097ff85',
+    minAmountOut: 996_827n,
+    expectedDstRouteToken: '0x0b2c639c533813f4aa9d7837caf62653d097ff85',
+    expectedDstRouteAssetId: '0xc9e6c698b6a822819702171c2ca95ee8e0bd8b87d4d4954b42a3ef3815a80042',
+    minRouteAmount: 996_827n,
+    swapDataDst: '0x',
+    dstSwapPluginId: '0x0000000000000000000000000000000000000000000000000000000000000000',
+  };
+
+  const payload = buildReceiverExecutionPayloadFromIntent(intent);
+  assert.throws(
+    () => recoverFastTransferExecuteAmountFromReceiverBalance(996_000n, payload),
+    /receiver balance .* is below minRouteAmount/i,
+  );
 });

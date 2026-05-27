@@ -3957,3 +3957,24 @@ curl -X 'POST' \
     "bestOfferId": "0x03e9bf42dbd755166dcac803173e0ee45548bd50c8bfa576b2b93fd8c698835a"
   }
 }
+
+
+{
+  "tokenIn": "0xaf88d065e77c8cc2239327c5edb3a432268e5831",
+  "tokenOut": "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913",
+  "amountIn": "100000000",
+  "srcChainId": 42161,
+  "dstChainId": 8453,
+  "userAddress": "0x05f8cc8753d90d67dbb8c02118440b8283f941c9",
+  "urgency": "fast"
+}
+
+{
+  "tokenIn": "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913",
+  "tokenOut": "0xaf88d065e77c8cc2239327c5edb3a432268e5831",
+  "amountIn": "1200000",
+  "srcChainId": 8453,
+  "dstChainId": 42161,
+  "userAddress": "0x05f8cc8753d90d67dbb8c02118440b8283f941c9",
+  "urgency": "fast"
+}
