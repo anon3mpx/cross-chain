@@ -29,6 +29,45 @@ It does not cover:
 - Timestamps are Unix milliseconds
 - Quote/offer expiry must be enforced in the UI
 
+## Current Mainnet Deployment Footprint
+
+For the current public UI rollout, the fully contract-backed mainnet footprint is:
+
+| Chain | Chain ID | Router/Receiver deployed | CCTP standard | CCTP fast | LayerZero | Empseal src swap | Empseal dst swap |
+|---|---:|---|---|---|---|---|---|
+| Base | `8453` | Yes | Yes | Yes | Yes | Yes | Yes |
+| Arbitrum | `42161` | Yes | Yes | Yes | Yes | Yes | Yes |
+| Optimism | `10` | Yes | Yes | Yes | Yes | Yes | Yes |
+
+Frontend implications:
+
+- `Base`, `Arbitrum`, and `Optimism` are the current mainnet chains where the API can do full `src swap + rail + dst swap`.
+- On those three chains, `EmpsealSwapPlugin` is the swap path used for both source-side and destination-side token conversion.
+- The broader codebase knows about more chains, but the UI should not assume the same fully deployed behavior outside these three mainnets unless that deployment is explicitly confirmed.
+
+## Swap Capability Model
+
+Current source-swap-enabled mainnets:
+
+- `Base` (`8453`)
+- `Arbitrum` (`42161`)
+- `Optimism` (`10`)
+
+Current destination-swap-enabled mainnets:
+
+- `Base` (`8453`)
+- `Arbitrum` (`42161`)
+- `Optimism` (`10`)
+
+Meaning of `deliveryShape`:
+
+- `direct`: no source swap and no destination swap
+- `src_swap_required`: swap on source into the rail settlement asset
+- `dst_swap_required`: swap on destination out of the rail settlement asset
+- `src_and_dst_swap_required`: both swap legs are present
+
+For the current Base/Arbitrum/Optimism deployment, the non-`direct` swap legs are powered by `EmpsealSwapPlugin`.
+
 ## Endpoint Inventory
 
 ### Required for the core swap/bridge UI
@@ -155,6 +194,170 @@ Per-offer fields the UI should normalize:
 - `economics.destinationGasUSD`
 - `economics.outboundFeeUSD`
 - `economics.settlementTimeSeconds`
+
+## Token Input Rules
+
+The UI should distinguish between:
+
+- the frontend request format sent to `/api/v1/quote`
+- the rail-specific asset format used internally by the backend/provider
+
+### What the UI normally sends
+
+For the current Base/Arbitrum/Optimism mainnet rollout:
+
+- `tokenIn`: ERC-20 contract address on the source chain
+- `tokenOut`: ERC-20 contract address on the destination chain
+- `amountIn`: integer string in base units
+- `userAddress`: EVM wallet address
+
+If the destination is a native-delivery route, also send:
+
+- `nativeDstAddress`: destination native wallet address
+
+### What the backend may normalize internally
+
+- For CCTP and LayerZero contract-backed flows, the backend maps user tokens into rail settlement assets and inserts Empseal src/dst swaps where needed.
+- For THORChain, the backend may normalize assets into THORChain notation such as `ETH.ETH`, `BASE.ETH`, or `BASE.USDC-0x...`.
+
+The UI usually does not need to construct those internal rail identifiers itself unless it exposes an advanced rail-specific mode.
+
+## Rail-Specific Parameter Formats
+
+### CCTP standard
+
+Current deployed mainnets:
+
+- `Base` (`8453`)
+- `Arbitrum` (`42161`)
+- `Optimism` (`10`)
+
+Backend route asset policy:
+
+- `USDC` only
+
+Frontend input rules:
+
+- send standard EVM token addresses in `tokenIn` and `tokenOut`
+- use `urgency: "normal"` for standard behavior
+- do not send `nativeDstAddress` for normal EVM CCTP flows
+
+Practical effect on current deployed mainnets:
+
+- even though CCTP settles in USDC, the UI can still request arbitrary ERC-20 input/output on Base/Arbitrum/Optimism because Empseal can handle the source and destination swap legs
+
+### CCTP fast
+
+Current deployed mainnets:
+
+- `Base` (`8453`)
+- `Arbitrum` (`42161`)
+- `Optimism` (`10`)
+
+Frontend input rules:
+
+- same token/address rules as CCTP standard
+- request the fast path with `urgency: "fast"`
+- the selected offer will still be a CCTP route, but `railVariant` resolves to `CCTP_FAST`
+
+### LayerZero
+
+Current deployed mainnets:
+
+- `Base` (`8453`)
+- `Arbitrum` (`42161`)
+- `Optimism` (`10`)
+
+Backend route asset allowlist:
+
+- `USDC`
+- `USDT`
+- `WETH`
+- `ETH`
+
+Frontend input rules:
+
+- send standard EVM token addresses in `tokenIn` and `tokenOut`
+- do not send `nativeDstAddress` for normal EVM LayerZero routes
+- on Base/Arbitrum/Optimism, the backend can insert Empseal src/dst swaps around the LayerZero settlement asset when required
+
+Advanced discovery endpoint query formats:
+
+- `transferrableFromChainKey`: LayerZero chain key string
+- `transferrableFromTokenAddress`: token address string
+- `nextToken`: pagination cursor string
+
+### THORChain
+
+THORChain is provider-direct and has stricter internal asset notation.
+
+Backend-supported route asset aliases:
+
+- `USDC`
+- `USDT`
+- `WETH`
+- `ETH`
+- `BTC`
+- `BTC.BTC`
+- `SOL`
+- `SOL.SOL`
+
+Frontend input rules:
+
+- for EVM-side assets, the safest input is still the normal token contract address
+- for native-destination flows, pass `nativeDstAddress`
+- if the UI exposes THORChain-specific advanced inputs, use exact THOR notation
+
+Important THORChain asset notation examples used by the backend/provider:
+
+- `ETH.ETH`
+- `BASE.ETH`
+- `ARB.ETH`
+- `OP.ETH`
+- `AVAX.ETH`
+- `BSC.ETH`
+- `MATIC.ETH`
+- `BTC.BTC`
+- `SOL.SOL`
+- `BASE.USDC-0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913`
+- `ARB.USDT-0x...`
+
+Practical guidance:
+
+- if the UI is generic, keep sending EVM token addresses and let the backend resolve THOR notation
+- if the UI exposes THOR-specific advanced input, use the exact THOR asset strings above
+- for BTC/SOL-style native delivery, require `nativeDstAddress`
+
+### Gas.zip destination gas
+
+Gas.zip is only active when the quote request includes `destinationGas`.
+
+Frontend input shape:
+
+```json
+{
+  "destinationGas": [
+    {
+      "provider": "gaszip",
+      "chainId": 8453,
+      "amountWei": "1000000000000000",
+      "recipient": "0x..."
+    }
+  ]
+}
+```
+
+Implementation rules:
+
+- the matching gas request must target `dstChainId`
+- `amountWei` should be an integer string
+- `recipient` is optional
+
+Recipient fallback order:
+
+1. `destinationGas[0].recipient`
+2. `nativeDstAddress`
+3. `userAddress`
 
 ## 2. Select an offer
 

@@ -14,6 +14,7 @@ import {LayerZeroRailPlugin} from "src/contracts/rails/LayerZeroRailPlugin.sol";
 import {LayerZeroReceiverAdapter} from "src/contracts/rails/LayerZeroReceiverAdapter.sol";
 
 import {EmpsealSwapPlugin} from "src/contracts/plugins/EmpsealSwapPlugin.sol";
+import {EmpsealSwapPluginV2} from "src/contracts/plugins/EmpsealSwapPluginV2.sol";
 import {UniswapV2SwapPlugin} from "src/contracts/plugins/UniswapV2SwapPlugin.sol";
 import {UniswapV3SwapPlugin} from "src/contracts/plugins/UniswapV3SwapPlugin.sol";
 
@@ -77,8 +78,11 @@ contract DeployAll is ScriptBase {
     function _deploySwapPlugins(address owner) internal {
         address empsealRouter = vm.envOr("EMPSEAL_ROUTER", address(0));
         if (empsealRouter != address(0)) {
-            EmpsealSwapPlugin empsealSwap = new EmpsealSwapPlugin(empsealRouter, owner);
-            emit ScriptLogAddress("EmpsealSwapPlugin", address(empsealSwap));
+            EmpsealSwapPlugin empsealSwapV1 = new EmpsealSwapPlugin(empsealRouter, owner);
+            emit ScriptLogAddress("EmpsealSwapPlugin", address(empsealSwapV1));
+
+            EmpsealSwapPluginV2 empsealSwap = new EmpsealSwapPluginV2(empsealRouter, owner);
+            emit ScriptLogAddress("EmpsealSwapPluginV2", address(empsealSwap));
         }
 
         address univ2Router = vm.envOr("UNIV2_ROUTER", address(0));

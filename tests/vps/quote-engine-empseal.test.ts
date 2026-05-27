@@ -11,6 +11,7 @@ const ARB_TOKEN = '0x912ce59144191c1204e64559fe8253a0e49e6548';
 const ARB_USDC = '0xaf88d065e77c8cC2239327C5EDb3A432268e5831';
 
 const EMPSEAL_PLUGIN_ID = '0x62d69a2b9d5c124337a6d3df09e273f71aa045b7b8758c9c6695143a40ad10b6';
+const EMPSEAL_PLUGIN_ID_V2 = '0x5d8b8eb7751f2229b8682b4a18584d8dbff6c6ab4bf2ecdbd6bd3f7d7bcf9d30';
 
 function withPatchedEnv(extraEnv: Record<string, string>, fn: () => Promise<void>) {
   const previous = new Map<string, string | undefined>();
@@ -49,31 +50,52 @@ test('getOffers uses Empseal swap plans for both swap legs and emits executable 
 
           if (chainId === 10) {
             assert.equal(tokenIn.toLowerCase(), OP_TOKEN.toLowerCase());
-            assert.equal(tokenOut.toLowerCase(), OP_USDC.toLowerCase());
-            assert.equal(amountIn, 99_700_000_000_000_000_000n);
+            const amountOut = tokenOut.toLowerCase() === OP_USDC.toLowerCase()
+              ? 150_000_000n
+              : 80_000_000_000_000_000n;
             return {
-              amountOut: 150_000_000n,
+              amountOut,
               trade: {
                 amountIn,
-                amountOut: 150_000_000n,
+                amountOut,
                 path: [tokenIn, tokenOut],
                 adapters: ['0x0000000000000000000000000000000000000a11'],
               },
+              data: abiCoder.encode(
+                ['tuple(uint256 amountIn,uint256 amountOut,address[] path,address[] adapters)'],
+                [{
+                  amountIn,
+                  amountOut,
+                  path: [tokenIn, tokenOut],
+                  adapters: ['0x0000000000000000000000000000000000000a11'],
+                }],
+              ),
+              feeBps: 0,
             };
           }
 
           if (chainId === 42161) {
-            assert.equal(tokenIn.toLowerCase(), ARB_USDC.toLowerCase());
-            assert.equal(tokenOut.toLowerCase(), ARB_TOKEN.toLowerCase());
-            assert.equal(amountIn, 150_000_000n);
+            const amountOut = tokenOut.toLowerCase() === ARB_TOKEN.toLowerCase()
+              ? 70_000_000_000_000_000_000n
+              : 140_000_000n;
             return {
-              amountOut: 70_000_000_000_000_000_000n,
+              amountOut,
               trade: {
                 amountIn,
-                amountOut: 70_000_000_000_000_000_000n,
+                amountOut,
                 path: [tokenIn, tokenOut],
                 adapters: ['0x0000000000000000000000000000000000000b22'],
               },
+              data: abiCoder.encode(
+                ['tuple(uint256 amountIn,uint256 amountOut,address[] path,address[] adapters)'],
+                [{
+                  amountIn,
+                  amountOut,
+                  path: [tokenIn, tokenOut],
+                  adapters: ['0x0000000000000000000000000000000000000b22'],
+                }],
+              ),
+              feeBps: 0,
             };
           }
 
@@ -126,6 +148,97 @@ test('getOffers uses Empseal swap plans for both swap legs and emits executable 
       && call.tokenIn.toLowerCase() === ARB_USDC.toLowerCase()
       && call.tokenOut.toLowerCase() === ARB_TOKEN.toLowerCase()
     ));
+  });
+});
+
+test('getOffers encodes Empseal router fee into swap data when EMPSEAL_V2 is selected', async () => {
+  await withPatchedEnv({
+    CHAIN_10_SWAP_PLUGIN_ID: EMPSEAL_PLUGIN_ID_V2,
+    CHAIN_42161_SWAP_PLUGIN_ID: EMPSEAL_PLUGIN_ID_V2,
+    CHAIN_10_EMPSEAL_ROUTER_FEE_BPS: '28',
+    CHAIN_42161_EMPSEAL_ROUTER_FEE_BPS: '9',
+  }, async () => {
+    const engine = new QuoteEngine(undefined, {
+      empsealQuoteWorker: {
+        buildSwapPlan: async ({ chainId, tokenIn, tokenOut, amountIn }) => {
+          if (chainId === 10) {
+            return {
+              amountOut: 149_580_000n,
+              trade: {
+                amountIn,
+                amountOut: 150_000_000n,
+                path: [tokenIn, tokenOut],
+                adapters: ['0x0000000000000000000000000000000000000a11'],
+              },
+              data: abiCoder.encode(
+                ['tuple(uint256 amountIn,uint256 amountOut,address[] path,address[] adapters)', 'uint256'],
+                [{
+                  amountIn,
+                  amountOut: 150_000_000n,
+                  path: [tokenIn, tokenOut],
+                  adapters: ['0x0000000000000000000000000000000000000a11'],
+                }, 28n],
+              ),
+              feeBps: 28,
+            };
+          }
+
+          if (chainId === 42161) {
+            return {
+              amountOut: 69_937_000_000_000_000_000n,
+              trade: {
+                amountIn,
+                amountOut: 70_000_000_000_000_000_000n,
+                path: [tokenIn, tokenOut],
+                adapters: ['0x0000000000000000000000000000000000000b22'],
+              },
+              data: abiCoder.encode(
+                ['tuple(uint256 amountIn,uint256 amountOut,address[] path,address[] adapters)', 'uint256'],
+                [{
+                  amountIn,
+                  amountOut: 70_000_000_000_000_000_000n,
+                  path: [tokenIn, tokenOut],
+                  adapters: ['0x0000000000000000000000000000000000000b22'],
+                }, 9n],
+              ),
+              feeBps: 9,
+            };
+          }
+
+          return null;
+        },
+      },
+    });
+
+    const result = await engine.getOffers({
+      tokenIn: OP_TOKEN,
+      tokenOut: ARB_TOKEN,
+      amountIn: 100_000_000_000_000_000_000n,
+      srcChainId: 10,
+      dstChainId: 42161,
+      userAddress: '0x05f8cc8753d90d67dbb8c02118440b8283f941c9',
+    });
+
+    assert.ok(result);
+    const cctpOffer = result.offers.find((offer) => offer.rail === 'CCTP');
+    assert.ok(cctpOffer);
+    assert.equal(cctpOffer.execution.quote.swapPluginIdSrc, EMPSEAL_PLUGIN_ID_V2);
+    assert.equal(cctpOffer.execution.quote.swapPluginIdDst, EMPSEAL_PLUGIN_ID_V2);
+    assert.equal(cctpOffer.execution.quote.estimatedOut, 69_937_000_000_000_000_000n);
+
+    const decodedSrc = abiCoder.decode(
+      ['tuple(uint256 amountIn,uint256 amountOut,address[] path,address[] adapters)', 'uint256'],
+      cctpOffer.execution.quote.swapDataSrc,
+    );
+    const decodedDst = abiCoder.decode(
+      ['tuple(uint256 amountIn,uint256 amountOut,address[] path,address[] adapters)', 'uint256'],
+      cctpOffer.execution.quote.swapDataDst,
+    );
+
+    assert.equal(decodedSrc[1], 28n);
+    assert.equal(decodedDst[1], 9n);
+    assert.equal(decodedSrc[0].path[0].toLowerCase(), OP_TOKEN.toLowerCase());
+    assert.equal(decodedDst[0].path[1].toLowerCase(), ARB_TOKEN.toLowerCase());
   });
 });
 

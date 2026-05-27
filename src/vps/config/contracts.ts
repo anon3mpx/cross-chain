@@ -11,8 +11,11 @@ const BYTES32_RE = /^0x[0-9a-fA-F]{64}$/;
 const ADDRESS_RE = /^0x[0-9a-fA-F]{40}$/;
 
 // EmpsealSwapPlugin.pluginId = keccak256("EMPSEAL_V1")
-const DEFAULT_EMPSEAL_SWAP_PLUGIN_ID =
+export const EMPSEAL_SWAP_PLUGIN_ID_V1 =
   '0x62d69a2b9d5c124337a6d3df09e273f71aa045b7b8758c9c6695143a40ad10b6';
+// EmpsealSwapPluginV2.pluginId = keccak256("EMPSEAL_V2")
+export const EMPSEAL_SWAP_PLUGIN_ID_V2 =
+  '0x5d8b8eb7751f2229b8682b4a18584d8dbff6c6ab4bf2ecdbd6bd3f7d7bcf9d30';
 const DEFAULT_UNIV2_SWAP_PLUGIN_ID =
   '0xd7099269d6f03dcf43069b0eaaa4e0cf1c11e826eeb6895af3e6dc361969a8f7';
 const DEFAULT_UNIV3_SWAP_PLUGIN_ID =
@@ -82,7 +85,7 @@ export function getSwapPluginIdForChain(chainId: number): string | undefined {
   const kind = getSwapPluginKindForChain(chainId);
   if (kind === 'UNIV2' || kind === 'UNISWAP_V2') return DEFAULT_UNIV2_SWAP_PLUGIN_ID;
   if (kind === 'UNIV3' || kind === 'UNISWAP_V3') return DEFAULT_UNIV3_SWAP_PLUGIN_ID;
-  if (kind === 'EMPSEAL') return DEFAULT_EMPSEAL_SWAP_PLUGIN_ID;
+  if (kind === 'EMPSEAL') return EMPSEAL_SWAP_PLUGIN_ID_V1;
   return undefined;
 }
 
@@ -98,4 +101,13 @@ export function getEmpsealRouterAddressForChain(chainId: number): string | undef
     readEnv(`CHAIN_${chainId}_EMPSEAL_ROUTER`)
     ?? readEnv(`CHAIN_${chainId}_DEX_EMPSEAL_ROUTER`)
   );
+}
+
+export function getEmpsealRouterFeeBpsForChain(chainId: number): number {
+  const raw = readEnv(`CHAIN_${chainId}_EMPSEAL_ROUTER_FEE_BPS`)
+    ?? readEnv('DEFAULT_EMPSEAL_ROUTER_FEE_BPS')
+    ?? '0';
+  const parsed = Number.parseInt(raw, 10);
+  if (!Number.isFinite(parsed)) return 0;
+  return Math.max(0, Math.min(9_900, parsed));
 }

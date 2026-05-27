@@ -103,6 +103,23 @@ export function buildReceiverExecutionPayloadFromIntent(intent: any): string {
   );
 }
 
+export function recoverFastTransferExecuteAmountFromReceiverBalance(
+  receiverBalance: bigint,
+  payload: string,
+): bigint {
+  const decoded = AbiCoder.defaultAbiCoder().decode(
+    ['bytes32', 'address', 'address', 'uint256', 'address', 'bytes32', 'uint256', 'bytes', 'bytes32'],
+    payload,
+  );
+  const minRouteAmount = BigInt(decoded[6]);
+  if (receiverBalance < minRouteAmount) {
+    throw new Error(
+      `receiver balance ${receiverBalance} is below minRouteAmount ${minRouteAmount} for already-relayed fast transfer`,
+    );
+  }
+  return receiverBalance;
+}
+
 export function extractReceivedSettlementAmountFromReceipt(
   receipt: ethers.TransactionReceipt | null,
   settlementToken: string,
@@ -518,11 +535,11 @@ export class CctpAttestationWorker {
       let executeAmount = mintedAmount;
       if (executeAmount === 0n) {
         if (job.isFastTransfer) {
-          throw new Error(
-            `cannot determine minted amount for already-relayed fast transfer intent=${job.intentId}`,
-          );
+          const receiverBalance = BigInt(await settlementTokenContract.balanceOf(job.receiver));
+          executeAmount = recoverFastTransferExecuteAmountFromReceiverBalance(receiverBalance, job.payload);
+        } else {
+          executeAmount = job.amount;
         }
-        executeAmount = job.amount;
       }
 
       const approved = await receiver.approvedCallers(signer.address);

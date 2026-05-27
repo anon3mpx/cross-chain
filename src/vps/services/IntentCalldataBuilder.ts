@@ -17,6 +17,7 @@ import { getRailEnumValue } from '../rails/registry';
 const ROUTER_V1_IFACE = new Interface([
   'function initiateSwap((address user,address tokenIn,address tokenOut,uint256 amountIn,uint256 minAmountOut,uint256 minSrcSwapOut,uint32 dstChainId,uint8 rail,address routeToken,bytes32 routeAssetId,address expectedDstRouteToken,bytes32 expectedDstRouteAssetId,uint256 minRouteAmount,uint256 feeAmount,bytes swapDataSrc,bytes swapDataDst,bytes32 swapPluginIdSrc,bytes32 dstSwapPluginId,bytes32 railPluginId,bytes railData,uint256 dstGasLimit,address dstReceiver,bytes nativeDstAddress,string thorAssetIdentifier,uint256 minThorOutput,bytes32 intentId,uint256 deadline) intent,bytes signature)',
 ]);
+const ZERO_PLUGIN_ID = `0x${'0'.repeat(64)}`;
 
 const ROUTER_REGISTRY_ABI = [
   'function registry() view returns (address)',
@@ -169,6 +170,13 @@ export async function buildRouterCalldata(
     intentId: normalizeBytes32(intentId, 'intentId'),
     deadline: toBigIntStrict(quote.expiresAt, 'expiresAt'),
   };
+
+  if (payload.swapPluginIdSrc !== ZERO_PLUGIN_ID && payload.swapDataSrc === '0x') {
+    throw new Error('calldata: swapDataSrc cannot be empty when swapPluginIdSrc is set');
+  }
+  if (payload.dstSwapPluginId !== ZERO_PLUGIN_ID && payload.swapDataDst === '0x') {
+    throw new Error('calldata: swapDataDst cannot be empty when dstSwapPluginId is set');
+  }
 
   const signature = await signRouterIntent(payload, quote.srcChainId, getRouterAddress(quote.srcChainId));
   return ROUTER_V1_IFACE.encodeFunctionData('initiateSwap', [payload, signature]);

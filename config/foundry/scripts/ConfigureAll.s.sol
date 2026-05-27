@@ -59,6 +59,7 @@ contract ConfigureAll is ScriptBase {
         _registerRailIfProvided(registry, vm.envOr("RAIL_PLUGIN_LAYERZERO", address(0)));
 
         _registerSwapIfProvided(registry, vm.envOr("SWAP_PLUGIN_EMPSEAL", address(0)));
+        _registerSwapIfProvided(registry, vm.envOr("SWAP_PLUGIN_EMPSEAL_V2", address(0)));
         _registerSwapIfProvided(registry, vm.envOr("SWAP_PLUGIN_UNIV2", address(0)));
         _registerSwapIfProvided(registry, vm.envOr("SWAP_PLUGIN_UNIV3", address(0)));
     }

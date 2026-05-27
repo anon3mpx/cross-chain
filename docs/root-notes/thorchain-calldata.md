@@ -8,7 +8,8 @@ curl -X 'POST' \
     "amountIn": "500000000000000",
     "srcChainId": 1,
     "dstChainId": 1,
-    "userAddress": "0x05F8cC8753D90d67DBB8c02118440b8283F941c9"
+    "userAddress": "0x05F8cC8753D90d67DBB8c02118440b8283F941c9",
+    "nativeDstAddress": "0x05F8cC8753D90d67DBB8c02118440b8283F941c9"
   }'
 
 {
