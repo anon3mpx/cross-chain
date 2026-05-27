@@ -99,17 +99,21 @@ export interface GasZipClientLike {
 export interface GasZipClientOptions {
   baseUrl?: string;
   fetchFn?: typeof fetch;
+  timeoutMs?: number;
 }
 
 const DEFAULT_BASE_URL = 'https://backend.gas.zip/v2';
+const DEFAULT_TIMEOUT_MS = 5_000;
 
 export class GasZipClient implements GasZipClientLike {
   private readonly baseUrl: string;
   private readonly fetchFn: typeof fetch;
+  private readonly timeoutMs: number;
 
   constructor(options: GasZipClientOptions = {}) {
     this.baseUrl = (options.baseUrl ?? process.env.GASZIP_API_BASE_URL ?? DEFAULT_BASE_URL).replace(/\/+$/, '');
     this.fetchFn = options.fetchFn ?? fetch;
+    this.timeoutMs = options.timeoutMs ?? this._readIntEnv('GASZIP_API_TIMEOUT_MS', DEFAULT_TIMEOUT_MS);
   }
 
   async listChains(): Promise<GasZipChainsResponse> {
@@ -141,7 +145,10 @@ export class GasZipClient implements GasZipClientLike {
   }
 
   async searchTransaction(hash: string): Promise<GasZipSearchResponse | null> {
-    const response = await this.fetchFn(`${this.baseUrl}/search/${hash}`);
+    const abortController = new AbortController();
+    const timeout = setTimeout(() => abortController.abort(), this.timeoutMs);
+    const response = await this.fetchFn(`${this.baseUrl}/search/${hash}`, { signal: abortController.signal })
+      .finally(() => clearTimeout(timeout));
     if (!response.ok) {
       throw new Error(`GasZipClient request failed: ${response.status}`);
     }
@@ -155,10 +162,20 @@ export class GasZipClient implements GasZipClientLike {
   }
 
   private async _request<T>(path: string): Promise<T> {
-    const response = await this.fetchFn(`${this.baseUrl}${path}`);
+    const abortController = new AbortController();
+    const timeout = setTimeout(() => abortController.abort(), this.timeoutMs);
+    const response = await this.fetchFn(`${this.baseUrl}${path}`, { signal: abortController.signal })
+      .finally(() => clearTimeout(timeout));
     if (!response.ok) {
       throw new Error(`GasZipClient request failed: ${response.status}`);
     }
     return response.json() as Promise<T>;
+  }
+
+  private _readIntEnv(name: string, fallback: number): number {
+    const raw = process.env[name];
+    if (!raw) return fallback;
+    const parsed = Number(raw);
+    return Number.isFinite(parsed) && parsed > 0 ? Math.floor(parsed) : fallback;
   }
 }

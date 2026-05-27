@@ -158,14 +158,17 @@ export interface LayerZeroValueTransferApiClientOptions {
   baseUrl?: string;
   apiKey?: string;
   fetchFn?: typeof fetch;
+  timeoutMs?: number;
 }
 
 const DEFAULT_BASE_URL = 'https://transfer.layerzero-api.com/v1';
+const DEFAULT_TIMEOUT_MS = 5_000;
 
 export class LayerZeroValueTransferApiClient {
   private readonly baseUrl: string;
   private readonly apiKey?: string;
   private readonly fetchFn: typeof fetch;
+  private readonly timeoutMs: number;
 
   constructor(options: LayerZeroValueTransferApiClientOptions = {}) {
     this.baseUrl = this._normalizeBaseUrl(
@@ -173,6 +176,7 @@ export class LayerZeroValueTransferApiClient {
     );
     this.apiKey = options.apiKey ?? process.env.LAYERZERO_TRANSFER_API_KEY;
     this.fetchFn = options.fetchFn ?? fetch;
+    this.timeoutMs = options.timeoutMs ?? this._readIntEnv('LAYERZERO_TRANSFER_API_TIMEOUT_MS', DEFAULT_TIMEOUT_MS);
   }
 
   async listLayerZeroValueTransferApiChains(
@@ -290,10 +294,13 @@ export class LayerZeroValueTransferApiClient {
       headers['x-api-key'] = this.apiKey;
     }
 
+    const abortController = new AbortController();
+    const timeout = setTimeout(() => abortController.abort(), this.timeoutMs);
     const response = await this.fetchFn(`${this.baseUrl}${path}`, {
       ...init,
       headers,
-    });
+      signal: abortController.signal,
+    }).finally(() => clearTimeout(timeout));
 
     const text = await response.text();
     const data = (text ? this._parseJson(text) : {}) as { error?: { message?: unknown } | string };
@@ -347,5 +354,12 @@ export class LayerZeroValueTransferApiClient {
       throw new Error('LayerZero Value Transfer API base URL must be http(s)');
     }
     return trimmed;
+  }
+
+  private _readIntEnv(name: string, fallback: number): number {
+    const raw = process.env[name];
+    if (!raw) return fallback;
+    const parsed = Number(raw);
+    return Number.isFinite(parsed) && parsed > 0 ? Math.floor(parsed) : fallback;
   }
 }

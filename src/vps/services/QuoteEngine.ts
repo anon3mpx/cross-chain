@@ -12,6 +12,10 @@ import {
   OfferSet,
   GasZipOfferComposition,
   ProviderAssetRef,
+  QuoteAmountView,
+  QuoteAmountsBreakdown,
+  QuoteLegView,
+  QuoteLegsBreakdown,
   QuoteRequest,
   QuoteResult,
   Rail,
@@ -366,6 +370,8 @@ export class QuoteEngine {
       deliveryShape: this._deliveryShapeFor(executionQuote),
       executionMode: this._executionModeFor(executionQuote.rail),
       routeAsset: builtQuote.routeAsset,
+      amounts: executionQuote.amounts,
+      legs: executionQuote.legs,
       sourceSettlementAsset: builtQuote.sourceSettlementAsset,
       destinationSettlementAsset: builtQuote.destinationSettlementAsset,
       economics,
@@ -493,6 +499,62 @@ export class QuoteEngine {
 
     const minAmountOut = (dstSwapAmount * (BPS_DENOMINATOR - BigInt(QUOTE_SLIPPAGE_BPS))) / BPS_DENOMINATOR;
     const minSettlementAmount = this._applySlippage(bridgeAmount, QUOTE_SLIPPAGE_BPS);
+    const settlementTokenAddress = settlementAddrDst ?? settlementAddrSrc;
+    const amounts = this._buildBreakdownAmounts({
+      input: this._tokenAmount(req.srcChainId, req.tokenIn, req.amountIn, routeAsset.routeAsset, routeAsset.sourceSettlementAsset),
+      bridgeSettlement: this._tokenAmount(
+        req.dstChainId,
+        settlementTokenAddress,
+        bridgeAmount,
+        routeAsset.destinationSettlementAsset,
+        routeAsset.routeAsset,
+      ),
+      minimumBridgeSettlement: this._tokenAmount(
+        req.dstChainId,
+        settlementTokenAddress,
+        minSettlementAmount,
+        routeAsset.destinationSettlementAsset,
+        routeAsset.routeAsset,
+      ),
+      output: this._tokenAmount(req.dstChainId, req.tokenOut, dstSwapAmount, routeAsset.destinationSettlementAsset),
+      minimumOutput: this._tokenAmount(req.dstChainId, req.tokenOut, minAmountOut, routeAsset.destinationSettlementAsset),
+    });
+    const legs = this._buildLegBreakdown({
+      srcSwap: srcSwapNeeded
+        ? this._legView(
+          req.srcChainId,
+          req.tokenIn,
+          settlementAddrSrc,
+          amountAfterFee,
+          srcSwapAmount,
+          minSrcSwapOut,
+          routeAsset.routeAsset,
+          routeAsset.sourceSettlementAsset,
+        )
+        : undefined,
+      bridge: this._legView(
+        req.srcChainId,
+        settlementAddrSrc,
+        settlementTokenAddress,
+        srcSwapAmount,
+        bridgeAmount,
+        minSettlementAmount,
+        routeAsset.sourceSettlementAsset,
+        routeAsset.destinationSettlementAsset,
+      ),
+      dstSwap: dstSwapNeeded
+        ? this._legView(
+          req.dstChainId,
+          settlementTokenAddress,
+          req.tokenOut,
+          bridgeAmount,
+          dstSwapAmount,
+          minAmountOut,
+          routeAsset.destinationSettlementAsset,
+          routeAsset.routeAsset,
+        )
+        : undefined,
+    });
     const offerType = routeAsset.offerType === 'cctp_fast' || routeAsset.offerType === 'cctp_standard'
       ? (isCctpFastPluginId(railPluginId) ? 'cctp_fast' : 'cctp_standard')
       : (hop.rail === Rail.AXELAR
@@ -511,6 +573,8 @@ export class QuoteEngine {
         estimatedOut:    dstSwapAmount,
         minAmountOut,
         minSrcSwapOut,
+        amounts,
+        legs,
         feeAmountUSD:    totalFeeUSD,
         feeAmountToken,
         rail:            hop.rail,
@@ -708,22 +772,22 @@ export class QuoteEngine {
       .buildRoutes(req.srcChainId, req.dstChainId, amountUSD, req.urgency ?? 'normal')
       .filter((route) => route.viable && route.hops.length === 1 && route.hops[0].rail !== Rail.THORCHAIN);
 
-    const offers = (await Promise.all(
-      candidateRoutes.map((route) => this._buildOffer(req, route, amountUSD)),
-    )).filter((offer): offer is RailOffer => offer !== null);
+    const [
+      routeOffers,
+      thorOffer,
+      layerZeroValueTransferApiOffer,
+      gasZipOffer,
+    ] = await Promise.all([
+      Promise.all(candidateRoutes.map((route) => this._buildOffer(req, route, amountUSD))),
+      this._buildTHORChainProviderDirectOffer(req, amountUSD),
+      this._buildLayerZeroValueTransferApiProviderDirectOffer(req),
+      this._buildGasZipProviderDirectOffer(req),
+    ]);
 
-    const thorOffer = await this._buildTHORChainProviderDirectOffer(req, amountUSD);
-    if (thorOffer) {
-      offers.push(thorOffer);
-    }
-    const layerZeroValueTransferApiOffer = await this._buildLayerZeroValueTransferApiProviderDirectOffer(req);
-    if (layerZeroValueTransferApiOffer) {
-      offers.push(layerZeroValueTransferApiOffer);
-    }
-    const gasZipOffer = await this._buildGasZipProviderDirectOffer(req);
-    if (gasZipOffer) {
-      offers.push(gasZipOffer);
-    }
+    const offers = routeOffers.filter((offer): offer is RailOffer => offer !== null);
+    if (thorOffer) offers.push(thorOffer);
+    if (layerZeroValueTransferApiOffer) offers.push(layerZeroValueTransferApiOffer);
+    if (gasZipOffer) offers.push(gasZipOffer);
     if (offers.length === 0) return null;
 
     const offerSet = this._toOfferSet(offers);
@@ -790,6 +854,12 @@ export class QuoteEngine {
       quoteRequest.toAssetDecimals,
       req.tokenOut,
     );
+    const minAmountOut = this._applySlippage(minThorOutput, QUOTE_SLIPPAGE_BPS);
+    const amounts = this._buildBreakdownAmounts({
+      input: this._tokenAmount(req.srcChainId, req.tokenIn, req.amountIn),
+      output: this._tokenAmount(req.dstChainId, req.tokenOut, minThorOutput, routeAsset),
+      minimumOutput: this._tokenAmount(req.dstChainId, req.tokenOut, minAmountOut, routeAsset),
+    });
     const quote: QuoteResult = {
       intentId: this._makeIntentId(),
       srcChainId: req.srcChainId,
@@ -798,8 +868,9 @@ export class QuoteEngine {
       tokenOut: req.tokenOut,
       amountIn: req.amountIn,
       estimatedOut: minThorOutput,
-      minAmountOut: this._applySlippage(minThorOutput, QUOTE_SLIPPAGE_BPS),
+      minAmountOut,
       minSrcSwapOut: 0n,
+      amounts,
       feeAmountUSD: totalFeeUSD,
       feeAmountToken,
       rail: Rail.THORCHAIN,
@@ -850,6 +921,8 @@ export class QuoteEngine {
       deliveryShape: this._deliveryShapeFor(quote),
       executionMode: 'provider_direct',
       routeAsset: quote.routeAsset,
+      amounts: quote.amounts,
+      legs: quote.legs,
       sourceSettlementAsset: quote.routeAsset!,
       destinationSettlementAsset: quote.routeAsset!,
       economics,
@@ -902,6 +975,13 @@ export class QuoteEngine {
     const intentId = this._makeIntentId();
     const nowSeconds = Math.floor(Date.now() / 1000);
     const expiresAt = this._resolveLayerZeroValueTransferApiExpiry(result.quote.expiresAt, nowSeconds);
+    const amounts = this._buildBreakdownAmounts({
+      input: this._tokenAmount(req.srcChainId, req.tokenIn, req.amountIn, sourceAsset),
+      bridgeSettlement: this._tokenAmount(req.dstChainId, result.destinationToken.address, estimatedOut, destinationAsset),
+      minimumBridgeSettlement: this._tokenAmount(req.dstChainId, result.destinationToken.address, minAmountOut, destinationAsset),
+      output: this._tokenAmount(req.dstChainId, req.tokenOut, estimatedOut, destinationAsset),
+      minimumOutput: this._tokenAmount(req.dstChainId, req.tokenOut, minAmountOut, destinationAsset),
+    });
 
     const quote: QuoteResult = {
       intentId,
@@ -913,6 +993,7 @@ export class QuoteEngine {
       estimatedOut,
       minAmountOut,
       minSrcSwapOut: 0n,
+      amounts,
       feeAmountUSD: result.feeUsd,
       feeAmountToken: 0n,
       rail: Rail.LAYERZERO,
@@ -954,6 +1035,8 @@ export class QuoteEngine {
       deliveryShape: 'direct',
       executionMode: 'provider_direct',
       routeAsset: sourceAsset,
+      amounts: quote.amounts,
+      legs: quote.legs,
       sourceSettlementAsset: sourceAsset,
       destinationSettlementAsset: destinationAsset,
       economics: {
@@ -996,6 +1079,13 @@ export class QuoteEngine {
     const settlementToken = this._inferSettlementTokenFromSymbol(result.destinationSymbol);
     const sourceAsset = this._toGasZipProviderAssetRef(result.srcChainId, result.sourceSymbol);
     const destinationAsset = this._toGasZipProviderAssetRef(result.dstChainId, result.destinationSymbol);
+    const amounts = this._buildBreakdownAmounts({
+      input: this._tokenAmount(req.srcChainId, nativePlaceholder, amountIn, sourceAsset),
+      bridgeSettlement: this._tokenAmount(req.dstChainId, nativePlaceholder, estimatedOut, destinationAsset),
+      minimumBridgeSettlement: this._tokenAmount(req.dstChainId, nativePlaceholder, estimatedOut, destinationAsset),
+      output: this._tokenAmount(req.dstChainId, nativePlaceholder, estimatedOut, destinationAsset),
+      minimumOutput: this._tokenAmount(req.dstChainId, nativePlaceholder, estimatedOut, destinationAsset),
+    });
 
     const quote: QuoteResult = {
       intentId,
@@ -1007,6 +1097,7 @@ export class QuoteEngine {
       estimatedOut,
       minAmountOut: estimatedOut,
       minSrcSwapOut: 0n,
+      amounts,
       feeAmountUSD: result.providerFeeUsd,
       feeAmountToken: 0n,
       rail: Rail.GASZIP,
@@ -1045,6 +1136,8 @@ export class QuoteEngine {
       deliveryShape: 'direct',
       executionMode: 'provider_direct',
       routeAsset: sourceAsset,
+      amounts: quote.amounts,
+      legs: quote.legs,
       sourceSettlementAsset: sourceAsset,
       destinationSettlementAsset: destinationAsset,
       economics: {
@@ -1257,6 +1350,97 @@ export class QuoteEngine {
     const quoted = await this._getSwapQuote(chainId, tokenIn, tokenOut, amountIn);
     if (quoted === null) return null;
     return { amountOut: quoted, data: '0x' };
+  }
+
+  private _buildBreakdownAmounts(input: {
+    input: QuoteAmountView;
+    bridgeSettlement?: QuoteAmountView;
+    minimumBridgeSettlement?: QuoteAmountView;
+    output: QuoteAmountView;
+    minimumOutput: QuoteAmountView;
+  }): QuoteAmountsBreakdown {
+    return {
+      input: input.input,
+      ...(input.bridgeSettlement ? { bridgeSettlement: input.bridgeSettlement } : {}),
+      ...(input.minimumBridgeSettlement ? { minimumBridgeSettlement: input.minimumBridgeSettlement } : {}),
+      output: input.output,
+      minimumOutput: input.minimumOutput,
+    };
+  }
+
+  private _buildLegBreakdown(input: {
+    srcSwap?: QuoteLegView;
+    bridge?: QuoteLegView;
+    dstSwap?: QuoteLegView;
+  }): QuoteLegsBreakdown | undefined {
+    if (!input.srcSwap && !input.bridge && !input.dstSwap) return undefined;
+    return {
+      ...(input.srcSwap ? { sourceSwap: input.srcSwap } : {}),
+      ...(input.bridge ? { bridge: input.bridge } : {}),
+      ...(input.dstSwap ? { destinationSwap: input.dstSwap } : {}),
+    };
+  }
+
+  private _legView(
+    chainId: number,
+    tokenIn: string,
+    tokenOut: string,
+    amountIn: bigint,
+    amountOut: bigint,
+    minimumAmountOut: bigint,
+    tokenInRef?: ProviderAssetRef,
+    tokenOutRef?: ProviderAssetRef,
+  ): QuoteLegView {
+    const tokenInAmount = this._tokenAmount(chainId, tokenIn, amountIn, tokenInRef);
+    const tokenOutAmount = this._tokenAmount(chainId, tokenOut, amountOut, tokenOutRef);
+    return {
+      tokenIn,
+      tokenOut,
+      amountIn,
+      amountOut,
+      minimumAmountOut,
+      ...(tokenInAmount.decimals !== undefined ? { tokenInDecimals: tokenInAmount.decimals } : {}),
+      ...(tokenOutAmount.decimals !== undefined ? { tokenOutDecimals: tokenOutAmount.decimals } : {}),
+      ...(tokenInAmount.symbol ? { tokenInSymbol: tokenInAmount.symbol } : {}),
+      ...(tokenOutAmount.symbol ? { tokenOutSymbol: tokenOutAmount.symbol } : {}),
+    };
+  }
+
+  private _tokenAmount(
+    chainId: number,
+    token: string,
+    amount: bigint,
+    ...refs: Array<ProviderAssetRef | undefined>
+  ): QuoteAmountView {
+    const matched = refs.find((ref) => this._providerAssetMatchesToken(ref, token));
+    if (matched) {
+      return {
+        token,
+        amount,
+        decimals: matched.decimals,
+        symbol: matched.canonicalAssetId,
+      };
+    }
+
+    const settlementToken = this._resolveStableSettlementToken(token, chainId);
+    if (settlementToken) {
+      return {
+        token,
+        amount,
+        decimals: this._settlementTokenDecimals(settlementToken),
+        symbol: settlementToken,
+      };
+    }
+
+    return { token, amount };
+  }
+
+  private _providerAssetMatchesToken(ref: ProviderAssetRef | undefined, token: string): boolean {
+    if (!ref || !this._isAddress(token)) return false;
+    const normalized = token.toLowerCase();
+    return [ref.tokenAddress, ref.srcTokenAddress, ref.dstTokenAddress]
+      .filter((value): value is string => typeof value === 'string' && this._isAddress(value))
+      .some((value) => value.toLowerCase() === normalized);
   }
 
   private _isEmpsealSwapChain(chainId: number): boolean {

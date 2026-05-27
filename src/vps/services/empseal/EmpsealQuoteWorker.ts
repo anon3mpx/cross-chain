@@ -26,7 +26,8 @@ const EMPSEAL_ROUTER_RESULT_INTERFACES = [
 ];
 
 const abiCoder = AbiCoder.defaultAbiCoder();
-const DEFAULT_MAX_STEPS = 2n;
+const DEFAULT_MAX_STEPS = 1n;
+const DEFAULT_RPC_TIMEOUT_MS = 5_000;
 
 export interface EmpsealTrade {
   amountIn: bigint;
@@ -62,6 +63,7 @@ export interface EmpsealQuoteWorkerLike {
 export class EmpsealQuoteWorker implements EmpsealQuoteWorkerLike {
   private readonly providers = new Map<number, JsonRpcProvider>();
   private readonly routerAddresses = new Map<number, string>();
+  private readonly timeoutMs = this._readIntEnv('EMPSEAL_QUOTE_TIMEOUT_MS', DEFAULT_RPC_TIMEOUT_MS);
 
   async buildSwapPlan(input: EmpsealSwapPlanRequest): Promise<EmpsealSwapPlan | null> {
     const router = this._router(input.chainId);
@@ -73,7 +75,7 @@ export class EmpsealQuoteWorker implements EmpsealQuoteWorkerLike {
 
     try {
       const provider = this._provider(input.chainId, router.rpcUrl);
-      const raw = await provider.call({
+      const raw = await this._withTimeout(provider.call({
         to: router.address,
         data: EMPSEAL_ROUTER_CALL_INTERFACE.encodeFunctionData('findBestPath', [
           input.amountIn,
@@ -81,7 +83,7 @@ export class EmpsealQuoteWorker implements EmpsealQuoteWorkerLike {
           tokenOut,
           DEFAULT_MAX_STEPS,
         ]),
-      });
+      }), this.timeoutMs, `Empseal quote timeout for chain ${input.chainId}`);
       const offer = this._decodeFormattedOffer(raw);
       const amounts = offer.amounts;
       const path = offer.path;
@@ -172,5 +174,28 @@ export class EmpsealQuoteWorker implements EmpsealQuoteWorkerLike {
     } catch {
       return null;
     }
+  }
+
+  private _readIntEnv(name: string, fallback: number): number {
+    const raw = process.env[name];
+    if (!raw) return fallback;
+    const parsed = Number(raw);
+    return Number.isFinite(parsed) && parsed > 0 ? Math.floor(parsed) : fallback;
+  }
+
+  private async _withTimeout<T>(promise: Promise<T>, timeoutMs: number, message: string): Promise<T> {
+    return await new Promise<T>((resolve, reject) => {
+      const timer = setTimeout(() => reject(new Error(message)), timeoutMs);
+      promise.then(
+        (value) => {
+          clearTimeout(timer);
+          resolve(value);
+        },
+        (error) => {
+          clearTimeout(timer);
+          reject(error);
+        },
+      );
+    });
   }
 }

@@ -148,6 +148,39 @@ export interface DestinationGasRequest {
   recipient?: string;
 }
 
+export interface QuoteAmountView {
+  token: string;
+  amount: bigint;
+  decimals?: number;
+  symbol?: string;
+}
+
+export interface QuoteLegView {
+  tokenIn: string;
+  tokenOut: string;
+  amountIn: bigint;
+  amountOut: bigint;
+  minimumAmountOut?: bigint;
+  tokenInDecimals?: number;
+  tokenOutDecimals?: number;
+  tokenInSymbol?: string;
+  tokenOutSymbol?: string;
+}
+
+export interface QuoteAmountsBreakdown {
+  input: QuoteAmountView;
+  bridgeSettlement?: QuoteAmountView;
+  minimumBridgeSettlement?: QuoteAmountView;
+  output: QuoteAmountView;
+  minimumOutput: QuoteAmountView;
+}
+
+export interface QuoteLegsBreakdown {
+  sourceSwap?: QuoteLegView;
+  bridge?: QuoteLegView;
+  destinationSwap?: QuoteLegView;
+}
+
 export interface QuoteResult {
   intentId:          string;
   srcChainId:        number;
@@ -164,6 +197,8 @@ export interface QuoteResult {
   railType:          'messaging' | 'liquidity';
   settlementToken:   SettlementToken;
   routeAsset?:       RouteAssetRef;
+  amounts?:          QuoteAmountsBreakdown;
+  legs?:             QuoteLegsBreakdown;
   settlementAssetId: string;    // bytes32-like provider/canonical asset id for source settlement
   expectedDstSettlementToken: string; // destination settlement token expected by ReceiverV1
   expectedDstSettlementAssetId: string; // bytes32-like expected destination settlement asset id
@@ -249,6 +284,8 @@ export interface RailOffer {
   deliveryShape?: DeliveryShape;
   executionMode?: ExecutionMode;
   routeAsset?: RouteAssetRef;
+  amounts?: QuoteAmountsBreakdown;
+  legs?: QuoteLegsBreakdown;
   sourceSettlementAsset: ProviderAssetRef;
   destinationSettlementAsset: ProviderAssetRef;
   economics: OfferEconomics;
