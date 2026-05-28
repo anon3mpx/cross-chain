@@ -82,6 +82,7 @@ const LOWER_HEX_ADDR_RE = /^0x[0-9a-f]{40}$/;
 const ROUTER_MAX_FEE_BPS = 100; // RouterV1.MAX_FEE_BPS
 const PROTOCOL_FEE_BPS = 15; // 0.15%
 const QUOTE_SLIPPAGE_BPS = 10; // 0.1%
+const LAYERZERO_STARGATE_POOL_SLIPPAGE_BPS = 50; // 0.5%
 const BPS_DENOMINATOR = 10_000n;
 const USDC_MICRO_UNITS = 1_000_000n;
 const abiCoder = AbiCoder.defaultAbiCoder();
@@ -496,8 +497,9 @@ export class QuoteEngine {
       : ZERO_PLUGIN_ID;
     if (dstSwapNeeded && dstSwapPluginId === ZERO_PLUGIN_ID) return null;
 
-    const minAmountOut = (dstSwapAmount * (BPS_DENOMINATOR - BigInt(QUOTE_SLIPPAGE_BPS))) / BPS_DENOMINATOR;
-    const minSettlementAmount = this._applySlippage(bridgeAmount, QUOTE_SLIPPAGE_BPS);
+    const executionSlippageBps = this._quoteSlippageBps(hop.rail, routeAsset.offerType);
+    const minAmountOut = this._applySlippage(dstSwapAmount, executionSlippageBps);
+    const minSettlementAmount = this._applySlippage(bridgeAmount, executionSlippageBps);
     const settlementTokenAddress = settlementAddrDst ?? settlementAddrSrc;
     const amounts = this._buildBreakdownAmounts({
       input: this._tokenAmount(req.srcChainId, req.tokenIn, req.amountIn, routeAsset.routeAsset, routeAsset.sourceSettlementAsset),
@@ -1672,6 +1674,14 @@ export class QuoteEngine {
       default:
         throw new Error(`quote engine: unsupported LayerZero offer type ${offerType}`);
     }
+  }
+
+  private _quoteSlippageBps(rail: Rail, offerType: RailOfferType): number {
+    if (rail === Rail.LAYERZERO && offerType === 'lz_stargate_pool') {
+      return LAYERZERO_STARGATE_POOL_SLIPPAGE_BPS;
+    }
+
+    return QUOTE_SLIPPAGE_BPS;
   }
 
   private async _estimateUSD(token: string, chainId: number, amount: bigint): Promise<number> {

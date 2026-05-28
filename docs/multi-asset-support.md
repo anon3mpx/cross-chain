@@ -60,7 +60,7 @@ Arbitrary `tokenIn -> tokenOut` is only realistically possible on chains with ag
   - Axelar needs destination token-id mapping per asset/chain.
   - LayerZero needs OFT, destination EID, and options per route.
 - On-chain deployment limits: source Router/registry and destination Receiver/adapter addresses must exist and be configured.
-- Quote realism limits: if real DEX quote adapters are not configured, default mock quote behavior can overstate practical token support.
+- Quote realism limits: if real DEX quote adapters are not configured, swap-dependent routes will not quote even if the chain is aggregator-enabled.
 - Route materialization limit: `QuoteEngine` currently builds offers from direct single-hop routes only (`route.hops.length === 1`), even though hub-hop route logic exists.
 
 ## Practical Answer To "Can We Support Everything?"
