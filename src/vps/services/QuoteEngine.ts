@@ -413,12 +413,11 @@ export class QuoteEngine {
     const settlementAddrSrc = routeAsset.sourceRouteToken;
     if (!settlementAddrSrc) return null;
 
-    const railFeeUSD = route.totalFeeUSD;
-    const protocolFeeUSD = amountUSD * (PROTOCOL_FEE_BPS / 10_000);
-    const totalFeeUSD = protocolFeeUSD;
     const feeRatioBps = BigInt(Math.min(PROTOCOL_FEE_BPS, ROUTER_MAX_FEE_BPS));
     const feeAmountToken = (req.amountIn * feeRatioBps) / BPS_DENOMINATOR;
     if (feeAmountToken >= req.amountIn) return null;
+    const protocolFeeUSD = this._protocolFeeUSD(req.tokenIn, req.srcChainId, feeAmountToken, amountUSD);
+    const totalFeeUSD = protocolFeeUSD;
     const amountAfterFee = req.amountIn - feeAmountToken;
 
     // Get src swap quote: tokenIn → settlementToken
@@ -445,7 +444,7 @@ export class QuoteEngine {
     let railPluginId = config.pluginId;
     let railData = '0x';
     let bridgeAmount = srcSwapAmount;
-    let realizedRailFeeUSD = railFeeUSD;
+    let realizedRailFeeUSD = 0;
     let outboundFeeUSD: number | undefined;
     if (hop.rail === Rail.CCTP) {
       const cctpPlan = await this._selectCctpPlan(req, srcSwapAmount, config.pluginId);
@@ -811,11 +810,11 @@ export class QuoteEngine {
 
     const config = getRailConfig(Rail.THORCHAIN);
     const railFeeUSD = config.fee;
-    const protocolFeeUSD = amountUSD * (PROTOCOL_FEE_BPS / 10_000);
-    const totalFeeUSD = protocolFeeUSD;
     const feeRatioBps = BigInt(Math.min(PROTOCOL_FEE_BPS, ROUTER_MAX_FEE_BPS));
     const feeAmountToken = (req.amountIn * feeRatioBps) / BPS_DENOMINATOR;
     if (feeAmountToken >= req.amountIn) return null;
+    const protocolFeeUSD = this._protocolFeeUSD(req.tokenIn, req.srcChainId, feeAmountToken, amountUSD);
+    const totalFeeUSD = protocolFeeUSD;
     const amountAfterFee = req.amountIn - feeAmountToken;
 
     const quoteRequest = await buildTHORChainQuoteRequestFromPair({
@@ -1771,6 +1770,19 @@ export class QuoteEngine {
       default:
         return 0;
     }
+  }
+
+  private _protocolFeeUSD(
+    token: string,
+    chainId: number,
+    feeAmountToken: bigint,
+    fallbackAmountUSD: number,
+  ): number {
+    const settlementToken = this._resolveStableSettlementToken(token, chainId);
+    if (settlementToken === SettlementToken.USDC || settlementToken === SettlementToken.USDT) {
+      return this._settlementTokenToUSD(settlementToken, feeAmountToken);
+    }
+    return fallbackAmountUSD * (PROTOCOL_FEE_BPS / 10_000);
   }
 
   private _applySlippage(amount: bigint, bps: number): bigint {

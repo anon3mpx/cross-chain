@@ -23,11 +23,23 @@ These scripts are fully env-driven. You add addresses/private key in your shell 
 - Deploys `EmpxOFT` (LayerZero OFT token) on the current chain
 - Supports chain-scoped env keys using suffixes, for example `LZ_ENDPOINT_421614`
 
-4. `DeployEmpsealSwapPluginV2.s.sol`
+4. `DeployLayerZeroRailPlugin.s.sol`
+- Deploys only `LayerZeroRailPlugin` on the current chain
+- Intended for incremental rail-plugin upgrades such as `LZ_V3` without redeploying `RouterV1` or `PluginRegistry`
+
+5. `ConfigureLayerZeroRailPlugin.s.sol`
+- Configures an already-deployed `LayerZeroRailPlugin` on the current chain
+- Can optionally:
+  - register the plugin in an existing `PluginRegistry`
+  - configure multiple outbound LayerZero routes on the local chain
+  - configure multiple trusted peers on the local `LayerZeroReceiverAdapter`
+  - configure multiple settlement-token / compose-sender rows on the local `LayerZeroReceiverAdapter`
+
+6. `DeployEmpsealSwapPluginV2.s.sol`
 - Deploys only `EmpsealSwapPluginV2` and immediately registers it in an existing `PluginRegistry`
 - Supports chain-scoped env keys using suffixes, for example `EMPSEAL_ROUTER_8453`
 
-5. `DeployITS.s.sol`
+7. `DeployITS.s.sol`
 - Deploys/configures Axelar Interchain Tokens via ITS factory actions
 - Supports chain-scoped env keys using suffixes, for example `ITS_ACTION_84532`
 
@@ -75,6 +87,18 @@ forge script config/foundry/scripts/DeployOFT.s.sol:DeployOFT \
   --rpc-url "$RPC_URL" \
   --broadcast -vvv
 
+# Deploy LayerZero rail plugin only (writes tx on selected chain)
+forge script config/foundry/scripts/DeployLayerZeroRailPlugin.s.sol:DeployLayerZeroRailPlugin \
+  --config-path config/foundry.toml \
+  --rpc-url "$RPC_URL" \
+  --broadcast -vvv
+
+# Configure LayerZero rail plugin only (writes txs on selected chain)
+forge script config/foundry/scripts/ConfigureLayerZeroRailPlugin.s.sol:ConfigureLayerZeroRailPlugin \
+  --config-path config/foundry.toml \
+  --rpc-url "$RPC_URL" \
+  --broadcast -vvv
+
 # Deploy and register EmpsealSwapPluginV2 only (writes txs on selected chain)
 forge script config/foundry/scripts/DeployEmpsealSwapPluginV2.s.sol:DeployEmpsealSwapPluginV2 \
   --config-path config/foundry.toml \
@@ -100,6 +124,46 @@ Required:
 Optional:
 - `OFT_INITIAL_SUPPLY` or `OFT_INITIAL_SUPPLY_<CHAIN_ID>`
 - `OFT_INITIAL_SUPPLY_RECIPIENT` or `OFT_INITIAL_SUPPLY_RECIPIENT_<CHAIN_ID>`
+
+## LayerZero Rail Plugin Configure Env Keys
+
+Required:
+- `DEPLOYER_PRIVATE_KEY`
+- `LZ_PLUGIN`
+
+Optional:
+- `PLUGIN_REGISTRY`
+- `LZ_ROUTE_COUNT`
+- `LZ_ADAPTER`
+- `LZ_TRUSTED_PEER_COUNT`
+- `LZ_ASSET_COUNT`
+
+Indexed route keys:
+- `LZ_ROUTE_<n>_CHAIN_ID`
+- `LZ_ROUTE_<n>_EID`
+- `LZ_ROUTE_<n>_RECEIVER`
+- `LZ_ROUTE_<n>_OPTIONS`
+- `LZ_ROUTE_<n>_FAMILY`
+- `LZ_ROUTE_<n>_TOKEN`
+- `LZ_ROUTE_<n>_OFT`
+
+Indexed trusted-peer keys:
+- `LZ_TRUSTED_PEER_<n>_SOURCE_EID`
+- `LZ_TRUSTED_PEER_<n>_SOURCE_PEER_ADDRESS`
+
+Indexed adapter asset keys:
+- `LZ_ASSET_<n>_SOURCE_EID`
+- `LZ_ASSET_<n>_SETTLEMENT_TOKEN`
+- `LZ_ASSET_<n>_COMPOSE_SENDER`
+
+## NPM Helpers
+
+Chain-specific env files can be passed to the dedicated LayerZero commands with `FOUNDRY_ENV_FILE`.
+
+```bash
+FOUNDRY_ENV_FILE=/path/to/op-mainnet.env npm run sol:deploy:lz-plugin
+FOUNDRY_ENV_FILE=/path/to/op-mainnet.env npm run sol:configure:lz-plugin
+```
 
 ## ITS Deploy Env Keys
 

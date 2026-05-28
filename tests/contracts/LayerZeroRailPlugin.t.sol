@@ -24,8 +24,11 @@ contract MockLayerZeroToken is ERC20 {
 }
 
 contract MockLayerZeroOFT is ILayerZeroOFT {
+    error Stargate_SlippageTooHigh();
+
     MockLayerZeroToken public immutable token;
     uint256 public nativeFee;
+    uint256 public amountReceivedLd;
 
     uint32 public lastDstEid;
     bytes32 public lastTo;
@@ -38,6 +41,7 @@ contract MockLayerZeroOFT is ILayerZeroOFT {
     constructor(address _token, uint256 _nativeFee) {
         token = MockLayerZeroToken(_token);
         nativeFee = _nativeFee;
+        amountReceivedLd = type(uint256).max;
     }
 
     function quoteSend(
@@ -53,6 +57,11 @@ contract MockLayerZeroOFT is ILayerZeroOFT {
         address payable
     ) external payable returns (MessagingReceipt memory receipt, OFTReceipt memory oftReceipt) {
         require(msg.value == _fee.nativeFee, "native fee mismatch");
+
+        uint256 receivedAmount = amountReceivedLd == type(uint256).max
+            ? _sendParam.amountLD
+            : amountReceivedLd;
+        if (_sendParam.minAmountLD > receivedAmount) revert Stargate_SlippageTooHigh();
 
         lastDstEid = _sendParam.dstEid;
         lastTo = _sendParam.to;
@@ -70,8 +79,12 @@ contract MockLayerZeroOFT is ILayerZeroOFT {
         });
         oftReceipt = OFTReceipt({
             amountSentLD: _sendParam.amountLD,
-            amountReceivedLD: _sendParam.amountLD
+            amountReceivedLD: receivedAmount
         });
+    }
+
+    function setAmountReceivedLd(uint256 _amountReceivedLd) external {
+        amountReceivedLd = _amountReceivedLd;
     }
 }
 
@@ -87,6 +100,7 @@ contract LayerZeroRailPluginTest {
     uint256 private constant LZ_NATIVE_FEE = 0.005 ether;
     uint8 private constant FAMILY_OFT = 0;
     uint8 private constant FAMILY_OFT_ADAPTER = 1;
+    uint8 private constant FAMILY_STARGATE_POOL = 2;
 
     function setUp() public {
         usdc = new MockLayerZeroToken("Mock USDC", "mUSDC", 6);
@@ -180,6 +194,45 @@ contract LayerZeroRailPluginTest {
         _assertEq(wethOft.lastPaidNativeFee(), LZ_NATIVE_FEE, "dynamic native fee mismatch");
         _assertEq(keccak256(hex"05060708"), wethOft.lastOptionsHash(), "dynamic options mismatch");
         _assertEq(weth.balanceOf(address(wethOft)), amount, "dynamic oft did not receive funds");
+    }
+
+    function testBridgeUsesMinRouteAmountForStargatePoolSlippageFloor() public {
+        uint256 amount = 250e6;
+        uint256 minRouteAmount = 249e6;
+        bytes32 settlementAssetId = _settlementAssetId(address(usdc));
+        bytes memory payload = _receiverPayload(
+            address(usdc),
+            settlementAssetId,
+            keccak256("intent-lz-stargate-slippage")
+        );
+
+        plugin.setFamilyRouteConfig(
+            DST_CHAIN,
+            FAMILY_STARGATE_POOL,
+            DST_EID,
+            address(0xBEEF),
+            hex"090a0b0c",
+            address(usdc),
+            address(oft)
+        );
+        oft.setAmountReceivedLd(minRouteAmount);
+        usdc.approve(address(plugin), amount);
+
+        IntentTypes.BridgeParams memory params =
+            _bridgeParams(
+                address(usdc),
+                amount,
+                settlementAssetId,
+                keccak256("intent-lz-stargate-slippage"),
+                payload,
+                _railData(FAMILY_STARGATE_POOL, address(oft), hex"")
+            );
+        params.minRouteAmount = minRouteAmount;
+
+        bytes32 railTxId = plugin.bridge{value: LZ_NATIVE_FEE}(params);
+
+        _assertTrue(railTxId != bytes32(0), "rail tx id is zero");
+        _assertTrue(oft.sendCalled(), "send not called");
     }
 
     function testBridgeRevertsWhenRouteMissing() public {

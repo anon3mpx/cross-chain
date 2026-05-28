@@ -59,11 +59,56 @@ export const PLUGIN_ID = {
   CCTP_V2_FAST: '0x9181644edfd36b07ccd623494a3681a4a6b9cd5d52611accda20264cd09259ac',
   AXELAR_V1: '0xdee0b34b74b60e53553685c32477090103c2b806eb925a8cd000efa92bef3e8b',
   LZ_V2: '0xc472efb7b9a986e1446d8bf9dec51e88548a1d8eb4a0810e6424d97a878d34fc',
+  LZ_V3: '0x4d9c81ec3e7c935af4c11098c9974d8aceef220bb85dcbbd24b9e83e3d8f1383',
   VIA_LABS_V1: '0x3c09500df72dbac855e61899e0dd4420addc8367cb7a5f60906b5450d7a71687',
   WORMHOLE_V2: '0xfdd3e68657787c00343d96c11d1cd189fa4dfe5f52999861b06e9f8e99ea902f',
   THORCHAIN_V1: '0x390774707b6ae71a0ce31d10394e70b6ac75b3b62ec4db96c9672cafd1b516c9',
   GASZIP_V1: '0x' + '0'.repeat(64),
 } as const;
+
+function readEnv(key: string): string | undefined {
+  const value = process.env[key];
+  if (!value) return undefined;
+  const trimmed = value.trim();
+  return trimmed.length > 0 ? trimmed : undefined;
+}
+
+function readNonNegativeNumber(value: string | undefined): number | undefined {
+  if (!value) return undefined;
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed) || parsed < 0) return undefined;
+  return parsed;
+}
+
+function readPositiveInteger(value: string | undefined): number | undefined {
+  if (!value) return undefined;
+  const parsed = Number.parseInt(value, 10);
+  if (!Number.isFinite(parsed) || parsed <= 0) return undefined;
+  return parsed;
+}
+
+function readRailNumberOverride(
+  aliases: readonly string[],
+  suffix: string,
+  parser: (value: string | undefined) => number | undefined,
+): number | undefined {
+  for (const alias of aliases) {
+    const override = parser(readEnv(`RAIL_${alias}_${suffix}`));
+    if (override !== undefined) return override;
+  }
+  return undefined;
+}
+
+function resolveRailConfig(provider: RailProviderDefinition): RailConfig {
+  const feeOverride = readRailNumberOverride(provider.aliases, 'FEE_USD', readNonNegativeNumber);
+  const etaOverride = readRailNumberOverride(provider.aliases, 'ETA_SECONDS', readPositiveInteger);
+
+  return {
+    ...provider.config,
+    fee: feeOverride ?? provider.config.fee,
+    etaSeconds: etaOverride ?? provider.config.etaSeconds,
+  };
+}
 
 const CCTP_METADATA: CctpRailMetadata = {
   standardPluginId: PLUGIN_ID.CCTP_V2,
@@ -180,7 +225,7 @@ export const RAIL_PROVIDERS: Record<Rail, RailProviderDefinition> = {
       supportsSOL: false,
       nativeUSDC: false,
       reliabilityScore: 0.99,
-      pluginId: PLUGIN_ID.LZ_V2,
+      pluginId: PLUGIN_ID.LZ_V3,
       requiresNativeAddr: false,
     },
     fallbackRails: [Rail.AXELAR, Rail.VIA_LABS, Rail.CCTP],
@@ -324,7 +369,12 @@ export const CHAIN_RAILS: Record<number, Rail[]> = {
 };
 
 export function getRailProvider(rail: Rail): RailProviderDefinition {
-  return RAIL_PROVIDERS[rail];
+  const provider = RAIL_PROVIDERS[rail];
+  if (!provider) throw new Error(`Unknown rail provider: ${rail}`);
+  return {
+    ...provider,
+    config: resolveRailConfig(provider),
+  };
 }
 
 export function getRailConfig(rail: Rail): RailConfig {
@@ -340,7 +390,7 @@ export function getRailEnumValue(rail: Rail): number {
 }
 
 export function getRailEnvAliases(rail: Rail): string[] {
-  return getRailProvider(rail)?.aliases ?? [];
+  return RAIL_PROVIDERS[rail]?.aliases ?? [rail];
 }
 
 export function getFallbackRails(rail: Rail): Rail[] {

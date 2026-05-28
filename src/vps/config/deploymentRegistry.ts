@@ -19,7 +19,7 @@ export const DEPLOYMENT_REGISTRY_BY_CHAIN: Record<number, ChainDeploymentEntry> 
     receiverV1: '0x3aef79e7455843a33e4c46d5cf283a809bf50970',
     pluginRegistry: '0x39c586ec7f4df4a3b5cb5603e6ac6a6f4b950a49',
     railPlugins: {
-      [Rail.LAYERZERO]: '0x347a213c8f511c7da06c3f0484b74309ba34f882',
+      [Rail.LAYERZERO]: '0x1FdD058dD7BFf3B8Ff805f930a25bb3e17DD12Ec',
       [Rail.CCTP]: '0xe1b589fcd71541099dd861a68a104f31e5ffebed',
       [Rail.CCTP_FAST]: '0xf788dc2af6a35339028df57d92a3d6221547d991',
     },
@@ -27,7 +27,7 @@ export const DEPLOYMENT_REGISTRY_BY_CHAIN: Record<number, ChainDeploymentEntry> 
       layerzero: '0x6f7cd979bcbd03c2fd593c5beec3b2628514392b',
     },
     swapPlugins: {
-      empseal: '0xb4d497e97ff3966c9c6c6dcd78bdb7e4f3cd940a',
+      empseal: '0x6bb306a5db3fdaa6a5d11349837b6349cdb52b7a',
     },
   },
   42161: {
@@ -35,7 +35,7 @@ export const DEPLOYMENT_REGISTRY_BY_CHAIN: Record<number, ChainDeploymentEntry> 
     receiverV1: '0xa10914363664e46154328e6e787961641ea6e3de',
     pluginRegistry: '0x1725e2c27e428eb4a18ed121b459f4055ef2cc5b',
     railPlugins: {
-      [Rail.LAYERZERO]: '0x8fb6314678a9287f9b47b96e54122444e43dde1f',
+      [Rail.LAYERZERO]: '0x4554C302D11020C82C4dEAaE45520C10b7BC28cb',
       [Rail.CCTP]: '0x396adf660cf97105308c3650575d73b5fe8f586e',
       [Rail.CCTP_FAST]: '0x970b735a5cdaaa97cd686a1da0b9f5d8332011c0',
     },
@@ -43,7 +43,7 @@ export const DEPLOYMENT_REGISTRY_BY_CHAIN: Record<number, ChainDeploymentEntry> 
       layerzero: '0xcdbc01b0dddac2729263a7ff4318a1b17b2eedb3',
     },
     swapPlugins: {
-      empseal: '0xe3b60a80cdada5fd1e05b64beb7dfe8423a3c331',
+      empseal: '0x033ec98b64c0c0098faebb61996aa5761356dfb1',
     },
   },
   84532: {
@@ -82,7 +82,7 @@ export const DEPLOYMENT_REGISTRY_BY_CHAIN: Record<number, ChainDeploymentEntry> 
     receiverV1: '0x65642ac8fd57eff8dd4651cb76be48814c8bf386',
     pluginRegistry: '0x367ec0c092d32f3883c4cacbfb6c9c3594062e90',
     railPlugins: {
-      [Rail.LAYERZERO]: '0xdb403792c55bfe26beaef235986d4f106e40ee6f',
+      [Rail.LAYERZERO]: '0xDBCCeA86821f02031a9C371276a0EaD3656B128F',
       [Rail.CCTP]: '0x1b7eb489eb0ae102720442fe15b0e08653a13404',
       [Rail.CCTP_FAST]: '0x050c6c2555c2d54aba01420fbc02ff0f1d10e8df',
     },
@@ -90,7 +90,7 @@ export const DEPLOYMENT_REGISTRY_BY_CHAIN: Record<number, ChainDeploymentEntry> 
       layerzero: '0x845cd50644a9592de43bcac0212656480744aaca',
     },
     swapPlugins: {
-      empseal: '0x1cb21a8a39e760e97c587b323d891927f3d006e9',
+      empseal: '0x965395a8fb2e52db7097fe7b4a9e0844dfd9ecc2',
     },
   },
 };

@@ -11,15 +11,22 @@ import { StaticRouteAssetPolicy, type RouteAssetPolicy } from './RouteAssetPolic
 import {
   CHAIN_RAILS,
   PLUGIN_ID,
-  RAIL_PROVIDERS,
   getChainRails,
+  getRailConfig,
 } from '../rails/registry';
 
 export { CHAIN_RAILS, PLUGIN_ID };
-export const RAIL_CONFIGS: Partial<Record<Rail, RailConfig>> = Object.values(RAIL_PROVIDERS).reduce((acc, provider) => {
-  acc[provider.rail] = provider.config;
-  return acc;
-}, {} as Partial<Record<Rail, RailConfig>>);
+export const RAIL_CONFIGS: Partial<Record<Rail, RailConfig>> = new Proxy(
+  {} as Partial<Record<Rail, RailConfig>>,
+  {
+    get: (_target, rail) => {
+      if (typeof rail !== 'string' || !Object.values(Rail).includes(rail as Rail)) {
+        return undefined;
+      }
+      return getRailConfig(rail as Rail);
+    },
+  },
+);
 
 export class RailSelector {
   constructor(

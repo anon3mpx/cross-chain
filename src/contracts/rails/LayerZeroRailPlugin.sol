@@ -12,7 +12,7 @@ import "../interfaces/IIntentTypes.sol";
 contract LayerZeroRailPlugin is IRailPlugin, ERC165, Ownable2Step {
     using SafeERC20 for IERC20;
 
-    bytes32 public constant override railId = keccak256("LZ_V2");
+    bytes32 public constant override railId = keccak256("LZ_V3");
 
     ILayerZeroEndpointV2 public immutable endpoint;
 
@@ -163,7 +163,7 @@ contract LayerZeroRailPlugin is IRailPlugin, ERC165, Ownable2Step {
             dstEid: dstEid,
             to: _addressToBytes32(dstReceiver),
             amountLD: params.amount,
-            minAmountLD: params.amount,
+            minAmountLD: params.minRouteAmount == 0 ? params.amount : params.minRouteAmount,
             extraOptions: decoded.optionsOverride.length == 0 ? route.options : decoded.optionsOverride,
             composeMsg: composePayload,
             oftCmd: bytes("")
