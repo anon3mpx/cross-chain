@@ -6,12 +6,6 @@ const UNIV2_ROUTER_ABI = [
   'function getAmountsOut(uint256 amountIn, address[] path) view returns (uint256[] amounts)',
 ];
 
-function readInt(raw: string | undefined, fallback: number): number {
-  if (!raw) return fallback;
-  const parsed = Number(raw);
-  return Number.isFinite(parsed) ? parsed : fallback;
-}
-
 function boolFromEnv(value: string | undefined, fallback = false): boolean {
   if (!value) return fallback;
   const normalized = value.trim().toLowerCase();
@@ -41,16 +35,6 @@ export function registerDexQuoteAdapters(
         const out = amounts?.[amounts.length - 1];
         return BigInt(out?.toString() ?? '0');
       });
-      continue;
     }
-
-    const mockFeeBps = env[`CHAIN_${chainId}_DEX_MOCK_FEE_BPS`]?.trim();
-    if (!mockFeeBps) continue;
-
-    const feeBps = readInt(mockFeeBps, 30);
-    quoteEngine.registerDexQuoteFn(chainId, async (_tokenIn, _tokenOut, amountIn) => {
-      const fee = BigInt(Math.max(0, Math.min(9_900, feeBps)));
-      return (amountIn * (10_000n - fee)) / 10_000n;
-    });
   }
 }

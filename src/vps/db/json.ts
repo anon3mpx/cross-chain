@@ -62,8 +62,42 @@ function toOptionalBigInt(value: unknown): bigint | undefined {
   return parseBigIntValue(value);
 }
 
+function reviveAmountView(value: unknown) {
+  if (!value || typeof value !== 'object') return undefined;
+  const raw = value as Record<string, unknown>;
+  const token = parseOptionalString(raw.token);
+  if (!token) return undefined;
+  return {
+    token,
+    amount: toBigIntOrZero(raw.amount),
+    ...(typeof raw.decimals === 'number' && Number.isFinite(raw.decimals) ? { decimals: raw.decimals } : {}),
+    ...(parseOptionalString(raw.symbol) ? { symbol: parseOptionalString(raw.symbol)! } : {}),
+  };
+}
+
+function reviveLegView(value: unknown) {
+  if (!value || typeof value !== 'object') return undefined;
+  const raw = value as Record<string, unknown>;
+  const tokenIn = parseOptionalString(raw.tokenIn);
+  const tokenOut = parseOptionalString(raw.tokenOut);
+  if (!tokenIn || !tokenOut) return undefined;
+  return {
+    tokenIn,
+    tokenOut,
+    amountIn: toBigIntOrZero(raw.amountIn),
+    amountOut: toBigIntOrZero(raw.amountOut),
+    ...(parseBigIntValue(raw.minimumAmountOut) !== undefined ? { minimumAmountOut: toBigIntOrZero(raw.minimumAmountOut) } : {}),
+    ...(typeof raw.tokenInDecimals === 'number' && Number.isFinite(raw.tokenInDecimals) ? { tokenInDecimals: raw.tokenInDecimals } : {}),
+    ...(typeof raw.tokenOutDecimals === 'number' && Number.isFinite(raw.tokenOutDecimals) ? { tokenOutDecimals: raw.tokenOutDecimals } : {}),
+    ...(parseOptionalString(raw.tokenInSymbol) ? { tokenInSymbol: parseOptionalString(raw.tokenInSymbol)! } : {}),
+    ...(parseOptionalString(raw.tokenOutSymbol) ? { tokenOutSymbol: parseOptionalString(raw.tokenOutSymbol)! } : {}),
+  };
+}
+
 export function reviveQuote(raw: any): QuoteResult {
   const q = raw as QuoteResult & Record<string, unknown>;
+  const amountsRaw = q.amounts as Record<string, unknown> | undefined;
+  const legsRaw = q.legs as Record<string, unknown> | undefined;
   return {
     ...q,
     railData: parseOptionalString(q.railData) ?? '0x',
@@ -80,6 +114,22 @@ export function reviveQuote(raw: any): QuoteResult {
     settlementAssetId: parseOptionalString(q.settlementAssetId) ?? `0x${'0'.repeat(64)}`,
     expectedDstSettlementToken: parseOptionalString(q.expectedDstSettlementToken) ?? '0x0000000000000000000000000000000000000000',
     expectedDstSettlementAssetId: parseOptionalString(q.expectedDstSettlementAssetId) ?? `0x${'0'.repeat(64)}`,
+    ...(amountsRaw ? {
+      amounts: {
+        input: reviveAmountView(amountsRaw.input) ?? { token: '', amount: 0n },
+        ...(reviveAmountView(amountsRaw.bridgeSettlement) ? { bridgeSettlement: reviveAmountView(amountsRaw.bridgeSettlement)! } : {}),
+        ...(reviveAmountView(amountsRaw.minimumBridgeSettlement) ? { minimumBridgeSettlement: reviveAmountView(amountsRaw.minimumBridgeSettlement)! } : {}),
+        output: reviveAmountView(amountsRaw.output) ?? { token: '', amount: 0n },
+        minimumOutput: reviveAmountView(amountsRaw.minimumOutput) ?? { token: '', amount: 0n },
+      },
+    } : {}),
+    ...(legsRaw ? {
+      legs: {
+        ...(reviveLegView(legsRaw.sourceSwap) ? { sourceSwap: reviveLegView(legsRaw.sourceSwap)! } : {}),
+        ...(reviveLegView(legsRaw.bridge) ? { bridge: reviveLegView(legsRaw.bridge)! } : {}),
+        ...(reviveLegView(legsRaw.destinationSwap) ? { destinationSwap: reviveLegView(legsRaw.destinationSwap)! } : {}),
+      },
+    } : {}),
   };
 }
 

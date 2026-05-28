@@ -3,8 +3,11 @@ import { QuoteResult } from '../types';
 
 const BIGINT_FIELDS = new Set([
   'amountIn',
+  'amountOut',
+  'amount',
   'estimatedOut',
   'minAmountOut',
+  'minimumAmountOut',
   'minSrcSwapOut',
   'feeAmountToken',
   'minSettlementAmount',
@@ -127,6 +130,40 @@ function decodeQuote(raw: string): QuoteResult {
   }
   if (typeof parsed.dstGasLimit !== 'number' || !Number.isFinite(parsed.dstGasLimit)) {
     parsed.dstGasLimit = 0;
+  }
+  if (parsed.amounts && typeof parsed.amounts === 'object') {
+    const amounts = parsed.amounts as Record<string, unknown>;
+    if (amounts.input && typeof amounts.input === 'object') {
+      const input = amounts.input as Record<string, unknown>;
+      if (typeof input.amount === 'string' && /^-?\d+$/.test(input.amount)) input.amount = BigInt(input.amount);
+    }
+    if (amounts.bridgeSettlement && typeof amounts.bridgeSettlement === 'object') {
+      const bridgeSettlement = amounts.bridgeSettlement as Record<string, unknown>;
+      if (typeof bridgeSettlement.amount === 'string' && /^-?\d+$/.test(bridgeSettlement.amount)) bridgeSettlement.amount = BigInt(bridgeSettlement.amount);
+    }
+    if (amounts.minimumBridgeSettlement && typeof amounts.minimumBridgeSettlement === 'object') {
+      const minimumBridgeSettlement = amounts.minimumBridgeSettlement as Record<string, unknown>;
+      if (typeof minimumBridgeSettlement.amount === 'string' && /^-?\d+$/.test(minimumBridgeSettlement.amount)) minimumBridgeSettlement.amount = BigInt(minimumBridgeSettlement.amount);
+    }
+    if (amounts.output && typeof amounts.output === 'object') {
+      const output = amounts.output as Record<string, unknown>;
+      if (typeof output.amount === 'string' && /^-?\d+$/.test(output.amount)) output.amount = BigInt(output.amount);
+    }
+    if (amounts.minimumOutput && typeof amounts.minimumOutput === 'object') {
+      const minimumOutput = amounts.minimumOutput as Record<string, unknown>;
+      if (typeof minimumOutput.amount === 'string' && /^-?\d+$/.test(minimumOutput.amount)) minimumOutput.amount = BigInt(minimumOutput.amount);
+    }
+  }
+  if (parsed.legs && typeof parsed.legs === 'object') {
+    const legs = parsed.legs as Record<string, unknown>;
+    for (const key of ['sourceSwap', 'bridge', 'destinationSwap'] as const) {
+      const leg = legs[key];
+      if (!leg || typeof leg !== 'object') continue;
+      const view = leg as Record<string, unknown>;
+      if (typeof view.amountIn === 'string' && /^-?\d+$/.test(view.amountIn)) view.amountIn = BigInt(view.amountIn);
+      if (typeof view.amountOut === 'string' && /^-?\d+$/.test(view.amountOut)) view.amountOut = BigInt(view.amountOut);
+      if (typeof view.minimumAmountOut === 'string' && /^-?\d+$/.test(view.minimumAmountOut)) view.minimumAmountOut = BigInt(view.minimumAmountOut);
+    }
   }
   return parsed as QuoteResult;
 }

@@ -4,7 +4,7 @@ import { registerDexQuoteAdapters } from '../../src/vps/bootstrap/dexAdapters';
 import { QuoteEngine } from '../../src/vps/services/QuoteEngine';
 
 const BASE_WETH = '0x4200000000000000000000000000000000000006';
-const ARB_WETH = '0x82af49447d8a07e3bd95bd0d56f35241523fbab1';
+const ARB_USDC = '0xaf88d065e77c8cC2239327C5EDb3A432268e5831';
 
 function withPatchedEnv(extraEnv: Record<string, string | undefined>, fn: () => Promise<void>) {
   const previous = new Map<string, string | undefined>();
@@ -24,7 +24,7 @@ function withPatchedEnv(extraEnv: Record<string, string | undefined>, fn: () => 
   });
 }
 
-test('registerDexQuoteAdapters does not install mock quotes for EMPSEAL chains without routers', async () => {
+test('registerDexQuoteAdapters does not install quotes for swap-dependent pairs without configured routers', async () => {
   await withPatchedEnv({
     CHAIN_8453_HAS_AGGREGATOR: 'true',
     CHAIN_42161_HAS_AGGREGATOR: 'true',
@@ -36,8 +36,6 @@ test('registerDexQuoteAdapters does not install mock quotes for EMPSEAL chains w
     CHAIN_42161_DEX_EMPSEAL_ROUTER: undefined,
     CHAIN_8453_UNIV2_ROUTER: undefined,
     CHAIN_42161_UNIV2_ROUTER: undefined,
-    CHAIN_8453_DEX_MOCK_FEE_BPS: undefined,
-    CHAIN_42161_DEX_MOCK_FEE_BPS: undefined,
   }, async () => {
     const engine = new QuoteEngine(undefined, {
       thorchainQuoteWorker: undefined,
@@ -47,7 +45,38 @@ test('registerDexQuoteAdapters does not install mock quotes for EMPSEAL chains w
 
     const result = await engine.getOffers({
       tokenIn: BASE_WETH,
-      tokenOut: ARB_WETH,
+      tokenOut: ARB_USDC,
+      amountIn: 1_000_000_000_000_000_000n,
+      srcChainId: 8453,
+      dstChainId: 42161,
+      userAddress: '0x05f8cc8753d90d67dbb8c02118440b8283f941c9',
+      urgency: 'fast',
+    });
+
+    assert.equal(result, null);
+  });
+});
+
+test('registerDexQuoteAdapters ignores removed DEX mock fee env vars', async () => {
+  await withPatchedEnv({
+    CHAIN_8453_HAS_AGGREGATOR: 'true',
+    CHAIN_42161_HAS_AGGREGATOR: 'true',
+    CHAIN_8453_SWAP_PLUGIN_KIND: 'UNIV2',
+    CHAIN_42161_SWAP_PLUGIN_KIND: 'UNIV2',
+    CHAIN_8453_UNIV2_ROUTER: undefined,
+    CHAIN_42161_UNIV2_ROUTER: undefined,
+    CHAIN_8453_DEX_MOCK_FEE_BPS: '30',
+    CHAIN_42161_DEX_MOCK_FEE_BPS: '30',
+  }, async () => {
+    const engine = new QuoteEngine(undefined, {
+      thorchainQuoteWorker: undefined,
+      layerZeroValueTransferApiQuoteWorker: undefined,
+    });
+    registerDexQuoteAdapters(engine, process.env);
+
+    const result = await engine.getOffers({
+      tokenIn: BASE_WETH,
+      tokenOut: ARB_USDC,
       amountIn: 1_000_000_000_000_000_000n,
       srcChainId: 8453,
       dstChainId: 42161,

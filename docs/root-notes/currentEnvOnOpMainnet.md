@@ -82,7 +82,7 @@ LZ_PLUGIN=0xdb403792c55bfe26beaef235986d4f106e40ee6f                # local Laye
 LZ_ROUTE_CHAIN_ID=42161                                             # remote destination chain = Arbitrum
 LZ_ROUTE_EID=30110                                                  # remote destination EID = Arbitrum
 LZ_ROUTE_RECEIVER=0xcdbc01b0dddac2729263a7ff4318a1b17b2eedb3        # remote Arbitrum LayerZeroReceiverAdapter
-LZ_ROUTE_OPTIONS=0x00030100110100000000000000000000000000030d4001001303000000000000000000000000000000061a80
+LZ_ROUTE_OPTIONS=0x00030100110100000000000000000000000000030d40010013030000000000000000000000000000000c3500
 LZ_ROUTE_FAMILY=lz_stargate_pool                                    # route family selected for this USDC path
 LZ_ROUTE_TOKEN=0x0b2C639c533813f4Aa9D7837CAf62653d097Ff85           # local source route token on OP = USDC
 LZ_ROUTE_OFT=0xcE8CcA271Ebc0533920C83d39F417ED6A0abB7D0             # local OP LayerZero USDC asset contract
@@ -100,11 +100,12 @@ LZ_SOURCE_PEER_ADDRESS=0x8fb6314678a9287f9b47b96e54122444e43dde1f   # remote Arb
 # ------------------------------------------------------------
 # LayerZero destination asset registry on OP for inbound ARB -> OP
 # LZ_SETTLEMENT_TOKEN is the token that arrives locally on OP.
-# LZ_COMPOSE_SENDER is the remote Arbitrum asset contract allowed to send it.
+# LZ_COMPOSE_SENDER must be the local destination-chain OFT on OP.
+# It is not the remote source-chain OFT.
 # ------------------------------------------------------------
 LZ_ADAPTER_SET_ASSET=true
 LZ_SETTLEMENT_TOKEN=0x0b2C639c533813f4Aa9D7837CAf62653d097Ff85       # local OP USDC that ReceiverV1 will receive
-LZ_COMPOSE_SENDER=0xe8CDF27AcD73a434D661C84887215F7598e7d0d3         # remote Arbitrum LayerZero USDC asset contract
+LZ_COMPOSE_SENDER=0xcE8CcA271Ebc0533920C83d39F417ED6A0abB7D0         # local OP LayerZero USDC asset contract
 
 # ------------------------------------------------------------
 # LayerZero OFT/Stargate peer wiring on OP
@@ -122,7 +123,8 @@ LZ_OFT_SET_PEER=false
 - `LZ_SETTLEMENT_TOKEN`
   - local token on OP that lands before `ReceiverV1.execute()`
 - `LZ_COMPOSE_SENDER`
-  - remote Arbitrum LayerZero asset contract allowed to send that token into OP
+  Must be the local destination-chain OFT on the adapter's chain, not the remote source OFT.
+  - local OP LayerZero asset contract expected by the OP adapter during `lzCompose`
 - `LZ_SOURCE_PEER_ADDRESS`
   - remote Arbitrum Ruflo `LayerZeroRailPlugin`
 - `LZ_OFT_PEER_ADDRESS`
@@ -223,9 +225,67 @@ LZ_SOURCE_PEER_ADDRESS=0x347a213c8f511c7da06c3f0484b74309ba34f882   # remote Bas
 # ------------------------------------------------------------
 # LayerZero destination asset registry on OP for inbound BASE -> OP
 # LZ_SETTLEMENT_TOKEN is the token that arrives locally on OP.
-# LZ_COMPOSE_SENDER is the remote Base asset contract allowed to send it.
+# LZ_COMPOSE_SENDER must be the local destination-chain OFT on OP.
+# It is not the remote source-chain OFT.
 # ------------------------------------------------------------
 LZ_ADAPTER_SET_ASSET=true
 LZ_SETTLEMENT_TOKEN=0x0b2C639c533813f4Aa9D7837CAf62653d097Ff85       # local OP USDC that ReceiverV1 will receive
-LZ_COMPOSE_SENDER=0x27a16dc786820B16E5c9028b75B99F6f604b5d26         # remote Base LayerZero USDC asset contract
+LZ_COMPOSE_SENDER=0xcE8CcA271Ebc0533920C83d39F417ED6A0abB7D0         # local OP LayerZero USDC asset contract
+```
+
+## OP Mainnet Additional Vars For `sol:configure:lz-plugin`
+
+Append these vars when you want the one-off LayerZero configure script to:
+- register the new OP `LZ_V3` rail plugin in the existing OP `PluginRegistry`
+- configure both OP outbound LayerZero routes
+- refresh OP inbound trusted peers and asset trust rows
+
+Only new fields are listed here. Reuse the existing `RPC_URL` and `DEPLOYER_PRIVATE_KEY` values already documented above.
+
+```bash
+LZ_PLUGIN=<NEW_OP_LZ_V3_PLUGIN>
+PLUGIN_REGISTRY=0x367ec0c092d32f3883c4cacbfb6c9c3594062e90
+LZ_ADAPTER=0x845cd50644a9592de43bcac0212656480744aaca
+
+LZ_ROUTE_COUNT=2
+
+# OP -> Arbitrum
+LZ_ROUTE_1_CHAIN_ID=42161
+LZ_ROUTE_1_EID=30110
+LZ_ROUTE_1_RECEIVER=0xcdbc01b0dddac2729263a7ff4318a1b17b2eedb3
+LZ_ROUTE_1_OPTIONS=0x00030100110100000000000000000000000000030d40010013030000000000000000000000000000000c3500
+LZ_ROUTE_1_FAMILY=lz_stargate_pool
+LZ_ROUTE_1_TOKEN=0x0b2C639c533813f4Aa9D7837CAf62653d097Ff85
+LZ_ROUTE_1_OFT=0xcE8CcA271Ebc0533920C83d39F417ED6A0abB7D0
+
+# OP -> Base
+LZ_ROUTE_2_CHAIN_ID=8453
+LZ_ROUTE_2_EID=30184
+LZ_ROUTE_2_RECEIVER=0x6f7cd979bcbd03c2fd593c5beec3b2628514392b
+LZ_ROUTE_2_OPTIONS=0x00030100110100000000000000000000000000030d40010013030000000000000000000000000000000c3500
+LZ_ROUTE_2_FAMILY=lz_stargate_pool
+LZ_ROUTE_2_TOKEN=0x0b2C639c533813f4Aa9D7837CAf62653d097Ff85
+LZ_ROUTE_2_OFT=0xcE8CcA271Ebc0533920C83d39F417ED6A0abB7D0
+
+LZ_TRUSTED_PEER_COUNT=2
+
+# inbound Arbitrum -> OP
+LZ_TRUSTED_PEER_1_SOURCE_EID=30110
+LZ_TRUSTED_PEER_1_SOURCE_PEER_ADDRESS=<NEW_ARB_LZ_V3_PLUGIN>
+
+# inbound Base -> OP
+LZ_TRUSTED_PEER_2_SOURCE_EID=30184
+LZ_TRUSTED_PEER_2_SOURCE_PEER_ADDRESS=<NEW_BASE_LZ_V3_PLUGIN>
+
+LZ_ASSET_COUNT=2
+
+# destination compose sender must be the local OP OFT
+LZ_ASSET_1_SOURCE_EID=30110
+LZ_ASSET_1_SETTLEMENT_TOKEN=0x0b2C639c533813f4Aa9D7837CAf62653d097Ff85
+LZ_ASSET_1_COMPOSE_SENDER=0xcE8CcA271Ebc0533920C83d39F417ED6A0abB7D0
+
+# destination compose sender must be the local OP OFT
+LZ_ASSET_2_SOURCE_EID=30184
+LZ_ASSET_2_SETTLEMENT_TOKEN=0x0b2C639c533813f4Aa9D7837CAf62653d097Ff85
+LZ_ASSET_2_COMPOSE_SENDER=0xcE8CcA271Ebc0533920C83d39F417ED6A0abB7D0
 ```

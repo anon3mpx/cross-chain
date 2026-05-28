@@ -176,6 +176,94 @@ test('getQuote applies a fixed 15 bps protocol fee to CCTP quotes', async () => 
   });
 });
 
+test('router-intent offers expose protocol fee only and honor runtime ETA overrides', async () => {
+  await withPatchedEnv({
+    RAIL_LAYERZERO_ETA_SECONDS: '123',
+  }, async () => {
+    const engine = new QuoteEngine();
+    const baseUsdc = getSettlementTokenAddress(8453, SettlementToken.USDC, Rail.LAYERZERO);
+    const arbUsdc = getSettlementTokenAddress(42161, SettlementToken.USDC, Rail.LAYERZERO);
+
+    try {
+      assert.ok(baseUsdc);
+      assert.ok(arbUsdc);
+      engine.registerDexQuoteFn(8453, async (_tokenIn, tokenOut, amountIn) => {
+        if (tokenOut.toLowerCase() === BASE_USDC.toLowerCase()) return amountIn;
+        if (tokenOut.toLowerCase() === BASE_AXLUSDC.toLowerCase()) return amountIn;
+        if (tokenOut.toLowerCase() === BASE_ETH.toLowerCase()) return amountIn;
+        return amountIn;
+      });
+      engine.registerDexQuoteFn(42161, async (tokenIn, _tokenOut, amountIn) => {
+        if (tokenIn.toLowerCase() === ARB_USDC.toLowerCase()) return amountIn;
+        if (tokenIn.toLowerCase() === ARB_AXLUSDC.toLowerCase()) return amountIn;
+        if (tokenIn.toLowerCase() === ARB_ETH.toLowerCase()) return amountIn;
+        return amountIn;
+      });
+
+      const result = await engine.getOffers({
+        tokenIn: baseUsdc,
+        tokenOut: arbUsdc,
+        amountIn: 100_000_000n,
+        srcChainId: 8453,
+        dstChainId: 42161,
+        userAddress: '0x3333333333333333333333333333333333333333',
+      });
+
+      assert.ok(result);
+      const layerZeroOffer = result.offers.find((offer) => offer.rail === Rail.LAYERZERO);
+      assert.ok(layerZeroOffer);
+      assert.equal(layerZeroOffer.economics.providerFeeUSD, 0);
+      assert.equal(layerZeroOffer.economics.protocolFeeUSD, 0.15);
+      assert.equal(layerZeroOffer.economics.settlementTimeSeconds, 123);
+      assert.equal(layerZeroOffer.execution.quote?.feeAmountUSD, 0.15);
+      assert.equal(layerZeroOffer.execution.quote?.etaSeconds, 123);
+    } finally {
+      engine.resetDexQuoteFns();
+    }
+  });
+});
+
+test('LayerZero Stargate pool offers widen receive-side minimums beyond the default 10 bps buffer', async () => {
+  await withPatchedEnv({}, async () => {
+    const engine = new QuoteEngine();
+    const baseUsdc = getSettlementTokenAddress(8453, SettlementToken.USDC, Rail.LAYERZERO);
+    const arbUsdc = getSettlementTokenAddress(42161, SettlementToken.USDC, Rail.LAYERZERO);
+
+    try {
+      assert.ok(baseUsdc);
+      assert.ok(arbUsdc);
+      engine.registerDexQuoteFn(8453, async (_tokenIn, _tokenOut, amountIn) => amountIn);
+      engine.registerDexQuoteFn(42161, async (_tokenIn, _tokenOut, amountIn) => amountIn);
+
+      const result = await engine.getOffers({
+        tokenIn: baseUsdc,
+        tokenOut: arbUsdc,
+        amountIn: 100_000_000n,
+        srcChainId: 8453,
+        dstChainId: 42161,
+        userAddress: '0x3333333333333333333333333333333333333333',
+      });
+
+      assert.ok(result);
+      const stargatePoolOffer = result.offers.find((offer) =>
+        offer.rail === Rail.LAYERZERO && offer.offerType === 'lz_stargate_pool',
+      );
+      const oftOffer = result.offers.find((offer) =>
+        offer.rail === Rail.LAYERZERO && offer.offerType === 'lz_oft',
+      );
+
+      assert.ok(stargatePoolOffer);
+      assert.ok(oftOffer);
+      assert.equal(stargatePoolOffer.execution.quote?.minSettlementAmount, 99_350_750n);
+      assert.equal(stargatePoolOffer.execution.quote?.minAmountOut, 99_350_750n);
+      assert.equal(oftOffer.execution.quote?.minSettlementAmount, 99_750_150n);
+      assert.equal(oftOffer.execution.quote?.minAmountOut, 99_750_150n);
+    } finally {
+      engine.resetDexQuoteFns();
+    }
+  });
+});
+
 test('getOffers omits THOR provider-direct offers when provider instructions are unavailable', async () => {
   await withPatchedEnv({}, async () => {
     const engine = new QuoteEngine(undefined, {

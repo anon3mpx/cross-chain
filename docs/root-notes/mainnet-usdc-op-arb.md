@@ -478,3 +478,20 @@ curl -X 'POST' \
     "bestOfferId": "0x34b2f4fa86a1a89eb6b8ea939403284f040197c5c50ac04e0967462d6b0a0969"
   }
 }
+
+
+-----
+
+curl -X 'POST' \
+  'http://localhost:8787/api/v1/quote' \
+  -H 'accept: application/json' \
+  -H 'Content-Type: application/json' \
+  -d '{
+  "tokenIn": "0xaf88d065e77c8cc2239327c5edb3a432268e5831",
+  "tokenOut": "0x94b008aa00579c1307b0ef2c499ad98a8ce58e58",
+  "amountIn": "1200000",
+  "srcChainId": 42161,
+  "dstChainId": 10,
+  "userAddress": "0x05f8cc8753d90d67dbb8c02118440b8283f941c9",
+  "urgency": "fast"
+}

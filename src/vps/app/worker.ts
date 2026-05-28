@@ -1,25 +1,5 @@
 import { buildRuntime } from './runtime';
-
-function isRetryableInfraError(err: unknown): boolean {
-  const code = typeof err === 'object' && err !== null && 'code' in err
-    ? String((err as { code?: unknown }).code)
-    : '';
-  const message = err instanceof Error ? err.message : String(err);
-  const text = `${code} ${message}`.toLowerCase();
-
-  return code === 'SERVER_ERROR'
-    || code === 'TIMEOUT'
-    || code === 'NETWORK_ERROR'
-    || text.includes('429')
-    || text.includes('too many requests')
-    || text.includes('rate limit')
-    || text.includes('exceeded maximum retry limit')
-    || text.includes('timeout')
-    || text.includes('network')
-    || text.includes('filter not found')
-    || text.includes('failed to marshal batch response')
-    || text.includes('could not coalesce error');
-}
+import { isRetryableInfraError } from './infraErrors';
 
 function errorSummary(err: unknown): string {
   if (err instanceof Error) return err.message.replace(/\s+/g, ' ').slice(0, 220);
