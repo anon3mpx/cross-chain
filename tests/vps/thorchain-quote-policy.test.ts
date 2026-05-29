@@ -192,6 +192,50 @@ test('buildTHORChainQuoteRequest maps ETH route asset to chain-native ETH notati
   });
 });
 
+test('buildTHORChainQuoteRequestFromPair resolves configured WETH metadata to THORChain ETH notation without env', async () => {
+  const envKeys = [
+    'CHAIN_8453_TOKEN_THORCHAIN_ETH',
+    'CHAIN_42161_TOKEN_THORCHAIN_ETH',
+    'CHAIN_8453_THORCHAIN_CHAIN_ALIAS',
+    'CHAIN_42161_THORCHAIN_CHAIN_ALIAS',
+  ];
+  const previous = new Map<string, string | undefined>();
+  for (const key of envKeys) {
+    previous.set(key, process.env[key]);
+    delete process.env[key];
+  }
+
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = (async () => new Response(JSON.stringify([
+    { asset: 'BASE.ETH', status: 'available', nativeDecimal: '18' },
+    { asset: 'ARB.ETH', status: 'available', nativeDecimal: '18' },
+  ]), { status: 200 })) as typeof fetch;
+
+  resetTHORChainQuotePolicyCacheForTests();
+  try {
+    const request = await buildTHORChainQuoteRequestFromPair({
+      amountIn: 10_000_000_000_000_000n,
+      srcChainId: 8453,
+      dstChainId: 42161,
+      tokenIn: '0x4200000000000000000000000000000000000006',
+      tokenOut: '0x82af49447d8a07e3bd95bd0d56f35241523fbab1',
+      destinationAddress: '0x3333333333333333333333333333333333333333',
+    });
+
+    assert.ok(request);
+    assert.equal(request!.fromAsset, 'BASE.ETH');
+    assert.equal(request!.toAsset, 'ARB.ETH');
+    assert.equal(request!.amountInThorchain, 1_000_000n);
+  } finally {
+    resetTHORChainQuotePolicyCacheForTests();
+    globalThis.fetch = originalFetch;
+    for (const [key, value] of previous.entries()) {
+      if (value === undefined) delete process.env[key];
+      else process.env[key] = value;
+    }
+  }
+});
+
 test('buildTHORChainQuoteRequest returns null when route asset alias is unsupported', async () => {
   const request = await buildTHORChainQuoteRequest({
     amountIn: 1_000_000n,

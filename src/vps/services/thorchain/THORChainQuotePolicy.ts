@@ -223,7 +223,9 @@ async function resolveConfiguredEvmAsset(chainId: number, address: string): Prom
       decimals: poolAsset?.decimals ?? 6,
     };
   }
-  const weth = getSettlementTokenAddress(chainId, SettlementToken.ETH, Rail.THORCHAIN);
+  const weth =
+    getSettlementTokenAddress(chainId, SettlementToken.ETH, Rail.THORCHAIN)
+    ?? getSettlementTokenAddress(chainId, SettlementToken.WETH, Rail.THORCHAIN);
   if (weth && weth.toLowerCase() === resolved) {
     const asset = `${chain}.ETH`;
     const poolAsset = await findPoolAsset(asset);
