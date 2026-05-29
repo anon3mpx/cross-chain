@@ -38,8 +38,8 @@ export const ROUTE_METADATA_BY_CHAIN: Record<number, ChainRouteMetadataEntry> = 
   8453: {
     defaultTokens: {
       [SettlementToken.USDC]: "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913",
-      [SettlementToken.USDT]: "0xfde4c96c8593536e31f229ea8f37b2ada2699bb2",
-      [SettlementToken.WETH]: "0x4200000000000000000000000000000000000006",
+      // [SettlementToken.USDT]: "0xfde4c96c8593536e31f229ea8f37b2ada2699bb2",
+      // [SettlementToken.WETH]: "0x4200000000000000000000000000000000000006",
     },
     rails: {
       [Rail.CCTP]: {
@@ -50,12 +50,12 @@ export const ROUTE_METADATA_BY_CHAIN: Record<number, ChainRouteMetadataEntry> = 
           USDC: "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913",
           // USDT: "0x0000000000000000000000000000000000001004",
           // ETH: "0x0000000000000000000000000000000000001003",
-          WETH: "0x4200000000000000000000000000000000000006",
+          // WETH: "0x4200000000000000000000000000000000000006",
         },
         oft: {
           USDC: "0x27a16dc786820B16E5c9028b75B99F6f604b5d26",
           // USDT: "0x0000000000000000000000000000000000003002",
-          WETH: "0xdc181Bd607330aeeBEF6ea62e03e5e1Fb4B6F7C7",
+          // WETH: "0xdc181Bd607330aeeBEF6ea62e03e5e1Fb4B6F7C7",
           // WETH: "0x0000000000000000000000000000000000003003",
         },
       },
@@ -71,7 +71,7 @@ export const ROUTE_METADATA_BY_CHAIN: Record<number, ChainRouteMetadataEntry> = 
     defaultTokens: {
       [SettlementToken.USDC]: "0xaf88d065e77c8cC2239327C5EDb3A432268e5831",
       // [SettlementToken.USDT]: "0x0000000000000000000000000000000000002004",
-      [SettlementToken.WETH]: "0x82af49447d8a07e3bd95bd0d56f35241523fbab1",
+      // [SettlementToken.WETH]: "0x82af49447d8a07e3bd95bd0d56f35241523fbab1",
     },
     rails: {
       [Rail.CCTP]: {
@@ -89,12 +89,12 @@ export const ROUTE_METADATA_BY_CHAIN: Record<number, ChainRouteMetadataEntry> = 
         tokens: {
           USDC: "0xaf88d065e77c8cC2239327C5EDb3A432268e5831",
           // USDT: "0x0000000000000000000000000000000000002004",
-          WETH: "0x82af49447d8a07e3bd95bd0d56f35241523fbab1",
+          // WETH: "0x82af49447d8a07e3bd95bd0d56f35241523fbab1",
           // WETH: "0x0000000000000000000000000000000000002003",
         },
         oft: {
           USDC: "0xe8CDF27AcD73a434D661C84887215F7598e7d0d3",
-          WETH: "0xA45B5130f36CDcA45667738e2a258AB09f4A5f7F"
+          // WETH: "0xA45B5130f36CDcA45667738e2a258AB09f4A5f7F"
         },
       },
       // [Rail.THORCHAIN]: {
@@ -114,7 +114,7 @@ export const ROUTE_METADATA_BY_CHAIN: Record<number, ChainRouteMetadataEntry> = 
   10: {
     defaultTokens: {
       [SettlementToken.USDC]: "0x0b2C639c533813f4Aa9D7837CAf62653d097Ff85",
-      [SettlementToken.WETH]: "0x4200000000000000000000000000000000000006",
+      // [SettlementToken.WETH]: "0x4200000000000000000000000000000000000006",
     },
     rails: {
       [Rail.CCTP]: {
@@ -123,11 +123,11 @@ export const ROUTE_METADATA_BY_CHAIN: Record<number, ChainRouteMetadataEntry> = 
       [Rail.LAYERZERO]: {
         tokens: {
           USDC: "0x0b2C639c533813f4Aa9D7837CAf62653d097Ff85",
-          WETH: "0x4200000000000000000000000000000000000006",
+          // WETH: "0x4200000000000000000000000000000000000006",
         },
         oft: {
           USDC: "0xcE8CcA271Ebc0533920C83d39F417ED6A0abB7D0",
-          WETH: "0xe8CDF27AcD73a434D661C84887215F7598e7d0d3"
+          // WETH: "0xe8CDF27AcD73a434D661C84887215F7598e7d0d3"
         },
       },
     },
