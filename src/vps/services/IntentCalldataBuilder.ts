@@ -1,7 +1,6 @@
 import {
   Contract,
   Interface,
-  JsonRpcProvider,
   Wallet,
   ZeroAddress,
   getAddress,
@@ -13,11 +12,13 @@ import { getChainConfig } from '../config/chains';
 import { getSettlementTokenAddress } from '../config/contracts';
 import { QuoteResult, Rail, SettlementToken } from '../types';
 import { getRailEnumValue } from '../rails/registry';
+import { RpcProviderRegistry } from './RpcProviderRegistry';
 
 const ROUTER_V1_IFACE = new Interface([
   'function initiateSwap((address user,address tokenIn,address tokenOut,uint256 amountIn,uint256 minAmountOut,uint256 minSrcSwapOut,uint32 dstChainId,uint8 rail,address routeToken,bytes32 routeAssetId,address expectedDstRouteToken,bytes32 expectedDstRouteAssetId,uint256 minRouteAmount,uint256 feeAmount,bytes swapDataSrc,bytes swapDataDst,bytes32 swapPluginIdSrc,bytes32 dstSwapPluginId,bytes32 railPluginId,bytes railData,uint256 dstGasLimit,address dstReceiver,bytes nativeDstAddress,string thorAssetIdentifier,uint256 minThorOutput,bytes32 intentId,uint256 deadline) intent,bytes signature)',
 ]);
 const ZERO_PLUGIN_ID = `0x${'0'.repeat(64)}`;
+const rpcProviderRegistry = new RpcProviderRegistry();
 
 const ROUTER_REGISTRY_ABI = [
   'function registry() view returns (address)',
@@ -190,17 +191,12 @@ async function estimateNativeGas(quote: QuoteResult): Promise<string> {
   const srcCfg = getChainConfig(quote.srcChainId);
   if (!srcCfg) throw new Error(`calldata: unknown source chain ${quote.srcChainId}`);
 
-  const rpcUrl = srcCfg.rpcUrl || srcCfg.rpcFallback;
-  if (!rpcUrl) {
-    throw new Error(`calldata: missing RPC URL for source chain ${quote.srcChainId}`);
-  }
-
   const routerAddress = getRouterAddress(quote.srcChainId);
   if (routerAddress === ZeroAddress) {
     throw new Error(`calldata: RouterV1 missing for source chain ${quote.srcChainId}`);
   }
 
-  const provider = new JsonRpcProvider(rpcUrl);
+  const provider = rpcProviderRegistry.getReadProvider(quote.srcChainId);
   const router = new Contract(routerAddress, ROUTER_REGISTRY_ABI, provider);
   const registryAddress = await router.registry();
   if (!isAddress(registryAddress) || registryAddress === ZeroAddress) {

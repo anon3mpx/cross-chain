@@ -12,6 +12,7 @@ import {
   getReceiverAddressFromDeploymentRegistry,
   getRouterAddressFromDeploymentRegistry,
 } from './deploymentRegistry';
+import { resolveLegacyChainRpcFields } from './chainRuntime';
 
 function env(key: string): string | undefined {
   const value = process.env[key];
@@ -27,25 +28,30 @@ const cfg = (
   nativeStable: SettlementToken = SettlementToken.USDC,
   blockTimeMs = 2000,
   isEVM = true,
-): ChainConfig => ({
-  ...(() => {
-    const override = env(`CHAIN_${chainId}_HAS_AGGREGATOR`);
-    const hasAggregator = override
-      ? ['1', 'true', 'yes', 'on'].includes(override.toLowerCase())
-      : defaultHasAggregator;
-    return { hasAggregator };
-  })(),
-  chainId, name,
-  rpcUrl: env(`CHAIN_${chainId}_RPC_URL`) ?? '',
-  rpcFallback: env(`CHAIN_${chainId}_RPC_FALLBACK`) ?? env(`CHAIN_${chainId}_RPC_URL`) ?? '',
-  // Runtime env must take precedence over the baked-in deployment registry.
-  // This prevents placeholder registry entries from leaking into signed intents.
-  routerV1: env(`CHAIN_${chainId}_ROUTER_V1`) ?? getRouterAddressFromDeploymentRegistry(chainId),
-  receiverV1: env(`CHAIN_${chainId}_RECEIVER_V1`) ?? getReceiverAddressFromDeploymentRegistry(chainId),
-  nativeStable,
-  blockTimeMs,
-  isEVM,
-});
+): ChainConfig => {
+  const { rpcUrl, rpcFallback } = resolveLegacyChainRpcFields(chainId);
+
+  return {
+    ...(() => {
+      const override = env(`CHAIN_${chainId}_HAS_AGGREGATOR`);
+      const hasAggregator = override
+        ? ['1', 'true', 'yes', 'on'].includes(override.toLowerCase())
+        : defaultHasAggregator;
+      return { hasAggregator };
+    })(),
+    chainId,
+    name,
+    rpcUrl,
+    rpcFallback,
+    // Runtime env must take precedence over the baked-in deployment registry.
+    // This prevents placeholder registry entries from leaking into signed intents.
+    routerV1: env(`CHAIN_${chainId}_ROUTER_V1`) ?? getRouterAddressFromDeploymentRegistry(chainId),
+    receiverV1: env(`CHAIN_${chainId}_RECEIVER_V1`) ?? getReceiverAddressFromDeploymentRegistry(chainId),
+    nativeStable,
+    blockTimeMs,
+    isEVM,
+  };
+};
 
 export const CHAIN_CONFIGS: Record<number, ChainConfig> = {
   // ── Aggregator-deployed chains ────────────────────────────────────────────
