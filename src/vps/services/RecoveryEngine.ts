@@ -14,6 +14,7 @@ const MAX_RETRIES = 3;
 
 export class RecoveryEngine {
   private timer: ReturnType<typeof setInterval> | null = null;
+  private cycleInFlight = false;
 
   constructor(
     private intentService: IntentService,
@@ -23,8 +24,12 @@ export class RecoveryEngine {
 
   start(intervalMs = 30_000): void {
     this.timer = setInterval(() => {
+      if (this.cycleInFlight) return;
+      this.cycleInFlight = true;
       void this._runCycle().catch((err) => {
         console.error('[RecoveryEngine] Cycle failed', err);
+      }).finally(() => {
+        this.cycleInFlight = false;
       });
     }, intervalMs);
     console.log('[RecoveryEngine] Started — checking every', intervalMs / 1000, 's');
@@ -32,6 +37,7 @@ export class RecoveryEngine {
 
   stop(): void {
     if (this.timer) clearInterval(this.timer);
+    this.timer = null;
   }
 
   private async _runCycle(): Promise<void> {

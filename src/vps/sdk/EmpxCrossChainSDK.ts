@@ -14,7 +14,7 @@
 
 import EventEmitter from 'eventemitter3';
 import { IntentStatus, Rail, SettlementToken, CHAIN_ID } from '../types';
-import { buildIntentActionMessage, IntentAction } from '../utils/intentActionAuth';
+import { buildIntentActionMessage, generateIntentActionNonce, IntentAction } from '../utils/intentActionAuth';
 import { RailVariantLabel } from '../rails/registry';
 
 // ── Public-facing types (simplified — hides internal complexity) ───────────────
@@ -89,6 +89,7 @@ export interface IntentActionRequest {
   userAddress: string;
   signature: string;
   timestamp?: number;
+  nonce?: string;
 }
 
 export interface SubmitIntentRequest extends IntentActionRequest {
@@ -121,8 +122,8 @@ export class SwapHandle extends EventEmitter {
   // ── Connect WebSocket for real-time status (preferred over polling) ────────
 
   connect(): this {
-    const url = `${this.baseUrl.replace('https', 'wss')}/ws/intent/${this.intentId}?key=${this.apiKey}`;
-    this._ws = new WebSocket(url);
+    const url = `${this.baseUrl.replace('https', 'wss')}/ws/intent/${this.intentId}`;
+    this._ws = new WebSocket(url, ['rflo-auth', this.apiKey]);
 
     this._ws.onmessage = (evt) => {
       const msg = JSON.parse(evt.data) as { status: IntentStatus; dstTxHash?: string; amountOut?: string };
@@ -225,10 +226,12 @@ export class SwapHandle extends EventEmitter {
     input: SubmitIntentRequest | CancelIntentRequest | RefundIntentRequest,
   ): Promise<any> {
     const timestamp = input.timestamp ?? Date.now();
+    const nonce = input.nonce ?? generateIntentActionNonce();
     const body: Record<string, unknown> = {
       userAddress: input.userAddress,
       signature: input.signature,
       timestamp,
+      nonce,
     };
 
     if ('srcTxHash' in input) {
