@@ -1,6 +1,7 @@
 import { ethers } from 'ethers';
 import { QuoteEngine } from '../services/QuoteEngine';
 import { CHAIN_CONFIGS } from '../config/chains';
+import { RpcProviderRegistry } from '../services/RpcProviderRegistry';
 
 const UNIV2_ROUTER_ABI = [
   'function getAmountsOut(uint256 amountIn, address[] path) view returns (uint256[] amounts)',
@@ -17,6 +18,7 @@ function boolFromEnv(value: string | undefined, fallback = false): boolean {
 export function registerDexQuoteAdapters(
   quoteEngine: QuoteEngine,
   env: Record<string, string | undefined> = process.env,
+  rpcProviderRegistry: Pick<RpcProviderRegistry, 'getReadProvider'> = new RpcProviderRegistry({ env }),
 ): void {
   for (const chain of Object.values(CHAIN_CONFIGS)) {
     const chainId = chain.chainId;
@@ -25,9 +27,12 @@ export function registerDexQuoteAdapters(
 
     const univ2Router = env[`CHAIN_${chainId}_UNIV2_ROUTER`]?.trim();
     if (univ2Router) {
-      const rpc = chain.rpcUrl;
-      if (!rpc) continue;
-      const provider = new ethers.JsonRpcProvider(rpc);
+      let provider: ethers.JsonRpcProvider;
+      try {
+        provider = rpcProviderRegistry.getReadProvider(chainId);
+      } catch {
+        continue;
+      }
       const router = new ethers.Contract(univ2Router, UNIV2_ROUTER_ABI, provider);
 
       quoteEngine.registerDexQuoteFn(chainId, async (tokenIn, tokenOut, amountIn) => {

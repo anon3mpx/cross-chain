@@ -21,6 +21,7 @@ import {
   getSwapPluginIdForChain,
   getSwapPluginKindForChain,
 } from '../config/contracts';
+import { resolveChainRpcUrls } from '../config/chainRuntime';
 import { getRouterAddressFromDeploymentRegistry } from '../config/deploymentRegistry';
 import { getRailEnumValue } from '../rails/registry';
 import { applyEmpsealRouterFee, encodeEmpsealSwapData } from '../services/empseal/swapData';
@@ -268,12 +269,13 @@ function parseArgs(argv: string[]) {
   return options;
 }
 
-function getRpcCandidates(chainId: number): string[] {
-  const candidates = [
-    ...(BUILTIN_RPC_URLS[chainId] ?? []),
-    readEnv(`CHAIN_${chainId}_RPC_URL`),
-    readEnv(`CHAIN_${chainId}_RPC_FALLBACK`),
-  ].filter((value): value is string => Boolean(value));
+export function getRpcCandidates(chainId: number): string[] {
+  const configured = resolveChainRpcUrls(chainId, 'read');
+  const candidates = (
+    configured.length > 0
+      ? configured
+      : (BUILTIN_RPC_URLS[chainId] ?? [])
+  ).filter((value): value is string => Boolean(value));
 
   const unique = [...new Set(candidates)];
   if (unique.length === 0) {

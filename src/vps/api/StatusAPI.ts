@@ -15,6 +15,7 @@ import { ComposedIntentStatus, Intent, IntentStatus, Rail } from '../types';
 import { parseOfferSelection, parseQuoteRequest, serializeGasZipComposition, serializeOfferSet, serializeQuote } from './quoteCodec';
 import { buildIntentActionMessage, IntentAction, SIGNATURE_WINDOW_MS } from '../utils/intentActionAuth';
 import { getRailVariantLabel } from '../rails/registry';
+import { RpcProviderRegistry } from '../services/RpcProviderRegistry';
 import {
   LayerZeroValueTransferApiBuildUserStepsRequest,
   LayerZeroValueTransferApiClient,
@@ -52,6 +53,7 @@ interface LayerZeroValueTransferApiHttpClient {
 
 interface StatusApiOptions {
   layerZeroValueTransferApiClient?: LayerZeroValueTransferApiHttpClient;
+  rpcProviderRegistry?: Pick<RpcProviderRegistry, 'getReadProvider'>;
 }
 
 class MemoryRateLimitStore implements RateLimitStore {
@@ -216,6 +218,7 @@ export function buildStatusAPI(
   const providers = new Map<number, ethers.JsonRpcProvider>();
   const layerZeroValueTransferApiClient =
     options.layerZeroValueTransferApiClient ?? new LayerZeroValueTransferApiClient();
+  const rpcProviderRegistry = options.rpcProviderRegistry ?? new RpcProviderRegistry();
 
   app.use((req, res, next) => {
     res.setHeader('Access-Control-Allow-Origin', process.env.VPS_CORS_ORIGIN ?? '*');
@@ -937,7 +940,7 @@ export function buildStatusAPI(
     if (existing) return existing;
 
     const chain = CHAIN_CONFIGS[chainId];
-    if (!chain?.isEVM || !chain.rpcUrl) {
+    if (!chain?.isEVM) {
       throw new IntentLifecycleError(
         'CHAIN_RPC_UNAVAILABLE',
         `No EVM RPC is configured for source chain ${chainId}.`,
@@ -945,9 +948,7 @@ export function buildStatusAPI(
       );
     }
 
-    const provider = new ethers.JsonRpcProvider(chain.rpcUrl, chainId, {
-      staticNetwork: true,
-    });
+    const provider = rpcProviderRegistry.getReadProvider(chainId);
     providers.set(chainId, provider);
     return provider;
   }

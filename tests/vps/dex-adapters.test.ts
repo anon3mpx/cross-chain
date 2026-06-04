@@ -87,3 +87,34 @@ test('registerDexQuoteAdapters ignores removed DEX mock fee env vars', async () 
     assert.equal(result, null);
   });
 });
+
+test('registerDexQuoteAdapters skips router wiring when the registry has no configured provider for the chain', async () => {
+  const engine = new QuoteEngine(undefined, {
+    thorchainQuoteWorker: undefined,
+    layerZeroValueTransferApiQuoteWorker: undefined,
+  });
+
+  registerDexQuoteAdapters(
+    engine,
+    {
+      CHAIN_8453_UNIV2_ROUTER: '0x1111111111111111111111111111111111111111',
+    },
+    {
+      getReadProvider() {
+        throw new Error('No RPC URLs configured');
+      },
+    } as any,
+  );
+
+  const result = await engine.getOffers({
+    tokenIn: BASE_WETH,
+    tokenOut: ARB_USDC,
+    amountIn: 1_000_000_000_000_000_000n,
+    srcChainId: 8453,
+    dstChainId: 42161,
+    userAddress: '0x05f8cc8753d90d67dbb8c02118440b8283f941c9',
+    urgency: 'fast',
+  });
+
+  assert.equal(result, null);
+});
