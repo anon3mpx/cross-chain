@@ -187,6 +187,24 @@ contract RouterV1Test {
         _assertTrue(!router.executedIntents(tamperedIntent.intentId), "tampered intent should not execute");
     }
 
+    function testInitiateSwapRejectsMessagingIntentWithZeroDestinationReceiver() public {
+        IntentTypes.SwapIntent memory intent = _buildIntent();
+        intent.dstReceiver = address(0);
+        bytes memory signature = _signIntent(intent);
+
+        vm.prank(USER);
+        usdc.approve(address(router), intent.amountIn);
+
+        vm.prank(USER);
+        (bool ok,) = address(router).call(
+            abi.encodeWithSelector(router.initiateSwap.selector, intent, signature)
+        );
+
+        _assertTrue(!ok, "expected zero destination receiver revert");
+        _assertTrue(!router.executedIntents(intent.intentId), "invalid intent should not execute");
+        _assertEq(railPlugin.lastIntentId(), bytes32(0), "rail should not be called");
+    }
+
     function _buildIntent() internal view returns (IntentTypes.SwapIntent memory intent) {
         intent.user = USER;
         intent.tokenIn = address(usdc);

@@ -284,7 +284,7 @@ contract RouterV1 is EIP712, ReentrancyGuard, Pausable, Ownable2Step {
         IntentTypes.SwapIntent calldata intent,
         uint256 routeAmount
     ) internal pure {
-        if (intent.dstReceiver == address(0)) return;
+        if (intent.dstReceiver == address(0)) revert ZeroAddress("dstReceiver");
         if (intent.dstGasLimit == 0) revert InvalidDstGasLimit(intent.dstGasLimit);
         if (intent.expectedDstRouteToken == address(0)) {
             revert ZeroAddress("expectedDstRouteToken");

@@ -29,6 +29,8 @@ contract CCTPFastRailPlugin is IRailPlugin, ERC165, Ownable2Step {
     mapping(uint32 => bytes32) public destinationReceivers;
     // chainId => optional CCTP message caller restriction (bytes32 address). bytes32(0) = open relay.
     mapping(uint32 => bytes32) public destinationCallers;
+    // chainId => whether destination caller policy was explicitly configured.
+    mapping(uint32 => bool) public destinationCallerConfigured;
 
     event BridgeInitiated(
         bytes32 indexed intentId,
@@ -38,6 +40,7 @@ contract CCTPFastRailPlugin is IRailPlugin, ERC165, Ownable2Step {
         uint256 maxFee,
         uint32 minFinalityThreshold
     );
+    event DestinationCallerSet(uint32 indexed chainId, bytes32 indexed caller, bool openRelay);
 
     error UnsupportedRoute(uint32 dstChainId);
     error UnsupportedRouteToken(address token);
@@ -47,6 +50,7 @@ contract CCTPFastRailPlugin is IRailPlugin, ERC165, Ownable2Step {
     error MaxFeeTooHigh(uint256 provided, uint256 maximumAllowed);
     error ZeroMaxFee();
     error InvalidMaxFeeBpsCap(uint256 provided);
+    error DestinationCallerNotConfigured(uint32 dstChainId);
 
     constructor(address _tokenMessenger, address _usdc, address _owner) Ownable(_owner) {
         tokenMessenger = _tokenMessenger;
@@ -103,6 +107,9 @@ contract CCTPFastRailPlugin is IRailPlugin, ERC165, Ownable2Step {
         IERC20(usdc).safeTransferFrom(msg.sender, address(this), params.amount);
         IERC20(usdc).forceApprove(tokenMessenger, params.amount);
 
+        if (!destinationCallerConfigured[params.dstChainId]) {
+            revert DestinationCallerNotConfigured(params.dstChainId);
+        }
         bytes32 destinationCaller = destinationCallers[params.dstChainId];
 
         _submitBurn(
@@ -146,6 +153,14 @@ contract CCTPFastRailPlugin is IRailPlugin, ERC165, Ownable2Step {
 
     function setDestinationCaller(uint32 chainId, bytes32 caller) external onlyOwner {
         destinationCallers[chainId] = caller;
+        destinationCallerConfigured[chainId] = true;
+        emit DestinationCallerSet(chainId, caller, caller == bytes32(0));
+    }
+
+    function setOpenDestinationCaller(uint32 chainId) external onlyOwner {
+        destinationCallers[chainId] = bytes32(0);
+        destinationCallerConfigured[chainId] = true;
+        emit DestinationCallerSet(chainId, bytes32(0), true);
     }
 
     function setMaxFeeBpsCap(uint256 newCapBps) external onlyOwner {
