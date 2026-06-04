@@ -8,6 +8,7 @@ interface VmPaymaster {
     function addr(uint256 privateKey) external returns (address);
     function prank(address sender) external;
     function sign(uint256 privateKey, bytes32 digest) external returns (uint8 v, bytes32 r, bytes32 s);
+    function warp(uint256 newTimestamp) external;
 }
 
 contract MockPaymasterToken is ERC20 {
@@ -31,6 +32,56 @@ contract PaymasterTest {
         paymaster = new Paymaster(address(this), vm.addr(SIGNER_PK), address(this));
         paymaster.setTokenRate(address(token), 1e18);
         token.mint(USER, 1_000_000e18);
+    }
+
+    function testConstructorRejectsZeroEntryPoint() public {
+        (bool ok,) = address(new PaymasterFactory()).call(
+            abi.encodeWithSelector(
+                PaymasterFactory.deploy.selector,
+                address(0),
+                vm.addr(SIGNER_PK),
+                address(this)
+            )
+        );
+
+        _assertTrue(!ok, "expected zero entry point revert");
+    }
+
+    function testConstructorRejectsZeroSigner() public {
+        (bool ok,) = address(new PaymasterFactory()).call(
+            abi.encodeWithSelector(
+                PaymasterFactory.deploy.selector,
+                address(this),
+                address(0),
+                address(this)
+            )
+        );
+
+        _assertTrue(!ok, "expected zero signer revert");
+    }
+
+    function testSetSignerRejectsZeroSigner() public {
+        (bool ok,) = address(paymaster).call(
+            abi.encodeWithSelector(paymaster.setSigner.selector, address(0))
+        );
+
+        _assertTrue(!ok, "expected zero signer update revert");
+    }
+
+    function testValidateRejectsStaleTokenRate() public {
+        vm.warp(block.timestamp + 10 minutes + 1 seconds);
+        UserOperation memory userOp = _userOp(120);
+
+        (bool ok,) = address(paymaster).call(
+            abi.encodeWithSelector(
+                paymaster.validatePaymasterUserOp.selector,
+                userOp,
+                USER_OP_HASH,
+                uint256(100)
+            )
+        );
+
+        _assertTrue(!ok, "expected stale token rate revert");
     }
 
     function testValidateRejectsEstimatedFeeAboveSignedMaxTokenFee() public {
@@ -123,5 +174,11 @@ contract PaymasterTest {
 
     function _assertTrue(bool ok, string memory err) internal pure {
         require(ok, err);
+    }
+}
+
+contract PaymasterFactory {
+    function deploy(address entryPoint, address signer, address owner) external returns (Paymaster) {
+        return new Paymaster(entryPoint, signer, owner);
     }
 }

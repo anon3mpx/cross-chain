@@ -26,6 +26,8 @@ contract CCTPRailPlugin is IRailPlugin, ERC165, Ownable2Step {
     mapping(uint32 => bytes32) public destinationReceivers;
     // chainId => optional CCTP message caller restriction (bytes32 address). bytes32(0) = open relay.
     mapping(uint32 => bytes32) public destinationCallers;
+    // chainId => whether destination caller policy was explicitly configured.
+    mapping(uint32 => bool) public destinationCallerConfigured;
 
     // CCTP domains (Circle's fixed assignment)
     uint32 public constant DOMAIN_ETH      = 0;
@@ -36,10 +38,12 @@ contract CCTPRailPlugin is IRailPlugin, ERC165, Ownable2Step {
     uint32 public constant DOMAIN_POLYGON  = 7;
 
     event BridgeInitiated(bytes32 indexed intentId, bytes32 railTxId, uint32 dstDomain, uint256 amount);
+    event DestinationCallerSet(uint32 indexed chainId, bytes32 indexed caller, bool openRelay);
 
     error UnsupportedRoute(uint32 dstChainId);
     error UnsupportedRouteToken(address token);
     error ReceiverNotConfigured(uint32 dstChainId);
+    error DestinationCallerNotConfigured(uint32 dstChainId);
 
     constructor(address _tokenMessenger, address _usdc, address _owner) Ownable(_owner) {
         tokenMessenger = _tokenMessenger;
@@ -83,6 +87,9 @@ contract CCTPRailPlugin is IRailPlugin, ERC165, Ownable2Step {
         IERC20(usdc).safeTransferFrom(msg.sender, address(this), params.amount);
         IERC20(usdc).forceApprove(tokenMessenger, params.amount);
 
+        if (!destinationCallerConfigured[params.dstChainId]) {
+            revert DestinationCallerNotConfigured(params.dstChainId);
+        }
         bytes32 destinationCaller = destinationCallers[params.dstChainId];
 
         // Burn USDC via CCTP V2 TokenMessenger.
@@ -135,6 +142,13 @@ contract CCTPRailPlugin is IRailPlugin, ERC165, Ownable2Step {
     }
     function setDestinationCaller(uint32 chainId, bytes32 caller) external onlyOwner {
         destinationCallers[chainId] = caller;
+        destinationCallerConfigured[chainId] = true;
+        emit DestinationCallerSet(chainId, caller, caller == bytes32(0));
+    }
+    function setOpenDestinationCaller(uint32 chainId) external onlyOwner {
+        destinationCallers[chainId] = bytes32(0);
+        destinationCallerConfigured[chainId] = true;
+        emit DestinationCallerSet(chainId, bytes32(0), true);
     }
 
     function supportsInterface(bytes4 interfaceId)

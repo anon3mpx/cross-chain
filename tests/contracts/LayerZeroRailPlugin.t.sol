@@ -328,6 +328,58 @@ contract LayerZeroRailPluginTest {
         _assertTrue(!ok, "expected unconfigured routeOft revert");
     }
 
+    function testBridgeRejectsOptionsOverrideByDefault() public {
+        uint256 amount = 250e6;
+        bytes memory payload = _receiverPayload(
+            address(usdc),
+            _settlementAssetId(address(usdc)),
+            keccak256("intent-lz-options-override")
+        );
+        usdc.approve(address(plugin), amount);
+
+        IntentTypes.BridgeParams memory params =
+            _bridgeParams(
+                address(usdc),
+                amount,
+                _settlementAssetId(address(usdc)),
+                keccak256("intent-lz-options-override"),
+                payload,
+                _railData(FAMILY_OFT, address(oft), hex"9999")
+            );
+
+        (bool ok, ) = address(plugin).call{value: LZ_NATIVE_FEE}(
+            abi.encodeWithSelector(plugin.bridge.selector, params)
+        );
+        _assertTrue(!ok, "expected options override to be disabled");
+        _assertTrue(!oft.sendCalled(), "send should not be called");
+    }
+
+    function testBridgeAllowsOptionsOverrideWhenOwnerEnabled() public {
+        uint256 amount = 250e6;
+        bytes memory payload = _receiverPayload(
+            address(usdc),
+            _settlementAssetId(address(usdc)),
+            keccak256("intent-lz-options-override-enabled")
+        );
+        usdc.approve(address(plugin), amount);
+        plugin.setOptionsOverrideEnabled(true);
+
+        IntentTypes.BridgeParams memory params =
+            _bridgeParams(
+                address(usdc),
+                amount,
+                _settlementAssetId(address(usdc)),
+                keccak256("intent-lz-options-override-enabled"),
+                payload,
+                _railData(FAMILY_OFT, address(oft), hex"9999")
+            );
+
+        plugin.bridge{value: LZ_NATIVE_FEE}(params);
+
+        _assertTrue(oft.sendCalled(), "send not called");
+        _assertEq(keccak256(hex"9999"), oft.lastOptionsHash(), "override options mismatch");
+    }
+
     receive() external payable {}
 
     function _bridgeParams(
