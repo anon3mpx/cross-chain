@@ -1,3 +1,4 @@
+import crypto from 'crypto';
 import { createClient } from 'redis';
 import { QuoteResult } from '../types';
 
@@ -43,14 +44,19 @@ export class InMemoryQuoteCache implements QuoteCache {
 }
 
 class RedisQuoteCache implements QuoteCache {
-  constructor(private readonly client: any) {}
+  constructor(
+    private readonly client: any,
+    private readonly hmacSecret?: string,
+  ) {}
 
   async get(key: string): Promise<QuoteResult | null> {
     const raw = await this.client.get(key);
     if (!raw) return null;
 
     try {
-      return decodeQuote(raw);
+      const verified = verifyEncodedQuote(raw, this.hmacSecret);
+      if (verified === null) return null;
+      return decodeQuote(verified);
     } catch {
       return null;
     }
@@ -58,7 +64,7 @@ class RedisQuoteCache implements QuoteCache {
 
   async set(key: string, value: QuoteResult, ttlMs: number): Promise<void> {
     const ttlSeconds = Math.max(1, Math.ceil(ttlMs / 1000));
-    await this.client.set(key, encodeQuote(value), { EX: ttlSeconds });
+    await this.client.set(key, signEncodedQuote(encodeQuote(value), this.hmacSecret), { EX: ttlSeconds });
   }
 
   async close(): Promise<void> {
@@ -80,11 +86,31 @@ export async function createQuoteCacheFromEnv(
 
   try {
     await client.connect();
-    return new RedisQuoteCache(client);
+    return new RedisQuoteCache(client, env.REDIS_QUOTE_CACHE_HMAC_SECRET);
   } catch (err) {
     console.warn('[QuoteCache] Redis unavailable, falling back to memory cache:', err);
     return new InMemoryQuoteCache();
   }
+}
+
+export function signEncodedQuote(raw: string, hmacSecret?: string): string {
+  if (!hmacSecret) return raw;
+  const signature = crypto.createHmac('sha256', hmacSecret).update(raw).digest('hex');
+  return `${signature}:${raw}`;
+}
+
+export function verifyEncodedQuote(raw: string, hmacSecret?: string): string | null {
+  if (!hmacSecret) return raw;
+  const separator = raw.indexOf(':');
+  if (separator <= 0) return null;
+
+  const signature = raw.slice(0, separator);
+  const payload = raw.slice(separator + 1);
+  const expected = crypto.createHmac('sha256', hmacSecret).update(payload).digest('hex');
+  const actual = Buffer.from(signature, 'hex');
+  const expectedBytes = Buffer.from(expected, 'hex');
+  if (actual.length !== expectedBytes.length) return null;
+  return crypto.timingSafeEqual(actual, expectedBytes) ? payload : null;
 }
 
 function encodeQuote(value: QuoteResult): string {

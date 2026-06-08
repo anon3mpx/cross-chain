@@ -27,7 +27,10 @@ export class WebSocketAPI {
     private intentEngine: IntentEngine,
     private keyManager: ApiKeyManager,
   ) {
-    this.wss = new WebSocketServer({ port });
+    this.wss = new WebSocketServer({
+      port,
+      handleProtocols: (protocols) => protocols.has('rflo-auth') ? 'rflo-auth' : false,
+    });
     this._setup();
     this._listenToIntentEngine();
     console.log(`[WebSocketAPI] Listening on ws://0.0.0.0:${port}`);
@@ -39,10 +42,10 @@ export class WebSocketAPI {
       const url    = new URL(req.url ?? '', 'http://localhost');
       const parts  = url.pathname.split('/');          // ['', 'ws', 'intent', ':id']
       const intentId = parts[3];
-      const apiKey   = url.searchParams.get('key') ?? '';
+      const apiKey   = this._readApiKey(req, url);
 
       // Auth check
-      const check = this.keyManager.checkQuote(apiKey);
+      const check = this.keyManager.validateKey(apiKey);
       if (!check.allowed) {
         ws.send(JSON.stringify({ error: check.reason }));
         ws.close(1008, check.reason);
@@ -75,6 +78,8 @@ export class WebSocketAPI {
         if (ws.readyState === WebSocket.OPEN) ws.ping();
         else clearInterval(ping);
       }, 30_000);
+      ws.on('close', () => clearInterval(ping));
+      ws.on('error', () => clearInterval(ping));
     });
   }
 
@@ -129,6 +134,18 @@ export class WebSocketAPI {
 
   private _removeSub(intentId: string, client: WsClient): void {
     this.subs.get(intentId)?.delete(client);
+  }
+
+  private _readApiKey(req: IncomingMessage, url: URL): string {
+    const header = req.headers['sec-websocket-protocol'];
+    const requestedProtocols = typeof header === 'string'
+      ? header.split(',').map((value) => value.trim()).filter(Boolean)
+      : [];
+    if (requestedProtocols.includes('rflo-auth')) {
+      const key = requestedProtocols.find((value) => value !== 'rflo-auth');
+      if (key) return key;
+    }
+    return url.searchParams.get('key') ?? '';
   }
 
   get connectionCount(): number {
