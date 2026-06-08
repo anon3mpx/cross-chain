@@ -16,6 +16,7 @@ import EventEmitter from 'eventemitter3';
 import { IntentStatus, Rail, SettlementToken, CHAIN_ID } from '../types';
 import { buildIntentActionMessage, generateIntentActionNonce, IntentAction } from '../utils/intentActionAuth';
 import { RailVariantLabel } from '../rails/registry';
+import type { RpcProviderOverrides } from '../core/ExecutionContext';
 
 // ── Public-facing types (simplified — hides internal complexity) ───────────────
 
@@ -104,6 +105,21 @@ export interface CancelIntentRequest extends IntentActionRequest {
 export interface RefundIntentRequest extends IntentActionRequest {
   reason: string;
 }
+
+export interface SingleChainSwapQuote {
+  tradeInfo: unknown;
+  calldata: {
+    to: string;
+    data: string;
+    value: string;
+    chainId?: number;
+  };
+  swapType?: string;
+}
+
+export type ExecuteResult =
+  | { kind: 'cross-chain'; handle: SwapHandle; quote: SwapQuote }
+  | ({ kind: 'single-chain' } & SingleChainSwapQuote);
 
 // ── SwapHandle — returned from ruflo.swap(), emits real-time events ────────────
 
@@ -262,10 +278,37 @@ export class SwapHandle extends EventEmitter {
 export class RufloSDK {
   private apiKey:  string;
   private baseUrl: string;
+  private rpcProviders?: RpcProviderOverrides;
+  private integratorId?: string;
+  private agentId?: string;
 
-  constructor(config: { apiKey: string; baseUrl?: string }) {
+  constructor(config: {
+    apiKey: string;
+    baseUrl?: string;
+    rpcProviders?: RpcProviderOverrides;
+    integratorId?: string;
+    agentId?: string;
+  }) {
     this.apiKey  = config.apiKey;
     this.baseUrl = config.baseUrl ?? 'https://api.ruflo.io';
+    this.rpcProviders = config.rpcProviders;
+    this.integratorId = config.integratorId;
+    this.agentId = config.agentId;
+  }
+
+  async execute(opts: SwapOptions): Promise<ExecuteResult> {
+    if (opts.from.chainId === opts.to.chainId) {
+      return this.swapSingleChain({
+        chainId: opts.from.chainId,
+        tokenIn: opts.from.token,
+        tokenOut: opts.to.token,
+        amountIn: this._toWei(opts.from.amount, opts.from.decimals ?? 18),
+        recipient: opts.wallet,
+        slippageBps: Math.round((opts.slippagePct ?? 0.5) * 100),
+      });
+    }
+    const handle = await this.swap(opts);
+    return { kind: 'cross-chain', handle, quote: handle.quote };
   }
 
   // ── Get a quote (does NOT submit tx) ──────────────────────────────────────
@@ -283,6 +326,9 @@ export class RufloSDK {
         userAddress:     opts.wallet,
         nativeDstAddress: opts.to.nativeAddress,
         urgency:         opts.urgency ?? 'normal',
+        rpcProviders:    this._wireRpcOverrides(),
+        integratorId:    this.integratorId,
+        agentId:         this.agentId,
       }),
     });
 
@@ -328,6 +374,31 @@ export class RufloSDK {
     return new SwapHandle(q, this.baseUrl, this.apiKey).connect();
   }
 
+  async swapSingleChain(input: {
+    chainId: number;
+    tokenIn: string;
+    tokenOut: string;
+    amountIn: string;
+    recipient: string;
+    slippageBps?: number;
+  }): Promise<ExecuteResult> {
+    const res = await fetch(`${this.baseUrl}/partner/swap-single-chain`, {
+      method: 'POST',
+      headers: this._authHeaders(),
+      body: JSON.stringify({
+        ...input,
+        rpcProviders: this._wireRpcOverrides(),
+        integratorId: this.integratorId,
+        agentId: this.agentId,
+      }),
+    });
+    if (!res.ok) {
+      throw new Error(`Single-chain swap failed: ${await res.text()}`);
+    }
+    const body = await res.json() as SingleChainSwapQuote;
+    return { kind: 'single-chain', ...body };
+  }
+
   // ── Supported chains and tokens ────────────────────────────────────────────
 
   async getSupportedRoutes(): Promise<{ srcChainId: number; dstChainIds: number[]; rails: Rail[] }[]> {
@@ -342,6 +413,23 @@ export class RufloSDK {
   }
   private _fromWei(raw: string, decimals: number): string {
     return (Number(raw) / 10 ** decimals).toFixed(6);
+  }
+  private _authHeaders(): Record<string, string> {
+    const headers: Record<string, string> = {
+      'x-api-key': this.apiKey,
+      'content-type': 'application/json',
+    };
+    if (this.integratorId) headers['x-ruflo-integrator-id'] = this.integratorId;
+    if (this.agentId) headers['x-ruflo-agent-id'] = this.agentId;
+    return headers;
+  }
+  private _wireRpcOverrides(): Record<number, string> | undefined {
+    if (!this.rpcProviders) return undefined;
+    const out: Record<number, string> = {};
+    for (const [chainId, value] of Object.entries(this.rpcProviders)) {
+      if (typeof value === 'string') out[Number(chainId)] = value;
+    }
+    return Object.keys(out).length > 0 ? out : undefined;
   }
 }
 

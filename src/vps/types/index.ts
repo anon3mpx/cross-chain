@@ -138,6 +138,7 @@ export interface QuoteRequest {
   userAddress:  string;
   nativeDstAddress?: string;  // Required for BTC/SOL destinations
   destinationGas?: DestinationGasRequest[];
+  autoFundDestinationGas?: AutoFundDestinationGasRequest;
   urgency?:     'fast' | 'normal';
 }
 
@@ -146,6 +147,39 @@ export interface DestinationGasRequest {
   chainId: number;
   amountWei: string;
   recipient?: string;
+}
+
+export interface AutoFundDestinationGasRequest {
+  thresholdUsd?: number;
+  topUpUsd?: number;
+  recipient?: string;
+}
+
+export type DestinationGasDecisionOutcome =
+  | 'auto_attached'
+  | 'explicit_destination_gas'
+  | 'feature_disabled'
+  | 'kill_switch'
+  | 'no_opt_in'
+  | 'same_chain'
+  | 'source_token_native'
+  | 'balance_sufficient'
+  | 'balance_check_failed'
+  | 'unknown_native_price'
+  | 'zero_top_up';
+
+export interface DestinationGasDecision {
+  provider: 'gaszip';
+  requested: boolean;
+  outcome: DestinationGasDecisionOutcome;
+  recipient?: string;
+  thresholdUsd?: number;
+  requestedTopUpUsd?: number;
+  appliedTopUpUsd?: number;
+  nativeUsd?: number;
+  balanceUsd?: number;
+  effectiveDestinationGas: DestinationGasRequest[];
+  autoAdded: DestinationGasRequest[];
 }
 
 export interface QuoteAmountView {
@@ -220,6 +254,8 @@ export interface QuoteResult {
   layerZeroValueTransferApiUserSteps?: unknown[];
   nativeDstAddress?: string;    // User's BTC/SOL/DOGE address
   selectedByUser?:   boolean;   // true when intent came from explicit offer selection
+  offerType?:        RailOfferType;
+  executionMode?:    ExecutionMode;
 }
 
 export interface ProviderAssetRef {
@@ -348,6 +384,12 @@ export interface Intent {
   fallbackRail?:    Rail;
   errorMessage?:    string;
   partnerApiKey?:   string;
+  partnerId?:       string;
+  integratorId?:    string;
+  agentId?:         string;
+  routeSource?:     'partner-api' | 'ui' | 'agent-sdk' | 'external-solver' | 'internal';
+  actualOut?:       bigint;
+  actualFeeUsd?:    number;
 }
 
 export interface IntentRefundCase {

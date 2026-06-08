@@ -105,6 +105,10 @@ export class IntentRepository {
           fallbackRail: intent.fallbackRail,
           errorMessage: intent.errorMessage,
           partnerApiKey: intent.partnerApiKey,
+          partnerId: intent.partnerId,
+          integratorId: intent.integratorId,
+          agentId: intent.agentId,
+          routeSource: intent.routeSource,
           quote: toDbJson(intent.quote),
           createdAt: intent.createdAt,
           updatedAt: intent.updatedAt,
@@ -168,6 +172,10 @@ export class IntentRepository {
           fallbackRail: updated.fallbackRail,
           errorMessage: updated.errorMessage,
           partnerApiKey: updated.partnerApiKey,
+          partnerId: updated.partnerId,
+          integratorId: updated.integratorId,
+          agentId: updated.agentId,
+          routeSource: updated.routeSource,
           updatedAt: updated.updatedAt,
         },
         actor: options.actor,
@@ -195,7 +203,7 @@ export class IntentRepository {
       `SELECT intent_id, status, quote, user_address,
               src_tx_hash, rail_tx_id, dst_tx_hash,
               created_at, updated_at, retry_count, fallback_rail,
-              error_message, partner_api_key
+              error_message, partner_api_key, partner_id, integrator_id, agent_id, route_source
        FROM intents
        WHERE intent_id = $1`,
       [intentId],
@@ -210,7 +218,7 @@ export class IntentRepository {
       `SELECT intent_id, status, quote, user_address,
               src_tx_hash, rail_tx_id, dst_tx_hash,
               created_at, updated_at, retry_count, fallback_rail,
-              error_message, partner_api_key
+              error_message, partner_api_key, partner_id, integrator_id, agent_id, route_source
        FROM intents
        WHERE quote->>'layerZeroValueTransferApiQuoteId' = $1
        ORDER BY updated_at DESC
@@ -227,7 +235,7 @@ export class IntentRepository {
       `SELECT intent_id, status, quote, user_address,
               src_tx_hash, rail_tx_id, dst_tx_hash,
               created_at, updated_at, retry_count, fallback_rail,
-              error_message, partner_api_key
+              error_message, partner_api_key, partner_id, integrator_id, agent_id, route_source
        FROM intents
        WHERE status = $1
        ORDER BY updated_at DESC
@@ -418,7 +426,7 @@ export class IntentRepository {
       `SELECT intent_id, status, quote, user_address,
               src_tx_hash, rail_tx_id, dst_tx_hash,
               created_at, updated_at, retry_count, fallback_rail,
-              error_message, partner_api_key
+              error_message, partner_api_key, partner_id, integrator_id, agent_id, route_source
        FROM intents
        WHERE intent_id = $1
        FOR UPDATE`,
@@ -436,11 +444,11 @@ export class IntentRepository {
         `INSERT INTO intents (
            intent_id, status, user_address, src_chain_id, dst_chain_id,
            rail, fallback_rail, quote, src_tx_hash, rail_tx_id, dst_tx_hash,
-           retry_count, error_message, partner_api_key, created_at, updated_at
+           retry_count, error_message, partner_api_key, partner_id, integrator_id, agent_id, route_source, created_at, updated_at
          ) VALUES (
            $1, $2, $3, $4, $5,
            $6, $7, $8::jsonb, $9, $10, $11,
-           $12, $13, $14, $15, $16
+           $12, $13, $14, $15, $16, $17, $18, $19, $20
          )
          ON CONFLICT (intent_id)
          DO UPDATE SET
@@ -457,6 +465,10 @@ export class IntentRepository {
            retry_count = EXCLUDED.retry_count,
            error_message = EXCLUDED.error_message,
            partner_api_key = EXCLUDED.partner_api_key,
+           partner_id = EXCLUDED.partner_id,
+           integrator_id = EXCLUDED.integrator_id,
+           agent_id = EXCLUDED.agent_id,
+           route_source = EXCLUDED.route_source,
            updated_at = EXCLUDED.updated_at,
            version = intents.version + 1`,
         [
@@ -474,6 +486,10 @@ export class IntentRepository {
           row.retry_count,
           row.error_message,
           row.partner_api_key,
+          row.partner_id,
+          row.integrator_id,
+          row.agent_id,
+          row.route_source,
           row.created_at,
           row.updated_at,
         ],
@@ -529,6 +545,10 @@ export class IntentRepository {
       fallbackRail: row.fallback_rail ?? undefined,
       errorMessage: row.error_message ?? undefined,
       partnerApiKey: row.partner_api_key ?? undefined,
+      partnerId: row.partner_id ?? undefined,
+      integratorId: row.integrator_id ?? undefined,
+      agentId: row.agent_id ?? undefined,
+      routeSource: row.route_source ?? undefined,
     };
   }
 
@@ -587,6 +607,10 @@ export class IntentRepository {
       fallbackRail: intent.fallbackRail ?? null,
       errorMessage: intent.errorMessage ?? null,
       partnerApiKey: intent.partnerApiKey ?? null,
+      partnerId: intent.partnerId ?? null,
+      integratorId: intent.integratorId ?? null,
+      agentId: intent.agentId ?? null,
+      routeSource: intent.routeSource ?? null,
     });
 
     return normalize(current) !== normalize(updated);

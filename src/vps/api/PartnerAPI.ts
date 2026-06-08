@@ -3,21 +3,33 @@
 // Registration is public; all operational endpoints require an API key.
 // ─────────────────────────────────────────────────────────
 import express, { Request, Response, NextFunction } from 'express';
+import { createHash } from 'node:crypto';
 import { ApiKeyManager, PartnerTier } from '../services/ApiKeyManager';
 import { IntentEngine } from '../services/IntentEngine';
 import { IntentService } from '../services/IntentService';
 import { QuoteEngine } from '../services/QuoteEngine';
 import { buildSelectedOfferIntegration } from '../services/DirectRailIntegrationBuilder';
 import { Intent } from '../types';
-import { parseOfferSelection, parseQuoteRequest, serializeOfferSet, serializeQuote } from './quoteCodec';
+import { parseOfferSelection, parseQuoteRequest, serializeGasZipComposition, serializeOfferSet, serializeQuote } from './quoteCodec';
 import { getRailVariantLabel } from '../rails/registry';
+import { RpcProviderRegistry } from '../services/RpcProviderRegistry';
+import { SwapAdapter, isSwapSdkChain } from '../sdk/swapAdapter';
+import type { ExecutionContext, RpcProviderOverrides } from '../core/ExecutionContext';
+import type { IdempotencyStore } from '../db/IdempotencyStore';
+import { DestinationGasAutoFund } from '../services/DestinationGasAutoFund';
+import { NativeUsdOracle } from '../services/NativeUsdOracle';
 
 export function buildPartnerAPI(
   keyManager: ApiKeyManager,
   intentService: IntentService,
   quoteEngine: QuoteEngine,
+  rpcRegistry: RpcProviderRegistry,
+  idempotency?: IdempotencyStore,
 ): express.Router {
   const router = express.Router();
+  const swapAdapter = new SwapAdapter({ registry: rpcRegistry });
+  const usdOracle = new NativeUsdOracle({ swapAdapter });
+  const autoFund = new DestinationGasAutoFund({ registry: rpcRegistry, oracle: usdOracle });
 
   // ── POST /partner/register ─────────────────────────────────────────────────
   // Self-service registration — returns apiKey + webhookSecret.
@@ -84,17 +96,35 @@ export function buildPartnerAPI(
       }
       if (!quoteReq.userAddress) return res.status(400).json({ error: 'userAddress required' });
 
-      const offerSet = await quoteEngine.getOffers(quoteReq);
+      const effectiveReq = {
+        ...quoteReq,
+        autoFundDestinationGas: parseAutoFundRequest(req.body),
+      };
+      const destinationGasResolution = await autoFund.resolveDetailed(
+        effectiveReq,
+        buildExecutionContext(req, check.partner.apiKey),
+      );
+      const requestWithDestinationGas = {
+        ...effectiveReq,
+        destinationGas: destinationGasResolution.destinationGas,
+      };
+
+      const offerSet = await quoteEngine.getOffers(requestWithDestinationGas);
       if (!offerSet) {
         return res.status(400).json({ error: 'NO_ROUTE', message: 'No route available for this chain pair and token combination' });
       }
-      const quote = await quoteEngine.getQuote(quoteReq);
+      const quote = await quoteEngine.getQuote(requestWithDestinationGas);
+      const gasZipComposition = offerSet
+        ? quoteEngine.buildGasZipComposition(requestWithDestinationGas, offerSet)
+        : null;
       const bestFeeAmountToken = quote?.feeAmountToken ?? 0n;
       const { partnerRebate } = keyManager.splitFee(bestFeeAmountToken, check.partner);
 
       res.json({
         offerSet: serializeOfferSet(offerSet),
         ...(quote ? { quote: serializeQuote(quote) } : {}),
+        destinationGasDecision: destinationGasResolution.decision,
+        ...(gasZipComposition ? { gasZipComposition: serializeGasZipComposition(gasZipComposition) } : {}),
         partnerEarnings: {
           rebatePerTx:   partnerRebate.toString(),
           feeShareBps:   check.partner.feeShareBps,
@@ -113,6 +143,44 @@ export function buildPartnerAPI(
     }
   });
 
+  router.post('/swap-single-chain', async (req: Request, res: Response) => {
+    const apiKey = (req as any).apiKey;
+    const check = keyManager.checkQuote(apiKey);
+    if (!check.allowed) {
+      if (check.reason === 'RATE_LIMIT') res.set('Retry-After', '60');
+      return res.status(check.reason === 'UNREGISTERED' || check.reason === 'INVALID_KEY' ? 401 : 429).json({
+        error: check.reason,
+        message: LIMIT_MESSAGES[check.reason],
+      });
+    }
+
+    try {
+      const body = (req.body ?? {}) as Record<string, unknown>;
+      const chainId = numeric(body.chainId, 'chainId');
+      const tokenIn = address(body.tokenIn, 'tokenIn');
+      const tokenOut = address(body.tokenOut, 'tokenOut');
+      const recipient = address(body.recipient, 'recipient');
+      const amountIn = bigIntStr(body.amountIn, 'amountIn');
+      const slippageBps = clampSlippage(body.slippageBps);
+
+      if (!isSwapSdkChain(chainId)) {
+        return res.status(400).json({
+          error: 'UNSUPPORTED_CHAIN',
+          message: `Chain ${chainId} is not supported for same-chain swaps.`,
+        });
+      }
+
+      const result = await swapAdapter.swap(
+        { chainId, tokenIn, tokenOut, amountIn, recipient, slippageBps },
+        buildExecutionContext(req, check.partner.apiKey),
+      );
+      res.json(result);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : 'unknown';
+      res.status(400).json({ error: 'INVALID_REQUEST', message: msg });
+    }
+  });
+
   router.post('/quote/select', async (req: Request, res: Response) => {
     const apiKey = (req as any).apiKey;
     const check  = keyManager.validateKey(apiKey);
@@ -124,6 +192,15 @@ export function buildPartnerAPI(
       const { offerSetId, offerId } = parseOfferSelection(req.body);
       const userAddress = typeof req.body?.userAddress === 'string' ? req.body.userAddress.trim() : '';
       if (!userAddress) return res.status(400).json({ error: 'userAddress required' });
+      if (idempotency) {
+        const lease = await idempotency.acquire('offer:select', `${offerSetId}:${offerId}`, 60_000);
+        if (!lease.acquired) {
+          return res.status(409).json({
+            error: 'OFFER_SELECTION_IN_FLIGHT',
+            message: 'Another /quote/select call for this offer is in progress. Retry shortly.',
+          });
+        }
+      }
 
       const selection = await quoteEngine.selectOffer(offerSetId, offerId);
       if (!selection.offer) {
@@ -140,7 +217,13 @@ export function buildPartnerAPI(
         });
       }
 
-      const intent = await intentService.createQuotedIntentFromOffer(selection.offer, userAddress, apiKey);
+      const intent = await intentService.createQuotedIntentFromOffer(selection.offer, userAddress, {
+        partnerApiKey: apiKey,
+        partnerId: partnerIdFromKey(apiKey),
+        integratorId: readOptionalString(req.body?.integratorId),
+        agentId: readOptionalString(req.body?.agentId),
+        routeSource: 'partner-api',
+      });
       const { partnerRebate } = keyManager.splitFee(intent.quote.feeAmountToken, check.partner);
       const selectedIntegration = await buildSelectedOfferIntegration(intent.intentId, selection.offer, userAddress);
       const integration = selectedIntegration.mode === 'router_intent'
@@ -312,3 +395,80 @@ const LIMIT_MESSAGES: Record<string, string> = {
   DAILY_LIMIT:    'Daily transaction limit reached. Resets at UTC midnight or upgrade.',
   ABUSE_DETECTED: 'Unusual quote pattern detected. Contact support if this is in error.',
 };
+
+function partnerIdFromKey(apiKey: string): string {
+  return `ptn_${createHash('sha256').update(apiKey).digest('hex').slice(0, 24)}`;
+}
+
+function buildExecutionContext(req: Request, apiKey: string): ExecutionContext {
+  const body = (req.body ?? {}) as Record<string, unknown>;
+  return {
+    partnerId: partnerIdFromKey(apiKey),
+    integratorId: readOptionalString(body.integratorId),
+    agentId: readOptionalString(body.agentId),
+    routeSource: 'partner-api',
+    requestId: typeof req.headers['x-request-id'] === 'string' ? req.headers['x-request-id'] : undefined,
+    receivedAt: Date.now(),
+    rpcProviders: parseRpcOverrides(body.rpcProviders),
+  };
+}
+
+function parseAutoFundRequest(input: unknown): { thresholdUsd?: number; topUpUsd?: number; recipient?: string } | undefined {
+  if (!input || typeof input !== 'object') return undefined;
+  const body = input as Record<string, unknown>;
+  const value = body.autoFundDestinationGas;
+  if (value !== true && (typeof value !== 'object' || value === null)) return undefined;
+  if (value === true) return {};
+  const config = value as Record<string, unknown>;
+  return {
+    thresholdUsd: typeof config.thresholdUsd === 'number' ? config.thresholdUsd : undefined,
+    topUpUsd: typeof config.topUpUsd === 'number' ? config.topUpUsd : undefined,
+    recipient: readOptionalString(config.recipient),
+  };
+}
+
+function parseRpcOverrides(input: unknown): RpcProviderOverrides | undefined {
+  if (!input || typeof input !== 'object') return undefined;
+  const out: RpcProviderOverrides = {};
+  for (const [chainId, value] of Object.entries(input as Record<string, unknown>)) {
+    if (typeof value !== 'string' || !value.trim()) continue;
+    out[Number(chainId)] = value.trim();
+  }
+  return Object.keys(out).length > 0 ? out : undefined;
+}
+
+function readOptionalString(value: unknown): string | undefined {
+  if (typeof value !== 'string') return undefined;
+  const trimmed = value.trim();
+  return trimmed ? trimmed : undefined;
+}
+
+function numeric(value: unknown, field: string): number {
+  const parsed = Number(value);
+  if (!Number.isInteger(parsed) || parsed <= 0) {
+    throw new Error(`${field} must be a positive integer`);
+  }
+  return parsed;
+}
+
+function bigIntStr(value: unknown, field: string): string {
+  const normalized = typeof value === 'string' ? value.trim() : String(value ?? '');
+  if (!/^\d+$/.test(normalized) || BigInt(normalized) <= 0n) {
+    throw new Error(`${field} must be a positive integer string`);
+  }
+  return normalized;
+}
+
+function address(value: unknown, field: string): string {
+  const normalized = readOptionalString(value);
+  if (!normalized || !/^0x[0-9a-fA-F]{40}$/.test(normalized)) {
+    throw new Error(`${field} must be a valid EVM address`);
+  }
+  return normalized;
+}
+
+function clampSlippage(value: unknown): number {
+  const parsed = Number(value ?? 50);
+  if (!Number.isFinite(parsed)) return 50;
+  return Math.min(2_000, Math.max(1, Math.round(parsed)));
+}

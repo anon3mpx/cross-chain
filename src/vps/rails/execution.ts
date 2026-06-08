@@ -13,7 +13,15 @@ export type RailExecutionMode = 'worker' | 'passive' | 'disabled';
 
 export interface RailExecutionContext {
   intentService: IntentService;
-  rpcProviderRegistry?: Pick<RpcProviderRegistry, 'getPollingRpcUrl' | 'reportFailure' | 'getReadProvider'>;
+  rpcProviderRegistry?: Pick<RpcProviderRegistry, 'getPollingRpcUrl' | 'reportFailure' | 'getProvider' | 'getReadProvider'>;
+  /**
+   * Sprint 2 — multi-instance idempotency lock store.
+   * When provided, rail workers acquire DB-backed lease locks before
+   * performing side effects (V1: CCTP destination relay).
+   */
+  idempotency?: import('../db/IdempotencyStore').IdempotencyStore;
+  /** Sprint 2.7 — cross-process nonce reservation for relayer EOAs. */
+  nonceStore?: import('../db/RelayerNonceStore').RelayerNonceStore;
 }
 
 export interface RailExecutionOptions {
@@ -73,7 +81,13 @@ class CctpRailExecutionAdapter implements RailExecutionAdapter<CctpAttestationWo
       };
     }
 
-    const worker = new CctpAttestationWorker(context.intentService, context.rpcProviderRegistry);
+    const worker = new CctpAttestationWorker(
+      context.intentService,
+      context.rpcProviderRegistry,
+      undefined,
+      context.idempotency,
+      context.nonceStore,
+    );
     await worker.start();
 
     return {
@@ -190,7 +204,10 @@ class GasZipRailExecutionAdapter implements RailExecutionAdapter<GasZipMonitorWo
       undefined,
       async (chainId) => {
         try {
-          return context.rpcProviderRegistry?.getReadProvider(chainId) ?? new RpcProviderRegistry().getReadProvider(chainId);
+          const registry = context.rpcProviderRegistry ?? new RpcProviderRegistry();
+          return 'getProvider' in registry
+            ? registry.getProvider(chainId).asEthersProvider()
+            : registry.getReadProvider(chainId);
         } catch {
           return null;
         }

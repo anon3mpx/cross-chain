@@ -1,6 +1,7 @@
 import { buildAdminAPI } from '../api/AdminAPI';
 import { buildStatusAPI } from '../api/StatusAPI';
 import { buildRuntime } from './runtime';
+import { metrics, metricsMiddleware, requestIdMiddleware } from './observability';
 
 function readInt(name: string, fallback: number): number {
   const raw = process.env[name];
@@ -27,12 +28,20 @@ async function main(): Promise<void> {
     enableRecovery: false,
   });
 
-  const app = buildStatusAPI(runtime.intentService, runtime.quoteEngine);
+  const app = buildStatusAPI(runtime.intentService, runtime.quoteEngine, {
+    idempotency: runtime.idempotency,
+  });
   app.set('trust proxy', readTrustProxy());
+  app.use(requestIdMiddleware());
+  app.use(metricsMiddleware());
   if (runtime.partnerApiRouter) {
     app.use('/partner', runtime.partnerApiRouter);
   }
-  app.use('/admin', buildAdminAPI(runtime.intentService));
+  app.use('/admin', buildAdminAPI(runtime.intentService, runtime.reliability, runtime.usdOracle));
+  app.get('/metrics', (_req, res) => {
+    res.setHeader('content-type', 'text/plain; version=0.0.4');
+    res.send(metrics.render());
+  });
 
   const host = process.env.VPS_API_HOST ?? '0.0.0.0';
   const port = readInt('VPS_API_PORT', 8787);

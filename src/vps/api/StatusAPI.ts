@@ -53,7 +53,8 @@ interface LayerZeroValueTransferApiHttpClient {
 
 interface StatusApiOptions {
   layerZeroValueTransferApiClient?: LayerZeroValueTransferApiHttpClient;
-  rpcProviderRegistry?: Pick<RpcProviderRegistry, 'getReadProvider'>;
+  rpcProviderRegistry?: Pick<RpcProviderRegistry, 'getProvider' | 'getReadProvider'>;
+  idempotency?: import('../db/IdempotencyStore').IdempotencyStore;
 }
 
 class MemoryIntentActionReplayStore {
@@ -247,10 +248,11 @@ export function buildStatusAPI(
 ): express.Application {
   const app = express();
   app.set('trust proxy', readBoolEnv('VPS_TRUST_PROXY_HEADERS', false));
-  const providers = new Map<number, ethers.JsonRpcProvider>();
+  const providers = new Map<number, ethers.AbstractProvider>();
   const layerZeroValueTransferApiClient =
     options.layerZeroValueTransferApiClient ?? new LayerZeroValueTransferApiClient();
   const rpcProviderRegistry = options.rpcProviderRegistry ?? new RpcProviderRegistry();
+  const idempotency = options.idempotency;
 
   app.use((req, res, next) => {
     res.setHeader('Access-Control-Allow-Origin', process.env.VPS_CORS_ORIGIN ?? '*');
@@ -593,7 +595,7 @@ export function buildStatusAPI(
       const auth = parseSignedIntentAction(req, intentId, 'submitted');
       actionId = auth.actionId;
       if (actionId) {
-        claimed = intentActionReplayStore.claim(actionId, SIGNATURE_WINDOW_MS);
+        claimed = await claimIntentAction(actionId);
         if (!claimed) {
           throw new IntentLifecycleError('ACTION_ALREADY_USED', 'Signed request has already been used.', 409);
         }
@@ -604,7 +606,7 @@ export function buildStatusAPI(
       });
       res.status(202).json(await serializeIntent(intent));
     } catch (err) {
-      if (actionId && claimed) intentActionReplayStore.release(actionId);
+      if (actionId && claimed) await releaseIntentAction(actionId);
       handleLifecycleError(res, err);
     }
   });
@@ -617,7 +619,7 @@ export function buildStatusAPI(
       const auth = parseSignedIntentAction(req, intentId, 'cancel');
       actionId = auth.actionId;
       if (actionId) {
-        claimed = intentActionReplayStore.claim(actionId, SIGNATURE_WINDOW_MS);
+        claimed = await claimIntentAction(actionId);
         if (!claimed) {
           throw new IntentLifecycleError('ACTION_ALREADY_USED', 'Signed request has already been used.', 409);
         }
@@ -632,7 +634,7 @@ export function buildStatusAPI(
         : await intentService.cancel(intentId, auth.userAddress, auth.reason);
       res.json(await serializeIntent(intent));
     } catch (err) {
-      if (actionId && claimed) intentActionReplayStore.release(actionId);
+      if (actionId && claimed) await releaseIntentAction(actionId);
       handleLifecycleError(res, err);
     }
   });
@@ -645,7 +647,7 @@ export function buildStatusAPI(
       const auth = parseSignedIntentAction(req, intentId, 'refund');
       actionId = auth.actionId;
       if (actionId) {
-        claimed = intentActionReplayStore.claim(actionId, SIGNATURE_WINDOW_MS);
+        claimed = await claimIntentAction(actionId);
         if (!claimed) {
           throw new IntentLifecycleError('ACTION_ALREADY_USED', 'Signed request has already been used.', 409);
         }
@@ -657,7 +659,7 @@ export function buildStatusAPI(
       const refund = await intentService.requestRefund(intentId, auth.userAddress, reason);
       res.status(202).json({ ok: true, refund, ts: Date.now() });
     } catch (err) {
-      if (actionId && claimed) intentActionReplayStore.release(actionId);
+      if (actionId && claimed) await releaseIntentAction(actionId);
       handleLifecycleError(res, err);
     }
   });
@@ -1017,7 +1019,7 @@ export function buildStatusAPI(
     );
   }
 
-  function getSourceProvider(chainId: number): ethers.JsonRpcProvider {
+  function getSourceProvider(chainId: number): ethers.AbstractProvider {
     const existing = providers.get(chainId);
     if (existing) return existing;
 
@@ -1030,7 +1032,9 @@ export function buildStatusAPI(
       );
     }
 
-    const provider = rpcProviderRegistry.getReadProvider(chainId);
+    const provider = 'getProvider' in rpcProviderRegistry
+      ? rpcProviderRegistry.getProvider(chainId).asEthersProvider()
+      : rpcProviderRegistry.getReadProvider(chainId);
     providers.set(chainId, provider);
     return provider;
   }
@@ -1072,5 +1076,21 @@ export function buildStatusAPI(
     }
     console.error('[StatusAPI] request failed', err);
     res.status(500).json({ error: 'INTERNAL', message: 'Unexpected server error.' });
+  }
+
+  async function claimIntentAction(actionId: string): Promise<boolean> {
+    if (idempotency) {
+      const lease = await idempotency.acquire('admin:refund', actionId, SIGNATURE_WINDOW_MS + 5_000);
+      return lease.acquired;
+    }
+    return intentActionReplayStore.claim(actionId, SIGNATURE_WINDOW_MS);
+  }
+
+  async function releaseIntentAction(actionId: string): Promise<void> {
+    if (idempotency) {
+      await idempotency.release('admin:refund', actionId);
+      return;
+    }
+    intentActionReplayStore.release(actionId);
   }
 }

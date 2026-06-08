@@ -1,5 +1,6 @@
 {
   "scripts": {
+    "postinstall": "node src/vps/scripts/fixEmpxSwapSdkBeta.js",
     "db:migrate": "tsx src/vps/db/migrate.ts",
     "sol:build": "forge build --config-path config/foundry.toml",
     "sol:test": "forge test --config-path config/foundry.toml -vv",
@@ -32,6 +33,7 @@
     "@layerzerolabs/oapp-evm": "^0.4.1",
     "@layerzerolabs/oft-evm": "^4.0.1",
     "agentic-flow": "^2.0.7",
+    "empx-swap-sdk-beta": "^1.0.2",
     "ethers": "^6.16.0",
     "express": "^5.1.0",
     "pg": "^8.20.0",

@@ -34,3 +34,13 @@ test('schema.sql defines provider-direct transfer tracking table', () => {
   assert.match(schema, /CONSTRAINT uq_intent_provider_transfer UNIQUE \(intent_id, provider, provider_quote_id\)/);
   assert.match(schema, /idx_intents_lz_value_transfer_quote_id/);
 });
+
+test('schema.sql defines reliability and relayer nonce persistence tables', () => {
+  const schema = fs.readFileSync(path.resolve(process.cwd(), 'src/vps/db/schema.sql'), 'utf8');
+
+  assert.match(schema, /CREATE TABLE IF NOT EXISTS route_outcomes/);
+  assert.match(schema, /execution_mode\s+TEXT/);
+  assert.match(schema, /offer_type\s+TEXT/);
+  assert.match(schema, /CREATE TABLE IF NOT EXISTS relayer_nonces/);
+  assert.match(schema, /CREATE TABLE IF NOT EXISTS relayer_nonce_cursor/);
+});

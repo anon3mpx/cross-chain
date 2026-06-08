@@ -1,4 +1,4 @@
-import { AbiCoder, Interface, JsonRpcProvider, getAddress } from 'ethers';
+import { AbiCoder, Interface, AbstractProvider, getAddress } from 'ethers';
 import {
   getEmpsealRouterAddressForChain,
   getEmpsealRouterFeeBpsForChain,
@@ -61,13 +61,13 @@ export interface EmpsealQuoteWorkerLike {
 }
 
 export class EmpsealQuoteWorker implements EmpsealQuoteWorkerLike {
-  private readonly providers = new Map<number, JsonRpcProvider>();
+  private readonly providers = new Map<number, AbstractProvider>();
   private readonly routerAddresses = new Map<number, string>();
   private readonly timeoutMs = this._readIntEnv('EMPSEAL_QUOTE_TIMEOUT_MS', DEFAULT_RPC_TIMEOUT_MS);
-  private readonly rpcProviderRegistry: Pick<RpcProviderRegistry, 'getReadProvider'>;
+  private readonly rpcProviderRegistry: Pick<RpcProviderRegistry, 'getProvider' | 'getReadProvider'>;
 
   constructor(
-    rpcProviderRegistry: Pick<RpcProviderRegistry, 'getReadProvider'> = new RpcProviderRegistry(),
+    rpcProviderRegistry: Pick<RpcProviderRegistry, 'getProvider' | 'getReadProvider'> = new RpcProviderRegistry(),
   ) {
     this.rpcProviderRegistry = rpcProviderRegistry;
   }
@@ -138,7 +138,7 @@ export class EmpsealQuoteWorker implements EmpsealQuoteWorkerLike {
     if (!routerAddress) return null;
 
     try {
-      this.rpcProviderRegistry.getReadProvider(chainId);
+      this._provider(chainId);
     } catch {
       return null;
     }
@@ -171,11 +171,13 @@ export class EmpsealQuoteWorker implements EmpsealQuoteWorkerLike {
     throw new Error('Empseal findBestPath decode failed for all known router layouts');
   }
 
-  private _provider(chainId: number): JsonRpcProvider {
+  private _provider(chainId: number): AbstractProvider {
     const cached = this.providers.get(chainId);
     if (cached) return cached;
 
-    const provider = this.rpcProviderRegistry.getReadProvider(chainId);
+    const provider = 'getProvider' in this.rpcProviderRegistry
+      ? this.rpcProviderRegistry.getProvider(chainId).asEthersProvider()
+      : this.rpcProviderRegistry.getReadProvider(chainId);
     this.providers.set(chainId, provider);
     return provider;
   }

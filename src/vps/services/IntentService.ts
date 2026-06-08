@@ -49,13 +49,30 @@ export class IntentService {
     private readonly intentRepo?: IntentRepository,
   ) {}
 
-  async createQuotedIntent(quote: QuoteResult, userAddress: string, partnerApiKey?: string): Promise<Intent> {
+  async createQuotedIntent(
+    quote: QuoteResult,
+    userAddress: string,
+    metadata?: string | {
+      partnerApiKey?: string;
+      partnerId?: string;
+      integratorId?: string;
+      agentId?: string;
+      routeSource?: Intent['routeSource'];
+    },
+  ): Promise<Intent> {
+    const normalized = typeof metadata === 'string'
+      ? { partnerApiKey: metadata }
+      : (metadata ?? {});
     const intent: Intent = {
       intentId: quote.intentId,
       status: IntentStatus.QUOTED,
       quote,
       userAddress,
-      partnerApiKey,
+      partnerApiKey: normalized.partnerApiKey,
+      partnerId: normalized.partnerId,
+      integratorId: normalized.integratorId,
+      agentId: normalized.agentId,
+      routeSource: normalized.routeSource,
       createdAt: Date.now(),
       updatedAt: Date.now(),
       retryCount: 0,
@@ -72,9 +89,19 @@ export class IntentService {
     return intent;
   }
 
-  async createQuotedIntentFromOffer(offer: RailOffer, userAddress: string, partnerApiKey?: string): Promise<Intent> {
+  async createQuotedIntentFromOffer(
+    offer: RailOffer,
+    userAddress: string,
+    metadata?: string | {
+      partnerApiKey?: string;
+      partnerId?: string;
+      integratorId?: string;
+      agentId?: string;
+      routeSource?: Intent['routeSource'];
+    },
+  ): Promise<Intent> {
     const quote = this.materializeSelectedOfferQuote(offer);
-    return this.createQuotedIntent(quote, userAddress, partnerApiKey);
+    return this.createQuotedIntent(quote, userAddress, metadata);
   }
 
   async getIntent(intentId: string): Promise<Intent | null> {

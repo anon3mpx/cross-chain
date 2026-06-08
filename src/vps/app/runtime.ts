@@ -2,6 +2,7 @@ import { CHAIN_CONFIGS } from '../config/chains';
 import { createPostgresIntentStore, PostgresIntentStore } from '../db/bootstrap';
 import { assertPostgresRailSchemaCompatibility } from '../db/schemaCompatibility';
 import { buildPartnerAPI, setupWebhookPush } from '../api/PartnerAPI';
+import { NativeUsdOracle } from '../services/NativeUsdOracle';
 import { ApiKeyManager } from '../services/ApiKeyManager';
 import { EventMonitor } from '../services/EventMonitor';
 import { CctpAttestationWorker } from '../services/CctpAttestationWorker';
@@ -19,6 +20,12 @@ import { registerDexQuoteAdapters } from '../bootstrap/dexAdapters';
 import { RailExecutionHandle, RailExecutionManager } from '../rails/execution';
 import { Rail } from '../types';
 import { RpcProviderRegistry } from '../services/RpcProviderRegistry';
+import { SwapAdapter } from '../sdk/swapAdapter';
+import { PostgresReliabilityRepository, type ReliabilityRepository } from '../db/ReliabilityRepository';
+import { ReliabilityRecorder } from '../services/ReliabilityRecorder';
+import { RailReliabilityCache } from '../services/RailReliabilityCache';
+import { PostgresIdempotencyStore, InMemoryIdempotencyStore, type IdempotencyStore } from '../db/IdempotencyStore';
+import { PostgresRelayerNonceStore, InMemoryRelayerNonceStore, type RelayerNonceStore } from '../db/RelayerNonceStore';
 
 export interface RuntimeOptions {
   enableEventMonitor?: boolean;
@@ -43,6 +50,10 @@ export interface RuntimeContext {
   apiKeyManager?: ApiKeyManager;
   partnerApiRouter?: ReturnType<typeof buildPartnerAPI>;
   postgres?: PostgresIntentStore;
+  reliability?: ReliabilityRepository;
+  idempotency: IdempotencyStore;
+  nonceStore: RelayerNonceStore;
+  usdOracle: NativeUsdOracle;
   close(): Promise<void>;
 }
 
@@ -79,6 +90,15 @@ export async function buildRuntime(options: RuntimeOptions = {}): Promise<Runtim
     await assertPostgresRailSchemaCompatibility(postgres.pool);
   }
   const intentService = new IntentService(intentEngine, postgres?.repo);
+  const reliability: ReliabilityRepository | undefined = postgres
+    ? new PostgresReliabilityRepository(postgres.pool)
+    : undefined;
+  let reliabilityCache: RailReliabilityCache | undefined;
+  if (reliability) {
+    new ReliabilityRecorder(intentEngine, reliability).start();
+    reliabilityCache = new RailReliabilityCache(reliability);
+    reliabilityCache.start();
+  }
   const quoteCache: QuoteCache = await createQuoteCacheFromEnv(process.env);
   const quoteEngine = new QuoteEngine(quoteCache, {
     thorchainQuoteWorker: enableThorchainQuoteWorker
@@ -92,9 +112,18 @@ export async function buildRuntime(options: RuntimeOptions = {}): Promise<Runtim
       : undefined,
   });
   const rpcProviderRegistry = new RpcProviderRegistry();
+  const usdOracle = new NativeUsdOracle({
+    swapAdapter: new SwapAdapter({ registry: rpcProviderRegistry }),
+  });
   registerDexQuoteAdapters(quoteEngine, process.env, rpcProviderRegistry);
+  const idempotency: IdempotencyStore = postgres
+    ? new PostgresIdempotencyStore(postgres.pool)
+    : new InMemoryIdempotencyStore();
+  const nonceStore: RelayerNonceStore = postgres
+    ? new PostgresRelayerNonceStore(postgres.pool)
+    : new InMemoryRelayerNonceStore();
 
-  const rails = new RailSelector();
+  const rails = new RailSelector(undefined, undefined, reliabilityCache);
   const recoveryEngine = enableRecovery
     ? new RecoveryEngine(
         intentService,
@@ -124,7 +153,12 @@ export async function buildRuntime(options: RuntimeOptions = {}): Promise<Runtim
     }
   }
 
-  const railExecutionManager = new RailExecutionManager({ intentService, rpcProviderRegistry });
+  const railExecutionManager = new RailExecutionManager({
+    intentService,
+    rpcProviderRegistry,
+    idempotency,
+    nonceStore,
+  });
   const railExecutions = await railExecutionManager.startAll({
     enabled: {
       [Rail.CCTP]: options.railExecution?.[Rail.CCTP] ?? enableCctpRelay,
@@ -139,7 +173,7 @@ export async function buildRuntime(options: RuntimeOptions = {}): Promise<Runtim
 
   const apiKeyManager = enablePartnerApi ? new ApiKeyManager() : undefined;
   const partnerApiRouter = apiKeyManager
-    ? buildPartnerAPI(apiKeyManager, intentService, quoteEngine)
+    ? buildPartnerAPI(apiKeyManager, intentService, quoteEngine, rpcProviderRegistry, idempotency)
     : undefined;
   if (apiKeyManager) {
     setupWebhookPush(intentEngine, apiKeyManager);
@@ -157,6 +191,10 @@ export async function buildRuntime(options: RuntimeOptions = {}): Promise<Runtim
     thorchainWorker,
     layerZeroValueTransferApiMonitorWorker,
     postgres,
+    reliability,
+    idempotency,
+    nonceStore,
+    usdOracle,
     apiKeyManager,
     partnerApiRouter,
     async close() {
