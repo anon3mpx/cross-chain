@@ -16,6 +16,7 @@ export interface DestinationGasConfig {
 export const RAIL_SETTLEMENT_ASSET_ALLOWLISTS: RailSettlementAssetAllowlist = {
   [Rail.CCTP]: ['USDC'],
   [Rail.LAYERZERO]: ['USDC'],
+  [Rail.HYPERLANE_NEXUS]: ['USDC', 'USDT'],
   // [Rail.AXELAR]: ['USDC', 'USDT', 'WETH'],
   // [Rail.VIA_LABS]: ['USDC', 'USDT', 'WETH'],
   [Rail.THORCHAIN]: ['USDC', 'USDT', 'WETH'],
@@ -52,6 +53,12 @@ export const DESTINATION_GAS_LIMITS: Partial<Record<Rail, DestinationGasConfig>>
     default: 0,
     byOfferType: {
       thor_api_direct: 0,
+    },
+  },
+  [Rail.HYPERLANE_NEXUS]: {
+    default: 0,
+    byOfferType: {
+      hyperlane_nexus_direct: 0,
     },
   },
 };

@@ -34,9 +34,9 @@ CREATE TABLE IF NOT EXISTS intents (
   dst_chain_id       INTEGER NOT NULL,
 
   rail               TEXT NOT NULL
-                    CHECK (rail IN ('CCTP','AXELAR','LAYERZERO','VIA_LABS','WORMHOLE','THORCHAIN','GASZIP')),
+                    CHECK (rail IN ('CCTP','AXELAR','LAYERZERO','VIA_LABS','WORMHOLE','THORCHAIN','GASZIP','HYPERLANE_NEXUS')),
   fallback_rail      TEXT
-                    CHECK (fallback_rail IS NULL OR fallback_rail IN ('CCTP','AXELAR','LAYERZERO','VIA_LABS','WORMHOLE','THORCHAIN','GASZIP')),
+                    CHECK (fallback_rail IS NULL OR fallback_rail IN ('CCTP','AXELAR','LAYERZERO','VIA_LABS','WORMHOLE','THORCHAIN','GASZIP','HYPERLANE_NEXUS')),
 
   quote              JSONB NOT NULL,
   src_tx_hash        TEXT,
@@ -218,7 +218,7 @@ CREATE TABLE IF NOT EXISTS intent_rail_attempts (
   attempt_no         INTEGER NOT NULL,
 
   rail               TEXT NOT NULL
-                    CHECK (rail IN ('CCTP','AXELAR','LAYERZERO','VIA_LABS','WORMHOLE','THORCHAIN','GASZIP')),
+                    CHECK (rail IN ('CCTP','AXELAR','LAYERZERO','VIA_LABS','WORMHOLE','THORCHAIN','GASZIP','HYPERLANE_NEXUS')),
 
   status             TEXT NOT NULL
                     CHECK (status IN ('PENDING','SUBMITTED','IN_TRANSIT','SETTLED','FAILED','CANCELLED')),

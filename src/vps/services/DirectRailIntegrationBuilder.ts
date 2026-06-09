@@ -1,10 +1,13 @@
 import { RailOffer, QuoteResult } from '../types';
 import { buildRouterIntegration, type RouterIntegration } from './IntentCalldataBuilder';
-import { Interface, ZeroAddress, isAddress } from 'ethers';
+import { Interface, ZeroAddress, getAddress, isAddress, zeroPadValue } from 'ethers';
 import type { LayerZeroValueTransferApiUserStep } from './layerzero/LayerZeroValueTransferApiClient';
 
 const THOR_ROUTER_IFACE = new Interface([
   'function depositWithExpiry(address payable vault,address asset,uint256 amount,string memo,uint256 expiration)',
+]);
+const HYPERLANE_WARP_ROUTE_IFACE = new Interface([
+  'function transferRemote(uint32 destinationDomain, bytes32 recipient, uint256 amount) payable returns (bytes32)',
 ]);
 
 export type SelectedOfferIntegration =
@@ -49,6 +52,26 @@ export type SelectedOfferIntegration =
       value: string;
       chainId: number;
     };
+  }
+  | {
+    mode: 'provider_direct';
+    action: {
+      kind: 'hyperlane_transfer_remote';
+      warpRouteAddress: string;
+      destinationDomain: number;
+      interchainGasFee: string;
+    };
+    approvals?: Array<{
+      token: string;
+      spender: string;
+      amount: string;
+    }>;
+    tx?: {
+      to: string;
+      data: string;
+      value: string;
+      chainId: number;
+    };
   };
 
 function materializeSelectedOfferQuote(offer: RailOffer): QuoteResult {
@@ -83,6 +106,14 @@ function isGasZipProviderDirectOffer(offer: RailOffer): boolean {
     : '';
   if (provider === 'gaszip') return true;
   return offer.rail === 'GASZIP' || offer.offerType === 'gaszip_api_direct';
+}
+
+function isHyperlaneNexusProviderDirectOffer(offer: RailOffer): boolean {
+  const provider = typeof offer.execution?.provider === 'string'
+    ? offer.execution.provider.toLowerCase()
+    : '';
+  if (provider === 'hyperlane_explorer') return true;
+  return offer.rail === 'HYPERLANE_NEXUS' || offer.offerType === 'hyperlane_nexus_direct';
 }
 
 function readLayerZeroValueTransferApiUserSteps(offer: RailOffer): LayerZeroValueTransferApiUserStep[] {
@@ -215,6 +246,55 @@ export async function buildSelectedOfferIntegration(
         expiresAt,
       },
       ...(tx && tx.to ? { tx } : {}),
+    };
+  }
+
+  if (isHyperlaneNexusProviderDirectOffer(offer)) {
+    const execution = offer.execution as Record<string, unknown>;
+    const quote = execution.quote as Record<string, unknown> | undefined;
+    const warpRouteAddress = String(execution.warpRouteAddress ?? '').trim();
+    const destinationDomain = Number(execution.destinationDomain ?? 0);
+    const interchainGasFee = String(execution.interchainGasFee ?? '0');
+    const tokenIn = String(quote?.tokenIn ?? '').trim();
+    const amountInRaw = quote?.amountIn;
+    const amountIn = typeof amountInRaw === 'bigint'
+      ? amountInRaw
+      : (() => {
+        const raw = String(amountInRaw ?? '').trim();
+        return /^\d+$/.test(raw) ? BigInt(raw) : null;
+      })();
+    const recipient = getAddress(userAddress);
+    const canBuildTx = isAddress(warpRouteAddress) && destinationDomain > 0 && amountIn !== null;
+
+    return {
+      mode: 'provider_direct',
+      action: {
+        kind: 'hyperlane_transfer_remote',
+        warpRouteAddress,
+        destinationDomain,
+        interchainGasFee,
+      },
+      ...(canBuildTx
+        ? {
+          approvals: isAddress(tokenIn)
+            ? [{
+              token: tokenIn,
+              spender: warpRouteAddress,
+              amount: amountIn.toString(),
+            }]
+            : undefined,
+          tx: {
+            to: warpRouteAddress,
+            data: HYPERLANE_WARP_ROUTE_IFACE.encodeFunctionData('transferRemote', [
+              destinationDomain,
+              zeroPadValue(recipient, 32),
+              amountIn,
+            ]),
+            value: interchainGasFee,
+            chainId: Number(quote?.srcChainId ?? 0),
+          },
+        }
+        : {}),
     };
   }
 

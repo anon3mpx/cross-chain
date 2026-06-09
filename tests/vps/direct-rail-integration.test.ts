@@ -6,6 +6,9 @@ import { buildSelectedOfferIntegration } from '../../src/vps/services/DirectRail
 const THOR_ROUTER_IFACE = new Interface([
   'function depositWithExpiry(address payable vault,address asset,uint256 amount,string memo,uint256 expiration)',
 ]);
+const HYPERLANE_WARP_ROUTE_IFACE = new Interface([
+  'function transferRemote(uint32 destinationDomain, bytes32 recipient, uint256 amount) payable returns (bytes32)',
+]);
 
 test('provider_direct THOR offers return deposit instructions instead of RouterV1 calldata', async () => {
   const integration = await buildSelectedOfferIntegration('0x' + '11'.repeat(32), {
@@ -236,4 +239,39 @@ test('provider_direct Gas.zip offers return normalized direct-deposit transactio
   assert.equal(integration.tx?.data, '0x010039');
   assert.equal(integration.tx?.value, '805000000000000');
   assert.equal(integration.tx?.chainId, 8453);
+});
+
+test('provider_direct Hyperlane offers return transferRemote tx helpers and approvals', async () => {
+  const integration = await buildSelectedOfferIntegration('0x' + '99'.repeat(32), {
+    rail: 'HYPERLANE_NEXUS',
+    offerType: 'hyperlane_nexus_direct',
+    executionMode: 'provider_direct',
+    execution: {
+      provider: 'hyperlane_explorer',
+      warpRouteAddress: '0x' + 'a'.repeat(40),
+      destinationDomain: 8453,
+      interchainGasFee: '50000000000000',
+      quote: {
+        srcChainId: 1,
+        tokenIn: '0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48',
+        amountIn: 1_000_000n,
+      },
+    },
+  } as any, '0x3333333333333333333333333333333333333333');
+
+  assert.equal(integration.mode, 'provider_direct');
+  assert.equal(integration.action.kind, 'hyperlane_transfer_remote');
+  assert.equal(integration.action.warpRouteAddress, '0x' + 'a'.repeat(40));
+  assert.equal(integration.action.destinationDomain, 8453);
+  assert.equal(integration.action.interchainGasFee, '50000000000000');
+  assert.equal(integration.approvals?.[0]?.spender, '0x' + 'a'.repeat(40));
+
+  assert.ok(integration.tx);
+  assert.equal(integration.tx!.to, '0x' + 'a'.repeat(40));
+  assert.equal(integration.tx!.value, '50000000000000');
+  assert.equal(integration.tx!.chainId, 1);
+
+  const decoded = HYPERLANE_WARP_ROUTE_IFACE.decodeFunctionData('transferRemote', integration.tx!.data);
+  assert.equal(decoded.destinationDomain, 8453n);
+  assert.equal(decoded.amount.toString(), '1000000');
 });

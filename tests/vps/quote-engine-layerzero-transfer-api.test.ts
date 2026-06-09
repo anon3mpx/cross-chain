@@ -81,3 +81,41 @@ test('QuoteEngine includes LayerZero Value Transfer API provider-direct offers',
   assert.equal(offer.execution.provider, 'layerzero_value_transfer_api');
   assert.equal(offer.execution.layerZeroValueTransferApiQuoteId, 'quote_lz_direct');
 });
+
+test('QuoteEngine includes Hyperlane Nexus provider-direct offers', async () => {
+  const engine = new QuoteEngine(undefined, {
+    thorchainQuoteWorker: undefined,
+    layerZeroValueTransferApiQuoteWorker: undefined,
+    hyperlaneNexusQuoteWorker: {
+      quote: async () => ({
+        warpRouteAddress: '0x' + 'a'.repeat(40),
+        destinationDomain: 42161,
+        expectedAmountOut: 1_000_000n,
+        interchainGasFee: 50_000_000_000_000n,
+        etaSeconds: 60,
+      }),
+    },
+  });
+
+  const offerSet = await engine.getOffers({
+    tokenIn: BASE_USDC,
+    tokenOut: SCROLL_USDC,
+    amountIn: 1_000_000n,
+    srcChainId: 1,
+    dstChainId: 42161,
+    userAddress: USER,
+  });
+
+  assert.ok(offerSet);
+  const offer = offerSet.offers.find((candidate) =>
+    candidate.rail === Rail.HYPERLANE_NEXUS
+      && candidate.executionMode === 'provider_direct'
+      && candidate.offerType === 'hyperlane_nexus_direct',
+  );
+  assert.ok(offer);
+  assert.equal(offer.estimatedOut, 1_000_000n);
+  assert.equal(offer.execution.provider, 'hyperlane_explorer');
+  assert.equal(offer.execution.warpRouteAddress, '0x' + 'a'.repeat(40));
+  assert.equal(offer.execution.destinationDomain, 42161);
+  assert.equal(offer.execution.interchainGasFee, '50000000000000');
+});

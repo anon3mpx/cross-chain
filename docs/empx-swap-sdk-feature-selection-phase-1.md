@@ -12,6 +12,12 @@ checkpoint repos for migration into the main `empx-swap-sdk` line.
 This is not a package replacement plan. It is a constrained selection for the
 current production SDK direction.
 
+For bridge-linked roadmap alignment, read this together with the June 8
+complete handoff package at
+`/Users/ganadhish/code/work/empx-cross-chain-bridge-V2-updates/empx-complete-handoff-20260608`
+and its bridge runtime tree at
+`/Users/ganadhish/code/work/empx-cross-chain-bridge-V2-updates/empx-complete-handoff-20260608/empx-cross-bridge`.
+
 ## Selection Principles
 
 - Keep the TypeScript `empx-swap-sdk` as the primary SDK line.

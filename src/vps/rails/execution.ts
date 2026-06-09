@@ -4,6 +4,7 @@ import { THORChainClient } from '../services/thorchain/THORChainClient';
 import { THORChainMonitorWorker } from '../services/thorchain/THORChainMonitorWorker';
 import { LayerZeroValueTransferApiClient } from '../services/layerzero/LayerZeroValueTransferApiClient';
 import { LayerZeroValueTransferApiMonitorWorker } from '../services/layerzero/LayerZeroValueTransferApiMonitorWorker';
+import { HyperlaneNexusMonitorWorker } from '../services/hyperlane/HyperlaneNexusMonitorWorker';
 import { GasZipMonitorWorker } from '../services/gaszip/GasZipMonitorWorker';
 import { RpcProviderRegistry } from '../services/RpcProviderRegistry';
 import { Rail } from '../types';
@@ -228,10 +229,47 @@ class GasZipRailExecutionAdapter implements RailExecutionAdapter<GasZipMonitorWo
   }
 }
 
+class HyperlaneNexusRailExecutionAdapter implements RailExecutionAdapter<HyperlaneNexusMonitorWorker> {
+  readonly rail = Rail.HYPERLANE_NEXUS;
+
+  async start(
+    context: RailExecutionContext,
+    options: RailExecutionOptions,
+  ): Promise<RailExecutionHandle<HyperlaneNexusMonitorWorker>> {
+    const enabled = options.enabled?.[Rail.HYPERLANE_NEXUS] ?? readBool('ENABLE_HYPERLANE_NEXUS', false);
+    if (!enabled) {
+      return {
+        rail: this.rail,
+        mode: 'disabled',
+        label: 'hyperlane-nexus-monitor',
+        visualLabels: ['HYPERLANE_NEXUS'],
+        async stop() {
+          return;
+        },
+      };
+    }
+
+    const worker = new HyperlaneNexusMonitorWorker(context.intentService);
+    await worker.start();
+
+    return {
+      rail: this.rail,
+      mode: 'worker',
+      label: 'hyperlane-nexus-monitor',
+      visualLabels: ['HYPERLANE_NEXUS'],
+      instance: worker,
+      async stop() {
+        worker.stop();
+      },
+    };
+  }
+}
+
 const DEFAULT_ADAPTERS: RailExecutionAdapter[] = [
   new CctpRailExecutionAdapter(),
   new THORChainRailExecutionAdapter(),
   new LayerZeroValueTransferApiRailExecutionAdapter(),
+  new HyperlaneNexusRailExecutionAdapter(),
   new GasZipRailExecutionAdapter(),
   new PassiveRailExecutionAdapter(Rail.AXELAR, 'event-monitor'),
   new PassiveRailExecutionAdapter(Rail.VIA_LABS, 'event-monitor'),

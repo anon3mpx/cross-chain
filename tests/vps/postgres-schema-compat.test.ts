@@ -16,23 +16,23 @@ test('assertPostgresRailSchemaCompatibility throws when intents rail constraints
         ],
       }),
     } as any),
-    /missing GASZIP rail support/i,
+    /missing provider-direct rail support/i,
   );
 });
 
-test('assertPostgresRailSchemaCompatibility accepts GASZIP-capable constraints', async () => {
+test('assertPostgresRailSchemaCompatibility accepts Gas.zip and Hyperlane-capable constraints', async () => {
   await assert.doesNotReject(() => assertPostgresRailSchemaCompatibility({
     query: async () => ({
       rows: [
-        { conname: 'intents_rail_check', def: "CHECK ((rail = ANY (ARRAY['CCTP'::text, 'GASZIP'::text])))" },
-        { conname: 'intents_fallback_rail_check', def: "CHECK ((fallback_rail IS NULL OR fallback_rail = ANY (ARRAY['CCTP'::text, 'GASZIP'::text])))" },
-        { conname: 'intent_rail_attempts_rail_check', def: "CHECK ((rail = ANY (ARRAY['CCTP'::text, 'GASZIP'::text])))" },
+        { conname: 'intents_rail_check', def: "CHECK ((rail = ANY (ARRAY['CCTP'::text, 'GASZIP'::text, 'HYPERLANE_NEXUS'::text])))" },
+        { conname: 'intents_fallback_rail_check', def: "CHECK ((fallback_rail IS NULL OR fallback_rail = ANY (ARRAY['CCTP'::text, 'GASZIP'::text, 'HYPERLANE_NEXUS'::text])))" },
+        { conname: 'intent_rail_attempts_rail_check', def: "CHECK ((rail = ANY (ARRAY['CCTP'::text, 'GASZIP'::text, 'HYPERLANE_NEXUS'::text])))" },
       ],
     }),
   } as any));
 });
 
-test('toFriendlyIntentPersistenceError rewrites stale GASZIP rail check violations', () => {
+test('toFriendlyIntentPersistenceError rewrites stale provider-direct rail check violations', () => {
   const rewritten = toFriendlyIntentPersistenceError(
     {
       code: '23514',
@@ -45,4 +45,3 @@ test('toFriendlyIntentPersistenceError rewrites stale GASZIP rail check violatio
   assert.ok(rewritten instanceof Error);
   assert.match(rewritten!.message, /run `npm run db:migrate`/i);
 });
-

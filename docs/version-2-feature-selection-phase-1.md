@@ -12,6 +12,12 @@ This document defines the first approved feature-selection slice from
 This is not a wholesale V2 adoption plan. It is a constrained selection for
 the current production-oriented, mesh-first architecture.
 
+Later bridge-facing phase docs should be read against the June 8 complete
+handoff package at
+`/Users/ganadhish/code/work/empx-cross-chain-bridge-V2-updates/empx-complete-handoff-20260608`
+and its bridge runtime tree at
+`/Users/ganadhish/code/work/empx-cross-chain-bridge-V2-updates/empx-complete-handoff-20260608/empx-cross-bridge`.
+
 ## Selection Principles
 
 - Keep current `ruflo` as the production source of truth.

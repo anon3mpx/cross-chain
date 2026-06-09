@@ -61,6 +61,11 @@ import {
   type LayerZeroValueTransferApiQuoteResult,
 } from './layerzero/LayerZeroValueTransferApiQuoteWorker';
 import {
+  HyperlaneNexusQuoteWorker,
+  type HyperlaneNexusQuoteResult,
+  inferHyperlaneAssetSymbol,
+} from './hyperlane/HyperlaneNexusQuoteWorker';
+import {
   GasZipQuoteWorker,
   type GasZipQuoteResult,
 } from './gaszip/GasZipQuoteWorker';
@@ -141,6 +146,7 @@ export interface QuoteEngineDependencies {
   axelarAssetCatalog?: Pick<AxelarAssetCatalog, 'listRoutes'>;
   layerZeroRouteCatalog?: Pick<LayerZeroRouteCatalog, 'listRoutes'>;
   layerZeroValueTransferApiQuoteWorker?: Pick<LayerZeroValueTransferApiQuoteWorker, 'quoteLayerZeroValueTransferApi'>;
+  hyperlaneNexusQuoteWorker?: Pick<HyperlaneNexusQuoteWorker, 'quote'>;
   gasZipQuoteWorker?: Pick<GasZipQuoteWorker, 'quoteDirectDeposit'>;
   empsealQuoteWorker?: EmpsealQuoteWorkerLike;
 }
@@ -155,6 +161,7 @@ export class QuoteEngine {
   private readonly axelarAssetCatalog: Pick<AxelarAssetCatalog, 'listRoutes'>;
   private readonly layerZeroRouteCatalog: Pick<LayerZeroRouteCatalog, 'listRoutes'>;
   private readonly layerZeroValueTransferApiQuoteWorker?: Pick<LayerZeroValueTransferApiQuoteWorker, 'quoteLayerZeroValueTransferApi'>;
+  private readonly hyperlaneNexusQuoteWorker?: Pick<HyperlaneNexusQuoteWorker, 'quote'>;
   private readonly gasZipQuoteWorker?: Pick<GasZipQuoteWorker, 'quoteDirectDeposit'>;
   private readonly empsealQuoteWorker?: EmpsealQuoteWorkerLike;
   private readonly thorchainQuoteWorker?: Pick<THORChainQuoteWorker, 'quote'>;
@@ -182,6 +189,12 @@ export class QuoteEngine {
       ? deps.layerZeroValueTransferApiQuoteWorker
       : this._readBoolEnv('ENABLE_LAYERZERO_TRANSFER_API', false)
         ? new LayerZeroValueTransferApiQuoteWorker()
+        : undefined;
+    const hasExplicitHyperlaneNexusWorker = Object.prototype.hasOwnProperty.call(deps, 'hyperlaneNexusQuoteWorker');
+    this.hyperlaneNexusQuoteWorker = hasExplicitHyperlaneNexusWorker
+      ? deps.hyperlaneNexusQuoteWorker
+      : this._readBoolEnv('ENABLE_HYPERLANE_NEXUS', false)
+        ? new HyperlaneNexusQuoteWorker()
         : undefined;
     const hasExplicitGasZipWorker = Object.prototype.hasOwnProperty.call(deps, 'gasZipQuoteWorker');
     this.gasZipQuoteWorker = hasExplicitGasZipWorker
@@ -771,12 +784,18 @@ export class QuoteEngine {
     const amountUSD = await this._estimateUSD(req.tokenIn, req.srcChainId, req.amountIn);
     const candidateRoutes = this.routeBuilder
       .buildRoutes(req.srcChainId, req.dstChainId, amountUSD, req.urgency ?? 'normal')
-      .filter((route) => route.viable && route.hops.length === 1 && route.hops[0].rail !== Rail.THORCHAIN);
+      .filter((route) =>
+        route.viable
+          && route.hops.length === 1
+          && route.hops[0].rail !== Rail.THORCHAIN
+          && route.hops[0].rail !== Rail.HYPERLANE_NEXUS,
+      );
 
     const [
       routeOffers,
       thorOffer,
       layerZeroValueTransferApiOffer,
+      hyperlaneNexusOffer,
       gasZipOffer,
     ] = await Promise.all([
       Promise.all(candidateRoutes.map(async (route) => {
@@ -788,12 +807,14 @@ export class QuoteEngine {
       })),
       this._buildTHORChainProviderDirectOffer(req, amountUSD),
       this._buildLayerZeroValueTransferApiProviderDirectOffer(req),
+      this._buildHyperlaneNexusProviderDirectOffer(req),
       this._buildGasZipProviderDirectOffer(req),
     ]);
 
     const offers = routeOffers.filter((offer): offer is RailOffer => offer !== null);
     if (thorOffer) offers.push(thorOffer);
     if (layerZeroValueTransferApiOffer) offers.push(layerZeroValueTransferApiOffer);
+    if (hyperlaneNexusOffer) offers.push(hyperlaneNexusOffer);
     if (gasZipOffer) offers.push(gasZipOffer);
     if (offers.length === 0) return null;
 
@@ -1167,6 +1188,128 @@ export class QuoteEngine {
           value: result.sourceValueWei,
           chainId: result.srcChainId,
         },
+      },
+    };
+  }
+
+  private async _buildHyperlaneNexusProviderDirectOffer(
+    req: QuoteRequest,
+  ): Promise<RailOffer | null> {
+    if (!this.hyperlaneNexusQuoteWorker) return null;
+
+    const settlementToken = this._inferHyperlaneSettlementToken(req);
+    const assetSymbol = inferHyperlaneAssetSymbol(settlementToken);
+    if (!assetSymbol) return null;
+
+    let result: HyperlaneNexusQuoteResult | null;
+    try {
+      result = await this.hyperlaneNexusQuoteWorker.quote({
+        srcChainId: req.srcChainId,
+        dstChainId: req.dstChainId,
+        tokenIn: req.tokenIn,
+        assetSymbol,
+        amountIn: req.amountIn,
+        destinationAddress: req.userAddress,
+      });
+    } catch {
+      return null;
+    }
+    if (!result || result.expectedAmountOut <= 0n) return null;
+
+    const intentId = this._makeIntentId();
+    const sourceAsset = this._toProviderAssetRef(
+      req.srcChainId,
+      assetSymbol,
+      settlementToken,
+      Rail.HYPERLANE_NEXUS,
+      req.tokenIn,
+      req.tokenOut,
+      'erc20',
+    );
+    const destinationAsset = {
+      ...sourceAsset,
+      tokenAddress: req.tokenOut,
+      dstTokenAddress: req.tokenOut,
+    };
+    const expiresAt = Math.floor(Date.now() / 1000) + 120;
+    const amounts = this._buildBreakdownAmounts({
+      input: this._tokenAmount(req.srcChainId, req.tokenIn, req.amountIn, sourceAsset),
+      bridgeSettlement: this._tokenAmount(req.dstChainId, req.tokenOut, result.expectedAmountOut, destinationAsset),
+      minimumBridgeSettlement: this._tokenAmount(req.dstChainId, req.tokenOut, result.expectedAmountOut, destinationAsset),
+      output: this._tokenAmount(req.dstChainId, req.tokenOut, result.expectedAmountOut, destinationAsset),
+      minimumOutput: this._tokenAmount(req.dstChainId, req.tokenOut, result.expectedAmountOut, destinationAsset),
+    });
+
+    const sourceAssetId = this._isAddress(req.tokenIn)
+      ? this._settlementAssetId(req.srcChainId, req.tokenIn)
+      : this._zeroBytes32();
+    const destinationAssetId = this._isAddress(req.tokenOut)
+      ? this._settlementAssetId(req.dstChainId, req.tokenOut)
+      : this._zeroBytes32();
+
+    const quote: QuoteResult = {
+      intentId,
+      srcChainId: req.srcChainId,
+      dstChainId: req.dstChainId,
+      tokenIn: req.tokenIn,
+      tokenOut: req.tokenOut,
+      amountIn: req.amountIn,
+      estimatedOut: result.expectedAmountOut,
+      minAmountOut: result.expectedAmountOut,
+      minSrcSwapOut: 0n,
+      amounts,
+      feeAmountUSD: 0,
+      feeAmountToken: 0n,
+      rail: Rail.HYPERLANE_NEXUS,
+      railType: 'messaging',
+      settlementToken,
+      routeAsset: sourceAsset,
+      settlementAssetId: sourceAssetId,
+      expectedDstSettlementToken: req.tokenOut,
+      expectedDstSettlementAssetId: destinationAssetId,
+      minSettlementAmount: result.expectedAmountOut,
+      dstGasLimit: 0,
+      etaSeconds: result.etaSeconds,
+      expiresAt,
+      railPluginId: ZERO_PLUGIN_ID,
+      railData: '0x',
+      swapPluginIdSrc: ZERO_PLUGIN_ID,
+      swapPluginIdDst: ZERO_PLUGIN_ID,
+      swapDataSrc: '0x',
+      swapDataDst: '0x',
+    };
+
+    return {
+      offerId: intentId,
+      rail: Rail.HYPERLANE_NEXUS,
+      offerType: 'hyperlane_nexus_direct',
+      railType: 'messaging',
+      srcChainId: req.srcChainId,
+      dstChainId: req.dstChainId,
+      tokenIn: req.tokenIn,
+      tokenOut: req.tokenOut,
+      amountIn: req.amountIn,
+      estimatedOut: result.expectedAmountOut,
+      minAmountOut: result.expectedAmountOut,
+      expiresAt,
+      deliveryShape: 'direct',
+      executionMode: 'provider_direct',
+      routeAsset: sourceAsset,
+      amounts,
+      sourceSettlementAsset: sourceAsset,
+      destinationSettlementAsset: destinationAsset,
+      economics: {
+        providerFeeUSD: 0,
+        protocolFeeUSD: 0,
+        sourceGasUSD: 0,
+        settlementTimeSeconds: result.etaSeconds,
+      },
+      execution: {
+        provider: 'hyperlane_explorer',
+        quote,
+        warpRouteAddress: result.warpRouteAddress,
+        destinationDomain: result.destinationDomain,
+        interchainGasFee: result.interchainGasFee.toString(),
       },
     };
   }
@@ -1890,6 +2033,18 @@ export class QuoteEngine {
     if (normalized === 'SOL') return SettlementToken.SOL;
     if (normalized === 'BTC') return SettlementToken.BTC;
     return SettlementToken.USDC;
+  }
+
+  private _inferHyperlaneSettlementToken(req: QuoteRequest): SettlementToken | null {
+    const sourceToken = this._resolveStableSettlementToken(req.tokenIn, req.srcChainId);
+    if (sourceToken === SettlementToken.USDC || sourceToken === SettlementToken.USDT) return sourceToken;
+
+    const destinationToken = this._resolveStableSettlementToken(req.tokenOut, req.dstChainId);
+    if (destinationToken === SettlementToken.USDC || destinationToken === SettlementToken.USDT) return destinationToken;
+
+    return this._isStableLike(req.tokenIn) || this._isStableLike(req.tokenOut)
+      ? SettlementToken.USDC
+      : null;
   }
 
   private _resolveThorExpiry(raw: unknown): number {

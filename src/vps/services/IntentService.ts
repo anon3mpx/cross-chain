@@ -22,6 +22,7 @@ const STUCK_THRESHOLDS_MS: Record<Rail, number> = {
   [Rail.LAYERZERO]: 10 * 60 * 1000,
   [Rail.WORMHOLE]: 10 * 60 * 1000,
   [Rail.GASZIP]: 10 * 60 * 1000,
+  [Rail.HYPERLANE_NEXUS]: 10 * 60 * 1000,
   [Rail.THORCHAIN]: 20 * 60 * 1000,
 };
 

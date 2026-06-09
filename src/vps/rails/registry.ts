@@ -52,7 +52,8 @@ export type RailVariantLabel =
   | 'VIA_LABS'
   | 'WORMHOLE'
   | 'THORCHAIN'
-  | 'GASZIP';
+  | 'GASZIP'
+  | 'HYPERLANE_NEXUS';
 
 export const PLUGIN_ID = {
   CCTP_V2: '0xb148ea5f936a28661e11743b1650193f1b14a2322b9541503bf6815a84a1a6e9',
@@ -64,6 +65,7 @@ export const PLUGIN_ID = {
   WORMHOLE_V2: '0xfdd3e68657787c00343d96c11d1cd189fa4dfe5f52999861b06e9f8e99ea902f',
   THORCHAIN_V1: '0x390774707b6ae71a0ce31d10394e70b6ac75b3b62ec4db96c9672cafd1b516c9',
   GASZIP_V1: '0x' + '0'.repeat(64),
+  HYPERLANE_NEXUS_V1: '0x' + '0'.repeat(64),
 } as const;
 
 function readEnv(key: string): string | undefined {
@@ -322,19 +324,41 @@ export const RAIL_PROVIDERS: Record<Rail, RailProviderDefinition> = {
     fallbackRails: [],
     refundCustodyLocation: RefundCustodyLocation.EXTERNAL_PROTOCOL,
   },
+  [Rail.HYPERLANE_NEXUS]: {
+    rail: Rail.HYPERLANE_NEXUS,
+    enumValue: 7,
+    aliases: [Rail.HYPERLANE_NEXUS, 'HYPERLANE'],
+    config: {
+      rail: Rail.HYPERLANE_NEXUS,
+      railType: 'messaging',
+      fee: 0,
+      etaSeconds: 60,
+      supportsUSDC: true,
+      supportsUSDT: true,
+      supportsETH: false,
+      supportsBTC: false,
+      supportsSOL: false,
+      nativeUSDC: false,
+      reliabilityScore: 0.95,
+      pluginId: PLUGIN_ID.HYPERLANE_NEXUS_V1,
+      requiresNativeAddr: false,
+    },
+    fallbackRails: [Rail.AXELAR, Rail.LAYERZERO, Rail.VIA_LABS],
+    refundCustodyLocation: RefundCustodyLocation.EXTERNAL_PROTOCOL,
+  },
 };
 
 export const CHAIN_RAILS: Record<number, Rail[]> = {
   // Axelar, Via Labs, and Wormhole are intentionally disabled for now.
   // Keep provider definitions in code, but do not advertise them as deployable rails.
-  1: [Rail.CCTP, Rail.LAYERZERO, Rail.THORCHAIN],
+  1: [Rail.CCTP, Rail.LAYERZERO, Rail.THORCHAIN, Rail.HYPERLANE_NEXUS],
   // CCTP fast is modeled as a CCTP quote variant, not a standalone rail here.
-  10: [Rail.CCTP, Rail.LAYERZERO, Rail.THORCHAIN],
-  42161: [Rail.CCTP, Rail.LAYERZERO, Rail.THORCHAIN],
-  8453: [Rail.CCTP, Rail.LAYERZERO, Rail.THORCHAIN],
-  137: [Rail.CCTP, Rail.LAYERZERO, Rail.THORCHAIN],
-  43114: [Rail.CCTP, Rail.LAYERZERO, Rail.THORCHAIN],
-  56: [Rail.LAYERZERO, Rail.THORCHAIN],
+  10: [Rail.CCTP, Rail.LAYERZERO, Rail.THORCHAIN, Rail.HYPERLANE_NEXUS],
+  42161: [Rail.CCTP, Rail.LAYERZERO, Rail.THORCHAIN, Rail.HYPERLANE_NEXUS],
+  8453: [Rail.CCTP, Rail.LAYERZERO, Rail.THORCHAIN, Rail.HYPERLANE_NEXUS],
+  137: [Rail.CCTP, Rail.LAYERZERO, Rail.THORCHAIN, Rail.HYPERLANE_NEXUS],
+  43114: [Rail.CCTP, Rail.LAYERZERO, Rail.THORCHAIN, Rail.HYPERLANE_NEXUS],
+  56: [Rail.LAYERZERO, Rail.THORCHAIN, Rail.HYPERLANE_NEXUS],
   369: [Rail.LAYERZERO],
   143: [Rail.LAYERZERO],
   146: [Rail.LAYERZERO],
@@ -522,6 +546,8 @@ export function getRailVariantLabel(rail: Rail, railPluginId?: string): RailVari
       return 'THORCHAIN';
     case Rail.GASZIP:
       return 'GASZIP';
+    case Rail.HYPERLANE_NEXUS:
+      return 'HYPERLANE_NEXUS';
     default:
       return 'CCTP_STANDARD';
   }

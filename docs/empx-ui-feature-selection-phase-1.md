@@ -11,6 +11,12 @@ checkpoint UI branch for migration into the main `EMPSEAL-UI` line.
 This is not a wholesale UI branch adoption plan. It is a constrained selection
 for the current product direction.
 
+For bridge-roadmap alignment, read this together with the June 8 complete
+handoff package at
+`/Users/ganadhish/code/work/empx-cross-chain-bridge-V2-updates/empx-complete-handoff-20260608`
+and its bridge runtime tree at
+`/Users/ganadhish/code/work/empx-cross-chain-bridge-V2-updates/empx-complete-handoff-20260608/empx-cross-bridge`.
+
 ## Selection Principles
 
 - Keep the current UI repo as the production source of truth.

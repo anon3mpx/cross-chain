@@ -20,6 +20,7 @@ export enum Rail {
   VIA_LABS  = 'VIA_LABS',   // $0.25, 30+ chains, API-first
   WORMHOLE  = 'WORMHOLE',   // EVM↔SVM SPL tokens + NTT, 30+ chains
   GASZIP    = 'GASZIP',     // Provider-direct destination native gas delivery via Gas.zip API
+  HYPERLANE_NEXUS = 'HYPERLANE_NEXUS', // Provider-direct stablecoin warp routes via Hyperlane Nexus
 
   // ── Liquidity rail (AMM-based, direct native delivery, no ReceiverV1) ─────
   THORCHAIN = 'THORCHAIN',  // Free+slip, native BTC/ETH/SOL/DOGE/AVAX/BSC/BASE
@@ -27,7 +28,7 @@ export enum Rail {
 
 // ── Rail category helpers ──────────────────────────────────────────────────────
 export const LIQUIDITY_RAILS = new Set([Rail.THORCHAIN]);
-export const MESSAGING_RAILS = new Set([Rail.CCTP, Rail.CCTP_FAST, Rail.AXELAR, Rail.LAYERZERO, Rail.VIA_LABS, Rail.WORMHOLE, Rail.GASZIP]);
+export const MESSAGING_RAILS = new Set([Rail.CCTP, Rail.CCTP_FAST, Rail.AXELAR, Rail.LAYERZERO, Rail.VIA_LABS, Rail.WORMHOLE, Rail.GASZIP, Rail.HYPERLANE_NEXUS]);
 
 // ── Non-EVM pseudo chain IDs (used internally, never on-chain) ────────────────
 export const CHAIN_ID = {
@@ -280,7 +281,8 @@ export type RailOfferType =
   | 'lz_stargate_oft'
   | 'lz_api_direct'
   | 'gaszip_api_direct'
-  | 'thor_api_direct';
+  | 'thor_api_direct'
+  | 'hyperlane_nexus_direct';
 
 export type DeliveryShape =
   | 'direct'
@@ -413,7 +415,7 @@ export interface IntentRefundCase {
   payoutTxHash?: string;
 }
 
-export type ProviderTransferProvider = 'layerzero_value_transfer_api' | 'thorchain_api';
+export type ProviderTransferProvider = 'layerzero_value_transfer_api' | 'thorchain_api' | 'hyperlane_explorer';
 
 export type ProviderTransferStatus =
   | 'CREATED'

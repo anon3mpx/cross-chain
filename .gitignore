@@ -19,6 +19,7 @@ config/broadcast/
 # OS files
 .DS_Store
 Thumbs.db
+data
 
 # Codex local configuration
 .codex/
@@ -37,3 +38,9 @@ Thumbs.db
 .env
 .env.local
 .env.*.local
+
+# Graphify
+graphify-out
+
+# Skills
+skills-lock.json

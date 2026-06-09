@@ -15,6 +15,8 @@ import { THORChainMonitorWorker } from '../services/thorchain/THORChainMonitorWo
 import { THORChainQuoteWorker } from '../services/thorchain/THORChainQuoteWorker';
 import { LayerZeroValueTransferApiQuoteWorker } from '../services/layerzero/LayerZeroValueTransferApiQuoteWorker';
 import { LayerZeroValueTransferApiMonitorWorker } from '../services/layerzero/LayerZeroValueTransferApiMonitorWorker';
+import { HyperlaneNexusQuoteWorker } from '../services/hyperlane/HyperlaneNexusQuoteWorker';
+import { HyperlaneNexusMonitorWorker } from '../services/hyperlane/HyperlaneNexusMonitorWorker';
 import { createQuoteCacheFromEnv, QuoteCache } from '../cache/QuoteCache';
 import { registerDexQuoteAdapters } from '../bootstrap/dexAdapters';
 import { RailExecutionHandle, RailExecutionManager } from '../rails/execution';
@@ -47,6 +49,7 @@ export interface RuntimeContext {
   cctpRelayWorker?: CctpAttestationWorker;
   thorchainWorker?: THORChainMonitorWorker;
   layerZeroValueTransferApiMonitorWorker?: LayerZeroValueTransferApiMonitorWorker;
+  hyperlaneNexusMonitorWorker?: HyperlaneNexusMonitorWorker;
   apiKeyManager?: ApiKeyManager;
   partnerApiRouter?: ReturnType<typeof buildPartnerAPI>;
   postgres?: PostgresIntentStore;
@@ -79,6 +82,7 @@ export async function buildRuntime(options: RuntimeOptions = {}): Promise<Runtim
     options.railExecution?.[Rail.THORCHAIN] ?? envBool('ENABLE_THORCHAIN_WORKER', true);
   const enableThorchainQuoteWorker = envBool('ENABLE_THORCHAIN_QUOTE_WORKER', true);
   const enableLayerZeroValueTransferApi = envBool('ENABLE_LAYERZERO_TRANSFER_API', false);
+  const enableHyperlaneNexus = envBool('ENABLE_HYPERLANE_NEXUS', false);
   const enableThorchainCanary = envBool('ENABLE_THORCHAIN_CANARY', false);
   const thorchainCanaryAllowlist = parseCsv(process.env.THORCHAIN_CANARY_ALLOWLIST);
   const enablePartnerApi = options.enablePartnerApi ?? envBool('ENABLE_PARTNER_API', false);
@@ -109,6 +113,9 @@ export async function buildRuntime(options: RuntimeOptions = {}): Promise<Runtim
       : undefined,
     layerZeroValueTransferApiQuoteWorker: enableLayerZeroValueTransferApi
       ? new LayerZeroValueTransferApiQuoteWorker(undefined, { enabled: true })
+      : undefined,
+    hyperlaneNexusQuoteWorker: enableHyperlaneNexus
+      ? new HyperlaneNexusQuoteWorker()
       : undefined,
   });
   const rpcProviderRegistry = new RpcProviderRegistry();
@@ -164,12 +171,14 @@ export async function buildRuntime(options: RuntimeOptions = {}): Promise<Runtim
       [Rail.CCTP]: options.railExecution?.[Rail.CCTP] ?? enableCctpRelay,
       [Rail.THORCHAIN]: enableThorchainWorker,
       [Rail.LAYERZERO]: options.railExecution?.[Rail.LAYERZERO] ?? enableLayerZeroValueTransferApi,
+      [Rail.HYPERLANE_NEXUS]: options.railExecution?.[Rail.HYPERLANE_NEXUS] ?? enableHyperlaneNexus,
       [Rail.GASZIP]: options.railExecution?.[Rail.GASZIP] ?? envBool('ENABLE_GASZIP_DIRECT_DEPOSIT', false),
     },
   });
   const cctpRelayWorker = railExecutionManager.getInstance<CctpAttestationWorker>(Rail.CCTP);
   const thorchainWorker = railExecutionManager.getInstance<THORChainMonitorWorker>(Rail.THORCHAIN);
   const layerZeroValueTransferApiMonitorWorker = railExecutionManager.getInstance<LayerZeroValueTransferApiMonitorWorker>(Rail.LAYERZERO);
+  const hyperlaneNexusMonitorWorker = railExecutionManager.getInstance<HyperlaneNexusMonitorWorker>(Rail.HYPERLANE_NEXUS);
 
   const apiKeyManager = enablePartnerApi ? new ApiKeyManager() : undefined;
   const partnerApiRouter = apiKeyManager
@@ -190,6 +199,7 @@ export async function buildRuntime(options: RuntimeOptions = {}): Promise<Runtim
     cctpRelayWorker,
     thorchainWorker,
     layerZeroValueTransferApiMonitorWorker,
+    hyperlaneNexusMonitorWorker,
     postgres,
     reliability,
     idempotency,

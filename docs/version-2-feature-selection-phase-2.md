@@ -3,7 +3,10 @@
 > Date: June 5, 2026
 > Scope: selected bridge-expansion features after phase 1, using
 > `/Users/ganadhish/code/work/empx-checkpoint-v6/empx-cross-bridge` as the
-> current checkpoint source
+> current checkpoint source, to be read alongside
+> `/Users/ganadhish/code/work/empx-cross-chain-bridge-V2-updates/empx-complete-handoff-20260608`
+> and
+> `/Users/ganadhish/code/work/empx-cross-chain-bridge-V2-updates/empx-complete-handoff-20260608/empx-cross-bridge`
 
 ## Purpose
 
@@ -13,6 +16,12 @@ the phase-1 selection in
 
 Phase 2 is not a “merge checkpoint v6” instruction. It is a constrained bridge
 expansion plan for the current production-oriented system.
+
+This older checkpoint-framed phase doc should now be read together with the
+June 8 complete handoff package at
+`/Users/ganadhish/code/work/empx-cross-chain-bridge-V2-updates/empx-complete-handoff-20260608`
+and the bridge subtree at
+`/Users/ganadhish/code/work/empx-cross-chain-bridge-V2-updates/empx-complete-handoff-20260608/empx-cross-bridge`.
 
 ## Selection Principles
 
