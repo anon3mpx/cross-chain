@@ -275,3 +275,96 @@ test('provider_direct Hyperlane offers return transferRemote tx helpers and appr
   assert.equal(decoded.destinationDomain, 8453n);
   assert.equal(decoded.amount.toString(), '1000000');
 });
+
+test('provider_direct Chainflip offers return deposit helpers and ERC-20 transfer txs', async () => {
+  const integration = await buildSelectedOfferIntegration('0x' + 'aa'.repeat(32), {
+    rail: 'CHAINFLIP',
+    offerType: 'chainflip_broker_direct',
+    executionMode: 'provider_direct',
+    execution: {
+      provider: 'chainflip_broker',
+      depositAddress: '0x4444444444444444444444444444444444444444',
+      channelId: 'cf-channel-1',
+      expectedAmountOut: '990000',
+      quote: {
+        srcChainId: 1,
+        tokenIn: '0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48',
+        amountIn: 1_000_000n,
+      },
+    },
+  } as any, '0x3333333333333333333333333333333333333333');
+
+  assert.equal(integration.mode, 'provider_direct');
+  assert.equal(integration.action.kind, 'chainflip_deposit');
+  assert.equal(integration.action.depositAddress, '0x4444444444444444444444444444444444444444');
+  assert.equal(integration.action.channelId, 'cf-channel-1');
+  assert.equal(integration.action.expectedAmountOut, '990000');
+  assert.equal(integration.tx?.to, '0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48');
+  assert.equal(integration.tx?.chainId, 1);
+  assert.equal(integration.tx?.value, '0');
+});
+
+test('provider_direct Maya offers return vault deposit instructions and router tx helpers', async () => {
+  const integration = await buildSelectedOfferIntegration('0x' + 'bb'.repeat(32), {
+    rail: 'MAYA',
+    offerType: 'maya_direct',
+    executionMode: 'provider_direct',
+    execution: {
+      provider: 'maya_midgard',
+      vaultAddress: '0x5555555555555555555555555555555555555555',
+      memo: '=:ARB.USDC:0xabc',
+      expectedAmountOut: '985000',
+      expiresAt: 1_900_000_123,
+      quote: {
+        srcChainId: 1,
+        tokenIn: '0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48',
+        amountIn: 1_000_000n,
+      },
+      routerAddress: '0x6666666666666666666666666666666666666666',
+    },
+  } as any, '0x3333333333333333333333333333333333333333');
+
+  assert.equal(integration.mode, 'provider_direct');
+  assert.equal(integration.action.kind, 'maya_swap');
+  assert.equal(integration.action.depositAddress, '0x5555555555555555555555555555555555555555');
+  assert.equal(integration.action.memo, '=:ARB.USDC:0xabc');
+  assert.equal(integration.action.expectedAmountOut, '985000');
+  assert.ok(integration.tx);
+  assert.equal(integration.tx!.to, '0x6666666666666666666666666666666666666666');
+  assert.equal(integration.tx!.value, '0');
+
+  const decoded = THOR_ROUTER_IFACE.decodeFunctionData('depositWithExpiry', integration.tx!.data);
+  assert.equal(decoded.vault.toLowerCase(), '0x5555555555555555555555555555555555555555');
+  assert.equal(decoded.asset.toLowerCase(), '0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48');
+  assert.equal(decoded.amount.toString(), '1000000');
+  assert.equal(decoded.memo, '=:ARB.USDC:0xabc');
+  assert.equal(decoded.expiration.toString(), '1900000123');
+});
+
+test('provider_direct TeleSwap offers return deposit helpers for direct source deposits', async () => {
+  const integration = await buildSelectedOfferIntegration('0x' + 'cc'.repeat(32), {
+    rail: 'TELESWAP',
+    offerType: 'teleswap_direct',
+    executionMode: 'provider_direct',
+    execution: {
+      provider: 'teleswap_api',
+      depositAddress: '0x7777777777777777777777777777777777777777',
+      swapId: 'ts-swap-1',
+      expectedAmountOut: '970000',
+      quote: {
+        srcChainId: 137,
+        tokenIn: '0x1111111111111111111111111111111111111111',
+        amountIn: 1_000_000n,
+      },
+    },
+  } as any, '0x3333333333333333333333333333333333333333');
+
+  assert.equal(integration.mode, 'provider_direct');
+  assert.equal(integration.action.kind, 'teleswap_deposit');
+  assert.equal(integration.action.depositAddress, '0x7777777777777777777777777777777777777777');
+  assert.equal(integration.action.swapId, 'ts-swap-1');
+  assert.equal(integration.action.expectedAmountOut, '970000');
+  assert.equal(integration.tx?.to, '0x1111111111111111111111111111111111111111');
+  assert.equal(integration.tx?.value, '0');
+  assert.equal(integration.tx?.chainId, 137);
+});

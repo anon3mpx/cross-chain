@@ -6,6 +6,9 @@ import type { LayerZeroValueTransferApiUserStep } from './layerzero/LayerZeroVal
 const THOR_ROUTER_IFACE = new Interface([
   'function depositWithExpiry(address payable vault,address asset,uint256 amount,string memo,uint256 expiration)',
 ]);
+const ERC20_IFACE = new Interface([
+  'function transfer(address to, uint256 amount) returns (bool)',
+]);
 const HYPERLANE_WARP_ROUTE_IFACE = new Interface([
   'function transferRemote(uint32 destinationDomain, bytes32 recipient, uint256 amount) payable returns (bytes32)',
 ]);
@@ -72,6 +75,52 @@ export type SelectedOfferIntegration =
       value: string;
       chainId: number;
     };
+  }
+  | {
+    mode: 'provider_direct';
+    action: {
+      kind: 'chainflip_deposit';
+      depositAddress: string;
+      channelId: string;
+      expectedAmountOut: string;
+    };
+    tx?: {
+      to: string;
+      data: string;
+      value: string;
+      chainId: number;
+    };
+  }
+  | {
+    mode: 'provider_direct';
+    action: {
+      kind: 'maya_swap';
+      depositAddress: string;
+      memo: string;
+      expiresAt: number;
+      expectedAmountOut: string;
+    };
+    tx?: {
+      to: string;
+      data: string;
+      value: string;
+      chainId: number;
+    };
+  }
+  | {
+    mode: 'provider_direct';
+    action: {
+      kind: 'teleswap_deposit';
+      depositAddress: string;
+      swapId?: string;
+      expectedAmountOut: string;
+    };
+    tx?: {
+      to: string;
+      data: string;
+      value: string;
+      chainId: number;
+    };
   };
 
 function materializeSelectedOfferQuote(offer: RailOffer): QuoteResult {
@@ -114,6 +163,30 @@ function isHyperlaneNexusProviderDirectOffer(offer: RailOffer): boolean {
     : '';
   if (provider === 'hyperlane_explorer') return true;
   return offer.rail === 'HYPERLANE_NEXUS' || offer.offerType === 'hyperlane_nexus_direct';
+}
+
+function isChainflipProviderDirectOffer(offer: RailOffer): boolean {
+  const provider = typeof offer.execution?.provider === 'string'
+    ? offer.execution.provider.toLowerCase()
+    : '';
+  if (provider === 'chainflip_broker') return true;
+  return offer.rail === 'CHAINFLIP' || offer.offerType === 'chainflip_broker_direct';
+}
+
+function isMayaProviderDirectOffer(offer: RailOffer): boolean {
+  const provider = typeof offer.execution?.provider === 'string'
+    ? offer.execution.provider.toLowerCase()
+    : '';
+  if (provider === 'maya_midgard' || provider === 'maya_api') return true;
+  return offer.rail === 'MAYA' || offer.offerType === 'maya_direct';
+}
+
+function isTeleSwapProviderDirectOffer(offer: RailOffer): boolean {
+  const provider = typeof offer.execution?.provider === 'string'
+    ? offer.execution.provider.toLowerCase()
+    : '';
+  if (provider === 'teleswap_api') return true;
+  return offer.rail === 'TELESWAP' || offer.offerType === 'teleswap_direct';
 }
 
 function readLayerZeroValueTransferApiUserSteps(offer: RailOffer): LayerZeroValueTransferApiUserStep[] {
@@ -298,5 +371,137 @@ export async function buildSelectedOfferIntegration(
     };
   }
 
+  if (isChainflipProviderDirectOffer(offer)) {
+    const execution = offer.execution as Record<string, unknown>;
+    const quote = execution.quote as Record<string, unknown> | undefined;
+    const depositAddress = String(execution.depositAddress ?? '').trim();
+    const channelId = String(execution.channelId ?? quote?.chainflipChannelId ?? '').trim();
+    const expectedAmountOut = String(execution.expectedAmountOut ?? quote?.estimatedOut ?? '');
+    const tokenIn = String(quote?.tokenIn ?? '').trim();
+    const amountInRaw = quote?.amountIn;
+    const amountIn = typeof amountInRaw === 'bigint'
+      ? amountInRaw
+      : (() => {
+        const raw = String(amountInRaw ?? '').trim();
+        return /^\d+$/.test(raw) ? BigInt(raw) : null;
+      })();
+    const canBuildTx = depositAddress.length > 0 && amountIn !== null;
+    const tx = canBuildTx
+      ? thisOrBuildPassthroughTx(tokenIn, depositAddress, amountIn, Number(quote?.srcChainId ?? 0))
+      : undefined;
+
+    return {
+      mode: 'provider_direct',
+      action: {
+        kind: 'chainflip_deposit',
+        depositAddress,
+        channelId,
+        expectedAmountOut,
+      },
+      ...(tx ? { tx } : {}),
+    };
+  }
+
+  if (isMayaProviderDirectOffer(offer)) {
+    const execution = offer.execution as Record<string, unknown>;
+    const quote = execution.quote as Record<string, unknown> | undefined;
+    const depositAddress = String(execution.vaultAddress ?? execution.depositAddress ?? '').trim();
+    const memo = String(execution.memo ?? '').trim();
+    const expiresAt = Number(execution.expiresAt ?? quote?.expiresAt ?? 0);
+    const expectedAmountOut = String(execution.expectedAmountOut ?? quote?.estimatedOut ?? '');
+    const routerAddress = String(execution.routerAddress ?? '').trim();
+    const tokenIn = String(quote?.tokenIn ?? '').trim();
+    const amountInRaw = quote?.amountIn;
+    const amountIn = typeof amountInRaw === 'bigint'
+      ? amountInRaw
+      : (() => {
+        const raw = String(amountInRaw ?? '').trim();
+        return /^\d+$/.test(raw) ? BigInt(raw) : null;
+      })();
+
+    let tx: { to: string; data: string; value: string; chainId: number } | undefined;
+    if (isAddress(routerAddress) && isAddress(depositAddress) && amountIn !== null && expiresAt > 0 && memo.length > 0) {
+      const asset = isAddress(tokenIn) ? tokenIn : ZeroAddress;
+      tx = {
+        to: routerAddress,
+        data: THOR_ROUTER_IFACE.encodeFunctionData('depositWithExpiry', [
+          depositAddress,
+          asset,
+          amountIn,
+          memo,
+          expiresAt,
+        ]),
+        value: asset === ZeroAddress ? amountIn.toString() : '0',
+        chainId: Number(quote?.srcChainId ?? 0),
+      };
+    } else if (depositAddress.length > 0 && amountIn !== null) {
+      tx = thisOrBuildPassthroughTx(tokenIn, depositAddress, amountIn, Number(quote?.srcChainId ?? 0));
+    }
+
+    return {
+      mode: 'provider_direct',
+      action: {
+        kind: 'maya_swap',
+        depositAddress,
+        memo,
+        expiresAt,
+        expectedAmountOut,
+      },
+      ...(tx ? { tx } : {}),
+    };
+  }
+
+  if (isTeleSwapProviderDirectOffer(offer)) {
+    const execution = offer.execution as Record<string, unknown>;
+    const quote = execution.quote as Record<string, unknown> | undefined;
+    const depositAddress = String(execution.depositAddress ?? '').trim();
+    const swapId = String(execution.swapId ?? quote?.teleSwapSwapId ?? '').trim();
+    const expectedAmountOut = String(execution.expectedAmountOut ?? quote?.estimatedOut ?? '');
+    const tokenIn = String(quote?.tokenIn ?? '').trim();
+    const amountInRaw = quote?.amountIn;
+    const amountIn = typeof amountInRaw === 'bigint'
+      ? amountInRaw
+      : (() => {
+        const raw = String(amountInRaw ?? '').trim();
+        return /^\d+$/.test(raw) ? BigInt(raw) : null;
+      })();
+    const tx = depositAddress.length > 0 && amountIn !== null
+      ? thisOrBuildPassthroughTx(tokenIn, depositAddress, amountIn, Number(quote?.srcChainId ?? 0))
+      : undefined;
+
+    return {
+      mode: 'provider_direct',
+      action: {
+        kind: 'teleswap_deposit',
+        depositAddress,
+        ...(swapId ? { swapId } : {}),
+        expectedAmountOut,
+      },
+      ...(tx ? { tx } : {}),
+    };
+  }
+
   throw new Error(`Unsupported provider direct integration for offer ${offer.offerId}`);
+}
+
+function thisOrBuildPassthroughTx(
+  tokenIn: string,
+  depositAddress: string,
+  amountIn: bigint,
+  chainId: number,
+): { to: string; data: string; value: string; chainId: number } {
+  if (isAddress(tokenIn)) {
+    return {
+      to: tokenIn,
+      data: ERC20_IFACE.encodeFunctionData('transfer', [depositAddress, amountIn]),
+      value: '0',
+      chainId,
+    };
+  }
+  return {
+    to: depositAddress,
+    data: '0x',
+    value: amountIn.toString(),
+    chainId,
+  };
 }

@@ -34,9 +34,9 @@ CREATE TABLE IF NOT EXISTS intents (
   dst_chain_id       INTEGER NOT NULL,
 
   rail               TEXT NOT NULL
-                    CHECK (rail IN ('CCTP','AXELAR','LAYERZERO','VIA_LABS','WORMHOLE','THORCHAIN','GASZIP','HYPERLANE_NEXUS')),
+                    CHECK (rail IN ('CCTP','AXELAR','LAYERZERO','VIA_LABS','WORMHOLE','THORCHAIN','GASZIP','HYPERLANE_NEXUS','CHAINFLIP','MAYA','TELESWAP')),
   fallback_rail      TEXT
-                    CHECK (fallback_rail IS NULL OR fallback_rail IN ('CCTP','AXELAR','LAYERZERO','VIA_LABS','WORMHOLE','THORCHAIN','GASZIP','HYPERLANE_NEXUS')),
+                    CHECK (fallback_rail IS NULL OR fallback_rail IN ('CCTP','AXELAR','LAYERZERO','VIA_LABS','WORMHOLE','THORCHAIN','GASZIP','HYPERLANE_NEXUS','CHAINFLIP','MAYA','TELESWAP')),
 
   quote              JSONB NOT NULL,
   src_tx_hash        TEXT,
@@ -174,7 +174,7 @@ CREATE TABLE IF NOT EXISTS intent_provider_transfers (
   intent_id              TEXT NOT NULL REFERENCES intents(intent_id) ON DELETE CASCADE,
 
   provider               TEXT NOT NULL
-                         CHECK (provider IN ('layerzero_value_transfer_api','thorchain_api')),
+                         CHECK (provider IN ('layerzero_value_transfer_api','thorchain_api','hyperlane_explorer','chainflip_broker','maya_midgard','teleswap_api')),
   provider_quote_id      TEXT NOT NULL,
 
   status                 TEXT NOT NULL DEFAULT 'CREATED'
@@ -218,7 +218,7 @@ CREATE TABLE IF NOT EXISTS intent_rail_attempts (
   attempt_no         INTEGER NOT NULL,
 
   rail               TEXT NOT NULL
-                    CHECK (rail IN ('CCTP','AXELAR','LAYERZERO','VIA_LABS','WORMHOLE','THORCHAIN','GASZIP','HYPERLANE_NEXUS')),
+                    CHECK (rail IN ('CCTP','AXELAR','LAYERZERO','VIA_LABS','WORMHOLE','THORCHAIN','GASZIP','HYPERLANE_NEXUS','CHAINFLIP','MAYA','TELESWAP')),
 
   status             TEXT NOT NULL
                     CHECK (status IN ('PENDING','SUBMITTED','IN_TRANSIT','SETTLED','FAILED','CANCELLED')),

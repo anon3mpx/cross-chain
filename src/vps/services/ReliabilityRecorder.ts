@@ -70,12 +70,18 @@ export class ReliabilityRecorder {
     // Revenue tier capture (migration 003).  The QuoteResult on the intent
     // doesn't always carry executionMode (it's typically on the RailOffer),
     // so we infer from rail family when not explicitly set:
-    //   THORCHAIN / GASZIP / LZ value-transfer API → provider_direct
+    //   THORCHAIN / GASZIP / Chainflip / Maya / TeleSwap → provider_direct
     //   everything else → router_intent (agg-wired)
     const explicit = (q as unknown as { executionMode?: 'router_intent' | 'provider_direct' })
       .executionMode;
     const inferred: 'router_intent' | 'provider_direct' =
-      rail === 'THORCHAIN' || rail === 'GASZIP' ? 'provider_direct' : 'router_intent';
+      rail === 'THORCHAIN'
+      || rail === 'GASZIP'
+      || rail === 'CHAINFLIP'
+      || rail === 'MAYA'
+      || rail === 'TELESWAP'
+        ? 'provider_direct'
+        : 'router_intent';
     const executionMode = explicit ?? inferred;
     const offerType = (q as unknown as { offerType?: string }).offerType;
     const actualOut = readIntentActualOut(intent, status, q.estimatedOut);

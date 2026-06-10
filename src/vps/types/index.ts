@@ -24,10 +24,13 @@ export enum Rail {
 
   // ── Liquidity rail (AMM-based, direct native delivery, no ReceiverV1) ─────
   THORCHAIN = 'THORCHAIN',  // Free+slip, native BTC/ETH/SOL/DOGE/AVAX/BSC/BASE
+  CHAINFLIP = 'CHAINFLIP',  // Broker-direct JIT AMM rail for BTC/ETH/USDC/SOL/DOT
+  MAYA = 'MAYA',            // THORChain-style vault rail with KUJI/DASH/ZEC coverage
+  TELESWAP = 'TELESWAP',    // BTC <-> Polygon/BSC specialist rail via TeleportDAO
 }
 
 // ── Rail category helpers ──────────────────────────────────────────────────────
-export const LIQUIDITY_RAILS = new Set([Rail.THORCHAIN]);
+export const LIQUIDITY_RAILS = new Set([Rail.THORCHAIN, Rail.CHAINFLIP, Rail.MAYA, Rail.TELESWAP]);
 export const MESSAGING_RAILS = new Set([Rail.CCTP, Rail.CCTP_FAST, Rail.AXELAR, Rail.LAYERZERO, Rail.VIA_LABS, Rail.WORMHOLE, Rail.GASZIP, Rail.HYPERLANE_NEXUS]);
 
 // ── Non-EVM pseudo chain IDs (used internally, never on-chain) ────────────────
@@ -55,6 +58,9 @@ export const CHAIN_ID = {
   BCH:     101,
   COSMOS:  102,
   DOT:     103,
+  KUJI:    104,
+  DASH:    105,
+  ZEC:     106,
 } as const;
 
 export type ChainId = typeof CHAIN_ID[keyof typeof CHAIN_ID];
@@ -253,6 +259,8 @@ export interface QuoteResult {
   layerZeroValueTransferApiQuoteId?: string; // LayerZero Value Transfer API quote/transfer id
   layerZeroValueTransferApiRouteSteps?: unknown[];
   layerZeroValueTransferApiUserSteps?: unknown[];
+  chainflipChannelId?: string;
+  teleSwapSwapId?: string;
   nativeDstAddress?: string;    // User's BTC/SOL/DOGE address
   selectedByUser?:   boolean;   // true when intent came from explicit offer selection
   offerType?:        RailOfferType;
@@ -282,7 +290,10 @@ export type RailOfferType =
   | 'lz_api_direct'
   | 'gaszip_api_direct'
   | 'thor_api_direct'
-  | 'hyperlane_nexus_direct';
+  | 'hyperlane_nexus_direct'
+  | 'chainflip_broker_direct'
+  | 'maya_direct'
+  | 'teleswap_direct';
 
 export type DeliveryShape =
   | 'direct'
@@ -415,7 +426,13 @@ export interface IntentRefundCase {
   payoutTxHash?: string;
 }
 
-export type ProviderTransferProvider = 'layerzero_value_transfer_api' | 'thorchain_api' | 'hyperlane_explorer';
+export type ProviderTransferProvider =
+  | 'layerzero_value_transfer_api'
+  | 'thorchain_api'
+  | 'hyperlane_explorer'
+  | 'chainflip_broker'
+  | 'maya_midgard'
+  | 'teleswap_api';
 
 export type ProviderTransferStatus =
   | 'CREATED'

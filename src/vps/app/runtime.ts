@@ -13,10 +13,14 @@ import { RailSelector } from '../services/RailSelector';
 import { RecoveryEngine } from '../services/RecoveryEngine';
 import { THORChainMonitorWorker } from '../services/thorchain/THORChainMonitorWorker';
 import { THORChainQuoteWorker } from '../services/thorchain/THORChainQuoteWorker';
+import { BrokerChainflipQuoteWorker } from '../services/chainflip/ChainflipQuoteWorker';
+import { ChainflipMonitorWorker } from '../services/chainflip/ChainflipMonitorWorker';
 import { LayerZeroValueTransferApiQuoteWorker } from '../services/layerzero/LayerZeroValueTransferApiQuoteWorker';
 import { LayerZeroValueTransferApiMonitorWorker } from '../services/layerzero/LayerZeroValueTransferApiMonitorWorker';
 import { HyperlaneNexusQuoteWorker } from '../services/hyperlane/HyperlaneNexusQuoteWorker';
 import { HyperlaneNexusMonitorWorker } from '../services/hyperlane/HyperlaneNexusMonitorWorker';
+import { MidgardMayaQuoteWorker } from '../services/maya/MayaQuoteWorker';
+import { MayaMonitorWorker } from '../services/maya/MayaMonitorWorker';
 import { createQuoteCacheFromEnv, QuoteCache } from '../cache/QuoteCache';
 import { registerDexQuoteAdapters } from '../bootstrap/dexAdapters';
 import { RailExecutionHandle, RailExecutionManager } from '../rails/execution';
@@ -28,6 +32,8 @@ import { ReliabilityRecorder } from '../services/ReliabilityRecorder';
 import { RailReliabilityCache } from '../services/RailReliabilityCache';
 import { PostgresIdempotencyStore, InMemoryIdempotencyStore, type IdempotencyStore } from '../db/IdempotencyStore';
 import { PostgresRelayerNonceStore, InMemoryRelayerNonceStore, type RelayerNonceStore } from '../db/RelayerNonceStore';
+import { SdkTeleSwapQuoteWorker } from '../services/teleswap/TeleSwapQuoteWorker';
+import { TeleSwapMonitorWorker } from '../services/teleswap/TeleSwapMonitorWorker';
 
 export interface RuntimeOptions {
   enableEventMonitor?: boolean;
@@ -48,6 +54,9 @@ export interface RuntimeContext {
   railExecutions: ReadonlyMap<Rail, RailExecutionHandle>;
   cctpRelayWorker?: CctpAttestationWorker;
   thorchainWorker?: THORChainMonitorWorker;
+  chainflipMonitorWorker?: ChainflipMonitorWorker;
+  mayaMonitorWorker?: MayaMonitorWorker;
+  teleSwapMonitorWorker?: TeleSwapMonitorWorker;
   layerZeroValueTransferApiMonitorWorker?: LayerZeroValueTransferApiMonitorWorker;
   hyperlaneNexusMonitorWorker?: HyperlaneNexusMonitorWorker;
   apiKeyManager?: ApiKeyManager;
@@ -83,6 +92,9 @@ export async function buildRuntime(options: RuntimeOptions = {}): Promise<Runtim
   const enableThorchainQuoteWorker = envBool('ENABLE_THORCHAIN_QUOTE_WORKER', true);
   const enableLayerZeroValueTransferApi = envBool('ENABLE_LAYERZERO_TRANSFER_API', false);
   const enableHyperlaneNexus = envBool('ENABLE_HYPERLANE_NEXUS', false);
+  const enableChainflip = envBool('ENABLE_CHAINFLIP', Boolean(process.env.CHAINFLIP_BROKER_URL));
+  const enableMaya = envBool('ENABLE_MAYA', false);
+  const enableTeleSwap = envBool('ENABLE_TELESWAP', Boolean(process.env.TELESWAP_API_URL));
   const enableThorchainCanary = envBool('ENABLE_THORCHAIN_CANARY', false);
   const thorchainCanaryAllowlist = parseCsv(process.env.THORCHAIN_CANARY_ALLOWLIST);
   const enablePartnerApi = options.enablePartnerApi ?? envBool('ENABLE_PARTNER_API', false);
@@ -116,6 +128,15 @@ export async function buildRuntime(options: RuntimeOptions = {}): Promise<Runtim
       : undefined,
     hyperlaneNexusQuoteWorker: enableHyperlaneNexus
       ? new HyperlaneNexusQuoteWorker()
+      : undefined,
+    chainflipQuoteWorker: enableChainflip
+      ? new BrokerChainflipQuoteWorker()
+      : undefined,
+    mayaQuoteWorker: enableMaya
+      ? new MidgardMayaQuoteWorker()
+      : undefined,
+    teleSwapQuoteWorker: enableTeleSwap
+      ? new SdkTeleSwapQuoteWorker()
       : undefined,
   });
   const rpcProviderRegistry = new RpcProviderRegistry();
@@ -173,10 +194,16 @@ export async function buildRuntime(options: RuntimeOptions = {}): Promise<Runtim
       [Rail.LAYERZERO]: options.railExecution?.[Rail.LAYERZERO] ?? enableLayerZeroValueTransferApi,
       [Rail.HYPERLANE_NEXUS]: options.railExecution?.[Rail.HYPERLANE_NEXUS] ?? enableHyperlaneNexus,
       [Rail.GASZIP]: options.railExecution?.[Rail.GASZIP] ?? envBool('ENABLE_GASZIP_DIRECT_DEPOSIT', false),
+      [Rail.CHAINFLIP]: options.railExecution?.[Rail.CHAINFLIP] ?? enableChainflip,
+      [Rail.MAYA]: options.railExecution?.[Rail.MAYA] ?? enableMaya,
+      [Rail.TELESWAP]: options.railExecution?.[Rail.TELESWAP] ?? enableTeleSwap,
     },
   });
   const cctpRelayWorker = railExecutionManager.getInstance<CctpAttestationWorker>(Rail.CCTP);
   const thorchainWorker = railExecutionManager.getInstance<THORChainMonitorWorker>(Rail.THORCHAIN);
+  const chainflipMonitorWorker = railExecutionManager.getInstance<ChainflipMonitorWorker>(Rail.CHAINFLIP);
+  const mayaMonitorWorker = railExecutionManager.getInstance<MayaMonitorWorker>(Rail.MAYA);
+  const teleSwapMonitorWorker = railExecutionManager.getInstance<TeleSwapMonitorWorker>(Rail.TELESWAP);
   const layerZeroValueTransferApiMonitorWorker = railExecutionManager.getInstance<LayerZeroValueTransferApiMonitorWorker>(Rail.LAYERZERO);
   const hyperlaneNexusMonitorWorker = railExecutionManager.getInstance<HyperlaneNexusMonitorWorker>(Rail.HYPERLANE_NEXUS);
 
@@ -198,6 +225,9 @@ export async function buildRuntime(options: RuntimeOptions = {}): Promise<Runtim
     railExecutions,
     cctpRelayWorker,
     thorchainWorker,
+    chainflipMonitorWorker,
+    mayaMonitorWorker,
+    teleSwapMonitorWorker,
     layerZeroValueTransferApiMonitorWorker,
     hyperlaneNexusMonitorWorker,
     postgres,

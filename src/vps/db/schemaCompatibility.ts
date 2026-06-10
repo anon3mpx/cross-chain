@@ -15,7 +15,7 @@ type ConstraintErrorLike = {
 };
 
 export function staleProviderDirectRailSchemaMessage(): string {
-  return 'Postgres schema is missing provider-direct rail support. Run `npm run db:migrate` against the live database before using Gas.zip or Hyperlane Nexus offers.';
+  return 'Postgres schema is missing provider-direct rail support. Run `npm run db:migrate` against the live database before using Gas.zip, Hyperlane Nexus, Chainflip, Maya, or TeleSwap offers.';
 }
 
 export async function assertPostgresRailSchemaCompatibility(client: PgQueryable): Promise<void> {
@@ -36,7 +36,14 @@ export async function assertPostgresRailSchemaCompatibility(client: PgQueryable)
   for (const name of PROVIDER_DIRECT_REQUIRED_CONSTRAINTS) {
     const def = defs.get(name);
     const normalized = def?.toUpperCase() ?? '';
-    if (!def || !normalized.includes('GASZIP') || !normalized.includes('HYPERLANE_NEXUS')) {
+    if (
+      !def
+      || !normalized.includes('GASZIP')
+      || !normalized.includes('HYPERLANE_NEXUS')
+      || !normalized.includes('CHAINFLIP')
+      || !normalized.includes('MAYA')
+      || !normalized.includes('TELESWAP')
+    ) {
       throw new Error(staleProviderDirectRailSchemaMessage());
     }
   }
@@ -54,7 +61,18 @@ export function toFriendlyIntentPersistenceError(
   const constraint = String(pgError.constraint ?? '').trim();
   const relevantConstraint = PROVIDER_DIRECT_REQUIRED_CONSTRAINTS.includes(constraint as typeof PROVIDER_DIRECT_REQUIRED_CONSTRAINTS[number]);
 
-  if ((rail === 'GASZIP' || rail === 'HYPERLANE_NEXUS' || fallbackRail === 'GASZIP' || fallbackRail === 'HYPERLANE_NEXUS') && relevantConstraint) {
+  if ((
+    rail === 'GASZIP'
+    || rail === 'HYPERLANE_NEXUS'
+    || rail === 'CHAINFLIP'
+    || rail === 'MAYA'
+    || rail === 'TELESWAP'
+    || fallbackRail === 'GASZIP'
+    || fallbackRail === 'HYPERLANE_NEXUS'
+    || fallbackRail === 'CHAINFLIP'
+    || fallbackRail === 'MAYA'
+    || fallbackRail === 'TELESWAP'
+  ) && relevantConstraint) {
     return new Error(staleProviderDirectRailSchemaMessage());
   }
 

@@ -6,6 +6,9 @@ import { LayerZeroValueTransferApiClient } from '../services/layerzero/LayerZero
 import { LayerZeroValueTransferApiMonitorWorker } from '../services/layerzero/LayerZeroValueTransferApiMonitorWorker';
 import { HyperlaneNexusMonitorWorker } from '../services/hyperlane/HyperlaneNexusMonitorWorker';
 import { GasZipMonitorWorker } from '../services/gaszip/GasZipMonitorWorker';
+import { ChainflipMonitorWorker } from '../services/chainflip/ChainflipMonitorWorker';
+import { MayaMonitorWorker } from '../services/maya/MayaMonitorWorker';
+import { TeleSwapMonitorWorker } from '../services/teleswap/TeleSwapMonitorWorker';
 import { RpcProviderRegistry } from '../services/RpcProviderRegistry';
 import { Rail } from '../types';
 import { getRailVariantLabel, RailVariantLabel } from './registry';
@@ -265,12 +268,123 @@ class HyperlaneNexusRailExecutionAdapter implements RailExecutionAdapter<Hyperla
   }
 }
 
+class ChainflipRailExecutionAdapter implements RailExecutionAdapter<ChainflipMonitorWorker> {
+  readonly rail = Rail.CHAINFLIP;
+
+  async start(
+    context: RailExecutionContext,
+    options: RailExecutionOptions,
+  ): Promise<RailExecutionHandle<ChainflipMonitorWorker>> {
+    const enabled = options.enabled?.[Rail.CHAINFLIP] ?? readBool('ENABLE_CHAINFLIP', Boolean(process.env.CHAINFLIP_BROKER_URL));
+    if (!enabled) {
+      return {
+        rail: this.rail,
+        mode: 'disabled',
+        label: 'chainflip-monitor',
+        visualLabels: ['CHAINFLIP'],
+        async stop() {
+          return;
+        },
+      };
+    }
+
+    const worker = new ChainflipMonitorWorker(context.intentService);
+    await worker.start();
+
+    return {
+      rail: this.rail,
+      mode: 'worker',
+      label: 'chainflip-monitor',
+      visualLabels: ['CHAINFLIP'],
+      instance: worker,
+      async stop() {
+        worker.stop();
+      },
+    };
+  }
+}
+
+class MayaRailExecutionAdapter implements RailExecutionAdapter<MayaMonitorWorker> {
+  readonly rail = Rail.MAYA;
+
+  async start(
+    context: RailExecutionContext,
+    options: RailExecutionOptions,
+  ): Promise<RailExecutionHandle<MayaMonitorWorker>> {
+    const enabled = options.enabled?.[Rail.MAYA] ?? readBool('ENABLE_MAYA', false);
+    if (!enabled) {
+      return {
+        rail: this.rail,
+        mode: 'disabled',
+        label: 'maya-monitor',
+        visualLabels: ['MAYA'],
+        async stop() {
+          return;
+        },
+      };
+    }
+
+    const worker = new MayaMonitorWorker(context.intentService);
+    await worker.start();
+
+    return {
+      rail: this.rail,
+      mode: 'worker',
+      label: 'maya-monitor',
+      visualLabels: ['MAYA'],
+      instance: worker,
+      async stop() {
+        worker.stop();
+      },
+    };
+  }
+}
+
+class TeleSwapRailExecutionAdapter implements RailExecutionAdapter<TeleSwapMonitorWorker> {
+  readonly rail = Rail.TELESWAP;
+
+  async start(
+    context: RailExecutionContext,
+    options: RailExecutionOptions,
+  ): Promise<RailExecutionHandle<TeleSwapMonitorWorker>> {
+    const enabled = options.enabled?.[Rail.TELESWAP] ?? readBool('ENABLE_TELESWAP', Boolean(process.env.TELESWAP_API_URL));
+    if (!enabled) {
+      return {
+        rail: this.rail,
+        mode: 'disabled',
+        label: 'teleswap-monitor',
+        visualLabels: ['TELESWAP'],
+        async stop() {
+          return;
+        },
+      };
+    }
+
+    const worker = new TeleSwapMonitorWorker(context.intentService);
+    await worker.start();
+
+    return {
+      rail: this.rail,
+      mode: 'worker',
+      label: 'teleswap-monitor',
+      visualLabels: ['TELESWAP'],
+      instance: worker,
+      async stop() {
+        worker.stop();
+      },
+    };
+  }
+}
+
 const DEFAULT_ADAPTERS: RailExecutionAdapter[] = [
   new CctpRailExecutionAdapter(),
   new THORChainRailExecutionAdapter(),
   new LayerZeroValueTransferApiRailExecutionAdapter(),
   new HyperlaneNexusRailExecutionAdapter(),
   new GasZipRailExecutionAdapter(),
+  new ChainflipRailExecutionAdapter(),
+  new MayaRailExecutionAdapter(),
+  new TeleSwapRailExecutionAdapter(),
   new PassiveRailExecutionAdapter(Rail.AXELAR, 'event-monitor'),
   new PassiveRailExecutionAdapter(Rail.VIA_LABS, 'event-monitor'),
   new PassiveRailExecutionAdapter(Rail.WORMHOLE, 'event-monitor'),

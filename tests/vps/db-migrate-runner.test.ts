@@ -18,6 +18,8 @@ test('collectMigrationFiles returns schema first and SQL migrations in lexical o
       'migrations/20260505_add_gaszip_rail_constraints.sql',
       'migrations/20260605_add_relayer_nonces.sql',
       'migrations/20260605_add_reliability_and_attribution.sql',
+      'migrations/20260609_add_hyperlane_nexus_rail_constraints.sql',
+      'migrations/20260610_add_phase3_bridge_rail_constraints.sql',
     ],
   );
 });

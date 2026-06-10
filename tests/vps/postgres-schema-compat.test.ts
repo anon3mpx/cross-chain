@@ -24,9 +24,9 @@ test('assertPostgresRailSchemaCompatibility accepts Gas.zip and Hyperlane-capabl
   await assert.doesNotReject(() => assertPostgresRailSchemaCompatibility({
     query: async () => ({
       rows: [
-        { conname: 'intents_rail_check', def: "CHECK ((rail = ANY (ARRAY['CCTP'::text, 'GASZIP'::text, 'HYPERLANE_NEXUS'::text])))" },
-        { conname: 'intents_fallback_rail_check', def: "CHECK ((fallback_rail IS NULL OR fallback_rail = ANY (ARRAY['CCTP'::text, 'GASZIP'::text, 'HYPERLANE_NEXUS'::text])))" },
-        { conname: 'intent_rail_attempts_rail_check', def: "CHECK ((rail = ANY (ARRAY['CCTP'::text, 'GASZIP'::text, 'HYPERLANE_NEXUS'::text])))" },
+        { conname: 'intents_rail_check', def: "CHECK ((rail = ANY (ARRAY['CCTP'::text, 'GASZIP'::text, 'HYPERLANE_NEXUS'::text, 'CHAINFLIP'::text, 'MAYA'::text, 'TELESWAP'::text])))" },
+        { conname: 'intents_fallback_rail_check', def: "CHECK ((fallback_rail IS NULL OR fallback_rail = ANY (ARRAY['CCTP'::text, 'GASZIP'::text, 'HYPERLANE_NEXUS'::text, 'CHAINFLIP'::text, 'MAYA'::text, 'TELESWAP'::text])))" },
+        { conname: 'intent_rail_attempts_rail_check', def: "CHECK ((rail = ANY (ARRAY['CCTP'::text, 'GASZIP'::text, 'HYPERLANE_NEXUS'::text, 'CHAINFLIP'::text, 'MAYA'::text, 'TELESWAP'::text])))" },
       ],
     }),
   } as any));
@@ -44,4 +44,18 @@ test('toFriendlyIntentPersistenceError rewrites stale provider-direct rail check
 
   assert.ok(rewritten instanceof Error);
   assert.match(rewritten!.message, /run `npm run db:migrate`/i);
+});
+
+test('toFriendlyIntentPersistenceError also rewrites deferred Phase 3 rail constraint violations', () => {
+  const rewritten = toFriendlyIntentPersistenceError(
+    {
+      code: '23514',
+      constraint: 'intent_rail_attempts_rail_check',
+      message: 'new row violates check constraint',
+    },
+    { rail: 'MAYA' },
+  );
+
+  assert.ok(rewritten instanceof Error);
+  assert.match(rewritten!.message, /Chainflip, Maya, or TeleSwap/i);
 });
