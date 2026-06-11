@@ -47,6 +47,9 @@ export interface ExecutionContext {
   /** Agent identifier when the caller is an autonomous agent. */
   agentId?: string;
 
+  /** Registered external solver identifier for ERC-7683 / solver-originated volume. */
+  solverId?: string;
+
   /** Provenance of the call — used for attribution + rate limiting buckets. */
   routeSource?: RouteSource;
 

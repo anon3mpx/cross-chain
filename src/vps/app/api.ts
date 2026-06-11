@@ -30,6 +30,13 @@ async function main(): Promise<void> {
 
   const app = buildStatusAPI(runtime.intentService, runtime.quoteEngine, {
     idempotency: runtime.idempotency,
+    rpcProviderRegistry: runtime.rpcProviderRegistry,
+    basketQuoteEngine: runtime.basketQuoteEngine,
+    basketStatusEngine: runtime.basketStatusEngine,
+    walletScanner: runtime.walletScanner,
+    walletLiquidator: runtime.walletLiquidator,
+    erc7683Adapter: runtime.erc7683Adapter,
+    solversRepository: runtime.solversRepository,
   });
   app.set('trust proxy', readTrustProxy());
   app.use(requestIdMiddleware());

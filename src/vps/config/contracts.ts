@@ -103,6 +103,10 @@ export function getEmpsealRouterAddressForChain(chainId: number): string | undef
   );
 }
 
+export function getEmpsealMulticallRouterAddressForChain(chainId: number): string | undefined {
+  return asAddress(readEnv(`CHAIN_${chainId}_EMPSEAL_MULTICALL_ROUTER`));
+}
+
 export function getEmpsealRouterFeeBpsForChain(chainId: number): number {
   const raw = readEnv(`CHAIN_${chainId}_EMPSEAL_ROUTER_FEE_BPS`)
     ?? readEnv('DEFAULT_EMPSEAL_ROUTER_FEE_BPS')

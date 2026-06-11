@@ -36,6 +36,7 @@ export interface RouteOutcomeInsert {
   integratorId?: string;
   agentId?: string;
   routeSource?: string;
+  solverId?: string;
   settledAt?: Date;
 
   // Migration 003 — revenue tier slicing.
@@ -72,6 +73,14 @@ export interface ReliabilityRepository {
     stuck: number;
     successRate: number;
   }>>;
+  windowedSolverStats(windowMs: number): Promise<Array<{
+    solverId: string;
+    total: number;
+    settled: number;
+    failed: number;
+    stuck: number;
+    successRate: number;
+  }>>;
 }
 
 export class PostgresReliabilityRepository implements ReliabilityRepository {
@@ -85,7 +94,7 @@ export class PostgresReliabilityRepository implements ReliabilityRepository {
         quoted_out, quoted_eta_s, quoted_fee_usd,
         actual_out, actual_eta_s, actual_fee_usd,
         status, failure_reason,
-        partner_id, integrator_id, agent_id, route_source,
+        partner_id, integrator_id, agent_id, route_source, solver_id,
         settled_at,
         execution_mode, offer_type
       ) VALUES (
@@ -94,9 +103,9 @@ export class PostgresReliabilityRepository implements ReliabilityRepository {
         $8,$9,$10,
         $11,$12,$13,
         $14,$15,
-        $16,$17,$18,$19,
-        $20,
-        $21,$22
+        $16,$17,$18,$19,$20,
+        $21,
+        $22,$23
       )
     `;
     const params = [
@@ -119,6 +128,7 @@ export class PostgresReliabilityRepository implements ReliabilityRepository {
       row.integratorId ?? null,
       row.agentId ?? null,
       row.routeSource ?? null,
+      row.solverId ?? null,
       row.settledAt ?? null,
       row.executionMode ?? null,
       row.offerType ?? null,
@@ -158,6 +168,41 @@ export class PostgresReliabilityRepository implements ReliabilityRepository {
     const res = await this.pool.query(q, [windowMs.toString()]);
     return res.rows.map((r) => ({
       executionMode: r.execution_mode,
+      total: r.total,
+      settled: r.settled,
+      failed: r.failed,
+      stuck: r.stuck,
+      successRate: r.total > 0 ? r.settled / r.total : 0,
+    }));
+  }
+
+  async windowedSolverStats(windowMs: number): Promise<Array<{
+    solverId: string;
+    total: number;
+    settled: number;
+    failed: number;
+    stuck: number;
+    successRate: number;
+  }>> {
+    const q = `
+      WITH win AS (
+        SELECT * FROM route_outcomes
+        WHERE observed_at > NOW() - ($1::bigint * INTERVAL '1 millisecond')
+          AND solver_id IS NOT NULL
+      )
+      SELECT
+        solver_id,
+        COUNT(*)::int AS total,
+        COUNT(*) FILTER (WHERE status = 'SETTLED')::int AS settled,
+        COUNT(*) FILTER (WHERE status = 'FAILED')::int AS failed,
+        COUNT(*) FILTER (WHERE status = 'STUCK')::int AS stuck
+      FROM win
+      GROUP BY solver_id
+      ORDER BY total DESC
+    `;
+    const res = await this.pool.query(q, [windowMs.toString()]);
+    return res.rows.map((r) => ({
+      solverId: r.solver_id,
       total: r.total,
       settled: r.settled,
       failed: r.failed,

@@ -34,6 +34,13 @@ import { PostgresIdempotencyStore, InMemoryIdempotencyStore, type IdempotencySto
 import { PostgresRelayerNonceStore, InMemoryRelayerNonceStore, type RelayerNonceStore } from '../db/RelayerNonceStore';
 import { SdkTeleSwapQuoteWorker } from '../services/teleswap/TeleSwapQuoteWorker';
 import { TeleSwapMonitorWorker } from '../services/teleswap/TeleSwapMonitorWorker';
+import { BasketQuoteEngine } from '../services/BasketQuoteEngine';
+import { BasketStatusEngine } from '../services/BasketStatusEngine';
+import { WalletScanner } from '../services/WalletScanner';
+import { WalletLiquidator } from '../services/WalletLiquidator';
+import { Erc7683Adapter } from '../services/Erc7683Adapter';
+import { PostgresSolversRepository } from '../db/SolversRepository';
+import { InMemoryBasketRepository, PostgresBasketRepository, type BasketRepository } from '../db/BasketRepository';
 
 export interface RuntimeOptions {
   enableEventMonitor?: boolean;
@@ -48,6 +55,7 @@ export interface RuntimeContext {
   intentEngine: IntentEngine;
   intentService: IntentService;
   quoteEngine: QuoteEngine;
+  rpcProviderRegistry: RpcProviderRegistry;
   eventMonitor?: EventMonitor;
   recoveryEngine?: RecoveryEngine;
   railExecutionManager: RailExecutionManager;
@@ -63,6 +71,13 @@ export interface RuntimeContext {
   partnerApiRouter?: ReturnType<typeof buildPartnerAPI>;
   postgres?: PostgresIntentStore;
   reliability?: ReliabilityRepository;
+  basketRepository: BasketRepository;
+  basketQuoteEngine: BasketQuoteEngine;
+  basketStatusEngine?: BasketStatusEngine;
+  walletScanner: WalletScanner;
+  walletLiquidator: WalletLiquidator;
+  erc7683Adapter: Erc7683Adapter;
+  solversRepository?: PostgresSolversRepository;
   idempotency: IdempotencyStore;
   nonceStore: RelayerNonceStore;
   usdOracle: NativeUsdOracle;
@@ -140,10 +155,29 @@ export async function buildRuntime(options: RuntimeOptions = {}): Promise<Runtim
       : undefined,
   });
   const rpcProviderRegistry = new RpcProviderRegistry();
-  const usdOracle = new NativeUsdOracle({
-    swapAdapter: new SwapAdapter({ registry: rpcProviderRegistry }),
-  });
+  const swapAdapter = new SwapAdapter({ registry: rpcProviderRegistry });
+  const usdOracle = new NativeUsdOracle({ swapAdapter });
   registerDexQuoteAdapters(quoteEngine, process.env, rpcProviderRegistry);
+  const basketRepository: BasketRepository = postgres
+    ? new PostgresBasketRepository(postgres.pool)
+    : new InMemoryBasketRepository();
+  const basketQuoteEngine = new BasketQuoteEngine({
+    swapAdapter,
+    quoteEngine,
+    intentService,
+    basketRepository,
+  });
+  const basketStatusEngine = new BasketStatusEngine(postgres?.repo ?? {
+    findIntentsByBasket: async () => [],
+  }, basketRepository);
+  const walletScanner = new WalletScanner({ registry: rpcProviderRegistry });
+  const walletLiquidator = new WalletLiquidator(walletScanner, basketQuoteEngine);
+  const erc7683Adapter = new Erc7683Adapter({
+    quoteEngine,
+    intentService,
+    swapAdapter,
+  });
+  const solversRepository = postgres ? new PostgresSolversRepository(postgres.pool) : undefined;
   const idempotency: IdempotencyStore = postgres
     ? new PostgresIdempotencyStore(postgres.pool)
     : new InMemoryIdempotencyStore();
@@ -209,7 +243,14 @@ export async function buildRuntime(options: RuntimeOptions = {}): Promise<Runtim
 
   const apiKeyManager = enablePartnerApi ? new ApiKeyManager() : undefined;
   const partnerApiRouter = apiKeyManager
-    ? buildPartnerAPI(apiKeyManager, intentService, quoteEngine, rpcProviderRegistry, idempotency)
+    ? buildPartnerAPI(apiKeyManager, intentService, quoteEngine, rpcProviderRegistry, idempotency, {
+        basketQuoteEngine,
+        basketStatusEngine,
+        walletScanner,
+        walletLiquidator,
+        erc7683Adapter,
+        solversRepository,
+      })
     : undefined;
   if (apiKeyManager) {
     setupWebhookPush(intentEngine, apiKeyManager);
@@ -219,6 +260,7 @@ export async function buildRuntime(options: RuntimeOptions = {}): Promise<Runtim
     intentEngine,
     intentService,
     quoteEngine,
+    rpcProviderRegistry,
     eventMonitor,
     recoveryEngine,
     railExecutionManager,
@@ -232,6 +274,13 @@ export async function buildRuntime(options: RuntimeOptions = {}): Promise<Runtim
     hyperlaneNexusMonitorWorker,
     postgres,
     reliability,
+    basketRepository,
+    basketQuoteEngine,
+    basketStatusEngine,
+    walletScanner,
+    walletLiquidator,
+    erc7683Adapter,
+    solversRepository,
     idempotency,
     nonceStore,
     usdOracle,

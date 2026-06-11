@@ -18,6 +18,22 @@ import type { ExecutionContext, RpcProviderOverrides } from '../core/ExecutionCo
 import type { IdempotencyStore } from '../db/IdempotencyStore';
 import { DestinationGasAutoFund } from '../services/DestinationGasAutoFund';
 import { NativeUsdOracle } from '../services/NativeUsdOracle';
+import type { BasketQuoteEngine } from '../services/BasketQuoteEngine';
+import type { BasketStatusEngine } from '../services/BasketStatusEngine';
+import type { WalletScanner } from '../services/WalletScanner';
+import type { WalletLiquidator } from '../services/WalletLiquidator';
+import type { Erc7683Adapter, Erc7683Order } from '../services/Erc7683Adapter';
+import type { SolversRepository, SolverType } from '../db/SolversRepository';
+import type { IntentBasket } from '../core/IntentBasket';
+
+interface PlatformSurfaceOptions {
+  basketQuoteEngine?: BasketQuoteEngine;
+  basketStatusEngine?: BasketStatusEngine;
+  walletScanner?: WalletScanner;
+  walletLiquidator?: WalletLiquidator;
+  erc7683Adapter?: Erc7683Adapter;
+  solversRepository?: SolversRepository;
+}
 
 export function buildPartnerAPI(
   keyManager: ApiKeyManager,
@@ -25,6 +41,7 @@ export function buildPartnerAPI(
   quoteEngine: QuoteEngine,
   rpcRegistry: RpcProviderRegistry,
   idempotency?: IdempotencyStore,
+  platform: PlatformSurfaceOptions = {},
 ): express.Router {
   const router = express.Router();
   const swapAdapter = new SwapAdapter({ registry: rpcRegistry });
@@ -252,6 +269,231 @@ export function buildPartnerAPI(
     }
   });
 
+  router.post('/basket/quote', async (req: Request, res: Response) => {
+    if (!platform.basketQuoteEngine) {
+      return res.status(503).json({ error: 'BASKETS_UNAVAILABLE' });
+    }
+
+    try {
+      const apiKey = (req as any).apiKey as string;
+      const basket = parseIntentBasket(req.body?.basket ?? req.body);
+      const result = await platform.basketQuoteEngine.quote(
+        basket,
+        buildExecutionContext(req, apiKey),
+      );
+      if ('error' in result) {
+        return res.status(400).json(result);
+      }
+      res.json(result);
+    } catch (err) {
+      res.status(400).json({ error: String(err) });
+    }
+  });
+
+  router.post('/basket/execute', async (req: Request, res: Response) => {
+    if (!platform.basketQuoteEngine) {
+      return res.status(503).json({ error: 'BASKETS_UNAVAILABLE' });
+    }
+
+    try {
+      const apiKey = (req as any).apiKey as string;
+      const basket = parseIntentBasket(req.body?.basket ?? req.body);
+      const userAddress = readOptionalString(req.body?.userAddress) ?? basket.inputs[0]?.wallet;
+      if (!userAddress) return res.status(400).json({ error: 'userAddress required' });
+
+      const plan = await platform.basketQuoteEngine.executeBasket(
+        basket,
+        userAddress,
+        {
+          partnerApiKey: apiKey,
+          partnerId: partnerIdFromKey(apiKey),
+          integratorId: readOptionalString(req.body?.integratorId),
+          agentId: readOptionalString(req.body?.agentId),
+          routeSource: 'partner-api',
+        },
+        buildExecutionContext(req, apiKey),
+        {
+          basketId: readOptionalString(req.body?.basketId),
+          legIndexes: parseNumberArray(req.body?.legIndexes),
+          mode: req.body?.mode === 'multicall' ? 'multicall' : 'sequential',
+        },
+      );
+      if ('error' in plan) {
+        return res.status(400).json(plan);
+      }
+      res.json(plan);
+    } catch (err) {
+      res.status(400).json({ error: String(err) });
+    }
+  });
+
+  router.get('/basket/:id/status', async (req: Request, res: Response) => {
+    if (!platform.basketStatusEngine) {
+      return res.status(503).json({ error: 'BASKET_STATUS_UNAVAILABLE' });
+    }
+
+    try {
+      const basketId = String(req.params.id);
+      const status = await platform.basketStatusEngine.getStatus(
+        basketId,
+        partnerIdFromKey((req as any).apiKey as string),
+      );
+      res.json(status);
+    } catch (err) {
+      res.status(500).json({ error: String(err) });
+    }
+  });
+
+  router.post('/wallet/scan', async (req: Request, res: Response) => {
+    if (!platform.walletScanner) {
+      return res.status(503).json({ error: 'WALLET_SCAN_UNAVAILABLE' });
+    }
+
+    try {
+      const apiKey = (req as any).apiKey as string;
+      const request = parseWalletScanRequest(req.body);
+      const result = await platform.walletScanner.scan(request, buildExecutionContext(req, apiKey));
+      res.json(result);
+    } catch (err) {
+      res.status(400).json({ error: String(err) });
+    }
+  });
+
+  router.post('/wallet/liquidate/quote', async (req: Request, res: Response) => {
+    if (!platform.walletLiquidator) {
+      return res.status(503).json({ error: 'WALLET_LIQUIDATOR_UNAVAILABLE' });
+    }
+
+    try {
+      const apiKey = (req as any).apiKey as string;
+      const request = parseWalletLiquidationRequest(req.body);
+      const result = await platform.walletLiquidator.quote(request, buildExecutionContext(req, apiKey));
+      if ('error' in result) {
+        return res.status(400).json(result);
+      }
+      res.json(result);
+    } catch (err) {
+      res.status(400).json({ error: String(err) });
+    }
+  });
+
+  router.post('/wallet/liquidate/execute', async (req: Request, res: Response) => {
+    if (!platform.walletLiquidator) {
+      return res.status(503).json({ error: 'WALLET_LIQUIDATOR_UNAVAILABLE' });
+    }
+
+    try {
+      const apiKey = (req as any).apiKey as string;
+      const request = parseWalletLiquidationRequest(req.body);
+      const result = await platform.walletLiquidator.execute(
+        request,
+        {
+          partnerApiKey: apiKey,
+          partnerId: partnerIdFromKey(apiKey),
+          integratorId: readOptionalString(req.body?.integratorId),
+          agentId: readOptionalString(req.body?.agentId),
+          routeSource: 'partner-api',
+        },
+        buildExecutionContext(req, apiKey),
+        {
+          mode: req.body?.mode === 'multicall' ? 'multicall' : 'sequential',
+        },
+      );
+      if ('error' in result) {
+        return res.status(400).json(result);
+      }
+      res.json(result);
+    } catch (err) {
+      res.status(400).json({ error: String(err) });
+    }
+  });
+
+  router.post('/erc7683/resolve', async (req: Request, res: Response) => {
+    if (!platform.erc7683Adapter) {
+      return res.status(503).json({ error: 'ERC7683_UNAVAILABLE' });
+    }
+
+    try {
+      const apiKey = (req as any).apiKey as string;
+      await assertActiveSolver(platform.solversRepository, readOptionalString(req.body?.solverId));
+      const order = parseErc7683Order(req.body);
+      const result = await platform.erc7683Adapter.resolve(order, buildExecutionContext(req, apiKey));
+      if ('error' in result) return res.status(400).json(result);
+      res.json(result);
+    } catch (err) {
+      res.status(400).json({ error: String(err) });
+    }
+  });
+
+  router.post('/erc7683/open', async (req: Request, res: Response) => {
+    if (!platform.erc7683Adapter) {
+      return res.status(503).json({ error: 'ERC7683_UNAVAILABLE' });
+    }
+
+    try {
+      const apiKey = (req as any).apiKey as string;
+      await assertActiveSolver(platform.solversRepository, readOptionalString(req.body?.solverId));
+      const order = parseErc7683Order(req.body);
+      const result = await platform.erc7683Adapter.open(
+        order,
+        {
+          partnerId: partnerIdFromKey(apiKey),
+          integratorId: readOptionalString(req.body?.integratorId),
+          agentId: readOptionalString(req.body?.agentId),
+          solverId: readOptionalString(req.body?.solverId),
+        },
+        buildExecutionContext(req, apiKey),
+      );
+      if ('error' in result) return res.status(400).json(result);
+      res.json(result);
+    } catch (err) {
+      res.status(400).json({ error: String(err) });
+    }
+  });
+
+  router.post('/solvers/register', async (req: Request, res: Response) => {
+    if (!platform.solversRepository) {
+      return res.status(503).json({ error: 'SOLVER_REGISTRY_UNAVAILABLE' });
+    }
+
+    try {
+      const record = await platform.solversRepository.upsert(parseSolverRegistration(req.body));
+      res.status(201).json(record);
+    } catch (err) {
+      res.status(400).json({ error: String(err) });
+    }
+  });
+
+  router.get('/solvers', async (req: Request, res: Response) => {
+    if (!platform.solversRepository) {
+      return res.status(503).json({ error: 'SOLVER_REGISTRY_UNAVAILABLE' });
+    }
+
+    try {
+      const type = readOptionalString(req.query.type) as SolverType | undefined;
+      const activeOnly = req.query.activeOnly === 'true' || req.query.activeOnly === '1';
+      const records = await platform.solversRepository.listWithStats({ type, activeOnly });
+      res.json({ solvers: records });
+    } catch (err) {
+      res.status(400).json({ error: String(err) });
+    }
+  });
+
+  router.post('/solvers/:id/active', async (req: Request, res: Response) => {
+    if (!platform.solversRepository) {
+      return res.status(503).json({ error: 'SOLVER_REGISTRY_UNAVAILABLE' });
+    }
+
+    try {
+      const id = String(req.params.id);
+      const active = Boolean(req.body?.active);
+      await platform.solversRepository.setActive(id, active);
+      res.json({ id, active });
+    } catch (err) {
+      res.status(400).json({ error: String(err) });
+    }
+  });
+
   // ── GET /partner/intent/:id ────────────────────────────────────────────────
   router.get('/intent/:id', async (req: Request, res: Response) => {
     const check = keyManager.validateKey((req as any).apiKey);
@@ -406,6 +648,7 @@ function buildExecutionContext(req: Request, apiKey: string): ExecutionContext {
     partnerId: partnerIdFromKey(apiKey),
     integratorId: readOptionalString(body.integratorId),
     agentId: readOptionalString(body.agentId),
+    solverId: readOptionalString(body.solverId),
     routeSource: 'partner-api',
     requestId: typeof req.headers['x-request-id'] === 'string' ? req.headers['x-request-id'] : undefined,
     receivedAt: Date.now(),
@@ -471,4 +714,146 @@ function clampSlippage(value: unknown): number {
   const parsed = Number(value ?? 50);
   if (!Number.isFinite(parsed)) return 50;
   return Math.min(2_000, Math.max(1, Math.round(parsed)));
+}
+
+function parseIntentBasket(value: unknown): IntentBasket {
+  if (!value || typeof value !== 'object') throw new Error('basket payload required');
+  const raw = value as Record<string, unknown>;
+  const mode = readOptionalString(raw.mode) as IntentBasket['mode'] | undefined;
+  const inputs = Array.isArray(raw.inputs) ? raw.inputs.map((entry) => parseBasketInput(entry)) : [];
+  const outputs = Array.isArray(raw.outputs) ? raw.outputs.map((entry) => parseBasketOutput(entry)) : [];
+  const constraints = raw.constraints && typeof raw.constraints === 'object'
+    ? raw.constraints as Record<string, unknown>
+    : {};
+  return {
+    basketId: readOptionalString(raw.basketId),
+    mode: mode ?? 'multi-to-one',
+    inputs,
+    outputs,
+    constraints: {
+      slippageBps: typeof constraints.slippageBps === 'number' ? constraints.slippageBps : undefined,
+      deadlineSeconds: typeof constraints.deadlineSeconds === 'number' ? constraints.deadlineSeconds : undefined,
+      maxLegs: typeof constraints.maxLegs === 'number' ? constraints.maxLegs : undefined,
+    },
+  };
+}
+
+function parseBasketInput(value: unknown): IntentBasket['inputs'][number] {
+  if (!value || typeof value !== 'object') throw new Error('basket input must be an object');
+  const raw = value as Record<string, unknown>;
+  return {
+    chainId: numeric(raw.chainId, 'input.chainId'),
+    token: readRequiredString(raw.token, 'input.token'),
+    amount: bigIntStr(raw.amount, 'input.amount'),
+    wallet: readRequiredString(raw.wallet, 'input.wallet'),
+    decimals: typeof raw.decimals === 'number' ? raw.decimals : undefined,
+    slippageBps: typeof raw.slippageBps === 'number' ? raw.slippageBps : undefined,
+  };
+}
+
+function parseBasketOutput(value: unknown): IntentBasket['outputs'][number] {
+  if (!value || typeof value !== 'object') throw new Error('basket output must be an object');
+  const raw = value as Record<string, unknown>;
+  return {
+    chainId: numeric(raw.chainId, 'output.chainId'),
+    token: readRequiredString(raw.token, 'output.token'),
+    decimals: typeof raw.decimals === 'number' ? raw.decimals : undefined,
+    allocationBps: typeof raw.allocationBps === 'number' ? raw.allocationBps : undefined,
+    fixedAmount: readOptionalString(raw.fixedAmount),
+    recipient: readOptionalString(raw.recipient),
+    nativeAddress: readOptionalString(raw.nativeAddress),
+  };
+}
+
+function parseWalletScanRequest(value: unknown): { wallet: string; chainIds: number[]; tokensByChain?: Record<number, string[]> } {
+  if (!value || typeof value !== 'object') throw new Error('wallet scan payload required');
+  const raw = value as Record<string, unknown>;
+  const wallet = readRequiredString(raw.wallet, 'wallet');
+  const chainIds = parseNumberArray(raw.chainIds);
+  if (chainIds.length === 0) throw new Error('chainIds must contain at least one chain');
+  return {
+    wallet,
+    chainIds,
+    tokensByChain: parseTokensByChain(raw.tokensByChain),
+  };
+}
+
+function parseWalletLiquidationRequest(value: unknown) {
+  if (!value || typeof value !== 'object') throw new Error('wallet liquidation payload required');
+  const raw = value as Record<string, unknown>;
+  const target = raw.target;
+  if (!target || typeof target !== 'object') throw new Error('target required');
+  const targetRaw = target as Record<string, unknown>;
+  return {
+    wallet: readRequiredString(raw.wallet, 'wallet'),
+    chainIds: parseNumberArray(raw.chainIds),
+    tokensByChain: parseTokensByChain(raw.tokensByChain),
+    minBalanceWei: readOptionalString(raw.minBalanceWei),
+    slippageBps: typeof raw.slippageBps === 'number' ? raw.slippageBps : undefined,
+    target: {
+      chainId: numeric(targetRaw.chainId, 'target.chainId'),
+      token: readRequiredString(targetRaw.token, 'target.token'),
+      recipient: readOptionalString(targetRaw.recipient),
+      nativeAddress: readOptionalString(targetRaw.nativeAddress),
+    },
+  };
+}
+
+function parseErc7683Order(value: unknown): Erc7683Order {
+  if (!value || typeof value !== 'object') throw new Error('erc7683 order payload required');
+  return value as Erc7683Order;
+}
+
+function parseSolverRegistration(value: unknown) {
+  if (!value || typeof value !== 'object') throw new Error('solver registration payload required');
+  const raw = value as Record<string, unknown>;
+  return {
+    id: readRequiredString(raw.id, 'id'),
+    type: (readRequiredString(raw.type, 'type') as SolverType),
+    displayName: readRequiredString(raw.displayName, 'displayName'),
+    contactEmail: readOptionalString(raw.contactEmail),
+    capabilities: raw.capabilities && typeof raw.capabilities === 'object'
+      ? raw.capabilities as Record<string, unknown>
+      : {},
+    reliability: raw.reliability && typeof raw.reliability === 'object'
+      ? raw.reliability as Record<string, unknown>
+      : undefined,
+    active: Boolean(raw.active),
+  };
+}
+
+function parseNumberArray(value: unknown): number[] {
+  if (!Array.isArray(value)) return [];
+  return value
+    .map((entry) => Number(entry))
+    .filter((entry) => Number.isInteger(entry) && entry > 0);
+}
+
+function parseTokensByChain(value: unknown): Record<number, string[]> | undefined {
+  if (!value || typeof value !== 'object') return undefined;
+  const out: Record<number, string[]> = {};
+  for (const [chainId, tokens] of Object.entries(value as Record<string, unknown>)) {
+    if (!Array.isArray(tokens)) continue;
+    const parsed = tokens
+      .map((token) => readOptionalString(token))
+      .filter((token): token is string => Boolean(token));
+    if (parsed.length) out[Number(chainId)] = parsed;
+  }
+  return Object.keys(out).length ? out : undefined;
+}
+
+function readRequiredString(value: unknown, field: string): string {
+  const parsed = readOptionalString(value);
+  if (!parsed) throw new Error(`${field} is required`);
+  return parsed;
+}
+
+async function assertActiveSolver(
+  repo: SolversRepository | undefined,
+  solverId: string | undefined,
+): Promise<void> {
+  if (!repo || !solverId) return;
+  const solver = await repo.get(solverId);
+  if (!solver) throw new Error(`solver ${solverId} is not registered`);
+  if (!solver.active) throw new Error(`solver ${solverId} is not active`);
 }

@@ -12,6 +12,13 @@ import { IntentService, IntentLifecycleError } from '../services/IntentService';
 import { QuoteEngine } from '../services/QuoteEngine';
 import { buildSelectedOfferIntegration } from '../services/DirectRailIntegrationBuilder';
 import { ComposedIntentStatus, Intent, IntentStatus, Rail } from '../types';
+import type { BasketQuoteEngine } from '../services/BasketQuoteEngine';
+import type { BasketStatusEngine } from '../services/BasketStatusEngine';
+import type { WalletScanner } from '../services/WalletScanner';
+import type { WalletLiquidator } from '../services/WalletLiquidator';
+import type { Erc7683Adapter, Erc7683Order } from '../services/Erc7683Adapter';
+import type { SolversRepository, SolverType } from '../db/SolversRepository';
+import type { IntentBasket } from '../core/IntentBasket';
 import { parseOfferSelection, parseQuoteRequest, serializeGasZipComposition, serializeOfferSet, serializeQuote } from './quoteCodec';
 import { buildIntentActionId, buildIntentActionMessage, IntentAction, SIGNATURE_WINDOW_MS } from '../utils/intentActionAuth';
 import { getRailVariantLabel } from '../rails/registry';
@@ -55,6 +62,12 @@ interface StatusApiOptions {
   layerZeroValueTransferApiClient?: LayerZeroValueTransferApiHttpClient;
   rpcProviderRegistry?: Pick<RpcProviderRegistry, 'getProvider' | 'getReadProvider'>;
   idempotency?: import('../db/IdempotencyStore').IdempotencyStore;
+  basketQuoteEngine?: BasketQuoteEngine;
+  basketStatusEngine?: BasketStatusEngine;
+  walletScanner?: WalletScanner;
+  walletLiquidator?: WalletLiquidator;
+  erc7683Adapter?: Erc7683Adapter;
+  solversRepository?: SolversRepository;
 }
 
 class MemoryIntentActionReplayStore {
@@ -253,6 +266,12 @@ export function buildStatusAPI(
     options.layerZeroValueTransferApiClient ?? new LayerZeroValueTransferApiClient();
   const rpcProviderRegistry = options.rpcProviderRegistry ?? new RpcProviderRegistry();
   const idempotency = options.idempotency;
+  const basketQuoteEngine = options.basketQuoteEngine;
+  const basketStatusEngine = options.basketStatusEngine;
+  const walletScanner = options.walletScanner;
+  const walletLiquidator = options.walletLiquidator;
+  const erc7683Adapter = options.erc7683Adapter;
+  const solversRepository = options.solversRepository;
 
   app.use((req, res, next) => {
     res.setHeader('Access-Control-Allow-Origin', process.env.VPS_CORS_ORIGIN ?? '*');
@@ -343,6 +362,183 @@ export function buildStatusAPI(
       const msg = String(err);
       const code = msg.toLowerCase().includes('calldata') || msg.toLowerCase().includes('routerv1') ? 503 : 400;
       res.status(code).json({ error: msg });
+    }
+  });
+
+  router.post('/basket/quote', async (req: Request, res: Response) => {
+    if (!basketQuoteEngine) return res.status(503).json({ error: 'BASKETS_UNAVAILABLE' });
+    try {
+      // Agent-facing Phase 4 surfaces mirror the partner features, but they
+      // stay on the public `/api/v1/*` namespace and use `routeSource=agent-sdk`.
+      const basket = parseIntentBasket(req.body?.basket ?? req.body);
+      const result = await basketQuoteEngine.quote(basket, buildAgentExecutionContext(req));
+      if ('error' in result) return res.status(400).json(result);
+      res.json(result);
+    } catch (err) {
+      res.status(400).json({ error: String(err) });
+    }
+  });
+
+  router.post('/basket/execute', async (req: Request, res: Response) => {
+    if (!basketQuoteEngine) return res.status(503).json({ error: 'BASKETS_UNAVAILABLE' });
+    try {
+      const basket = parseIntentBasket(req.body?.basket ?? req.body);
+      const userAddress = typeof req.body?.userAddress === 'string' ? req.body.userAddress.trim() : basket.inputs[0]?.wallet;
+      if (!userAddress) return res.status(400).json({ error: 'userAddress is required' });
+      const plan = await basketQuoteEngine.executeBasket(
+        basket,
+        userAddress,
+        {
+          partnerApiKey: readOptionalString(req.body?.partnerApiKey),
+          partnerId: readOptionalString(req.body?.partnerId),
+          integratorId: readOptionalString(req.body?.integratorId),
+          agentId: readOptionalString(req.body?.agentId),
+          solverId: readOptionalString(req.body?.solverId),
+          routeSource: 'agent-sdk',
+        },
+        buildAgentExecutionContext(req),
+        {
+          basketId: readOptionalString(req.body?.basketId),
+          legIndexes: parseNumberArray(req.body?.legIndexes),
+          mode: req.body?.mode === 'multicall' ? 'multicall' : 'sequential',
+        },
+      );
+      if ('error' in plan) return res.status(400).json(plan);
+      res.json(plan);
+    } catch (err) {
+      res.status(400).json({ error: String(err) });
+    }
+  });
+
+  router.get('/basket/:id/status', async (req: Request, res: Response) => {
+    if (!basketStatusEngine) return res.status(503).json({ error: 'BASKET_STATUS_UNAVAILABLE' });
+    try {
+      const basketId = String(req.params.id);
+      const status = await basketStatusEngine.getStatus(basketId, readOptionalString(req.query.partnerId));
+      res.json(status);
+    } catch (err) {
+      res.status(500).json({ error: String(err) });
+    }
+  });
+
+  router.post('/wallet/scan', async (req: Request, res: Response) => {
+    if (!walletScanner) return res.status(503).json({ error: 'WALLET_SCAN_UNAVAILABLE' });
+    try {
+      const result = await walletScanner.scan(
+        parseWalletScanRequest(req.body),
+        buildAgentExecutionContext(req),
+      );
+      res.json(result);
+    } catch (err) {
+      res.status(400).json({ error: String(err) });
+    }
+  });
+
+  router.post('/wallet/liquidate/quote', async (req: Request, res: Response) => {
+    if (!walletLiquidator) return res.status(503).json({ error: 'WALLET_LIQUIDATOR_UNAVAILABLE' });
+    try {
+      const result = await walletLiquidator.quote(
+        parseWalletLiquidationRequest(req.body),
+        buildAgentExecutionContext(req),
+      );
+      if ('error' in result) return res.status(400).json(result);
+      res.json(result);
+    } catch (err) {
+      res.status(400).json({ error: String(err) });
+    }
+  });
+
+  router.post('/wallet/liquidate/execute', async (req: Request, res: Response) => {
+    if (!walletLiquidator) return res.status(503).json({ error: 'WALLET_LIQUIDATOR_UNAVAILABLE' });
+    try {
+      const result = await walletLiquidator.execute(
+        parseWalletLiquidationRequest(req.body),
+        {
+          partnerApiKey: readOptionalString(req.body?.partnerApiKey),
+          partnerId: readOptionalString(req.body?.partnerId),
+          integratorId: readOptionalString(req.body?.integratorId),
+          agentId: readOptionalString(req.body?.agentId),
+          solverId: readOptionalString(req.body?.solverId),
+          routeSource: 'agent-sdk',
+        },
+        buildAgentExecutionContext(req),
+        {
+          mode: req.body?.mode === 'multicall' ? 'multicall' : 'sequential',
+        },
+      );
+      if ('error' in result) return res.status(400).json(result);
+      res.json(result);
+    } catch (err) {
+      res.status(400).json({ error: String(err) });
+    }
+  });
+
+  router.post('/erc7683/resolve', async (req: Request, res: Response) => {
+    if (!erc7683Adapter) return res.status(503).json({ error: 'ERC7683_UNAVAILABLE' });
+    try {
+      await assertActiveSolver(solversRepository, readOptionalString(req.body?.solverId));
+      const result = await erc7683Adapter.resolve(
+        parseErc7683Order(req.body),
+        buildAgentExecutionContext(req),
+      );
+      if ('error' in result) return res.status(400).json(result);
+      res.json(result);
+    } catch (err) {
+      res.status(400).json({ error: String(err) });
+    }
+  });
+
+  router.post('/erc7683/open', async (req: Request, res: Response) => {
+    if (!erc7683Adapter) return res.status(503).json({ error: 'ERC7683_UNAVAILABLE' });
+    try {
+      await assertActiveSolver(solversRepository, readOptionalString(req.body?.solverId));
+      const result = await erc7683Adapter.open(
+        parseErc7683Order(req.body),
+        {
+          partnerId: readOptionalString(req.body?.partnerId),
+          integratorId: readOptionalString(req.body?.integratorId),
+          agentId: readOptionalString(req.body?.agentId),
+          solverId: readOptionalString(req.body?.solverId),
+        },
+        buildAgentExecutionContext(req),
+      );
+      if ('error' in result) return res.status(400).json(result);
+      res.json(result);
+    } catch (err) {
+      res.status(400).json({ error: String(err) });
+    }
+  });
+
+  router.get('/solvers', async (req: Request, res: Response) => {
+    if (!solversRepository) return res.status(503).json({ error: 'SOLVER_REGISTRY_UNAVAILABLE' });
+    try {
+      const type = readOptionalString(req.query.type) as SolverType | undefined;
+      const activeOnly = req.query.activeOnly === 'true' || req.query.activeOnly === '1';
+      res.json({ solvers: await solversRepository.listWithStats({ type, activeOnly }) });
+    } catch (err) {
+      res.status(400).json({ error: String(err) });
+    }
+  });
+
+  router.post('/solvers/register', async (req: Request, res: Response) => {
+    if (!solversRepository) return res.status(503).json({ error: 'SOLVER_REGISTRY_UNAVAILABLE' });
+    try {
+      const record = await solversRepository.upsert(parseSolverRegistration(req.body));
+      res.status(201).json(record);
+    } catch (err) {
+      res.status(400).json({ error: String(err) });
+    }
+  });
+
+  router.post('/solvers/:id/active', async (req: Request, res: Response) => {
+    if (!solversRepository) return res.status(503).json({ error: 'SOLVER_REGISTRY_UNAVAILABLE' });
+    try {
+      const id = String(req.params.id);
+      const active = Boolean(req.body?.active);
+      await solversRepository.setActive(id, active);
+      res.json({ id, active });
+    } catch (err) {
+      res.status(400).json({ error: String(err) });
     }
   });
 
@@ -1092,5 +1288,192 @@ export function buildStatusAPI(
       return;
     }
     intentActionReplayStore.release(actionId);
+  }
+
+  function buildAgentExecutionContext(req: Request) {
+    const body = req.body && typeof req.body === 'object'
+      ? req.body as Record<string, unknown>
+      : {};
+    return {
+      partnerId: readOptionalString(body.partnerId),
+      integratorId: readOptionalString(body.integratorId),
+      agentId: readOptionalString(body.agentId),
+      solverId: readOptionalString(body.solverId),
+      routeSource: 'agent-sdk' as const,
+      requestId: typeof req.headers['x-request-id'] === 'string' ? req.headers['x-request-id'] : undefined,
+      receivedAt: Date.now(),
+      rpcProviders: parseRpcOverrides(body.rpcProviders),
+    };
+  }
+
+  function parseIntentBasket(value: unknown): IntentBasket {
+    if (!value || typeof value !== 'object') throw new Error('basket payload required');
+    const raw = value as Record<string, unknown>;
+    const mode = readOptionalString(raw.mode) as IntentBasket['mode'] | undefined;
+    const inputs = Array.isArray(raw.inputs) ? raw.inputs.map((entry) => parseBasketInput(entry)) : [];
+    const outputs = Array.isArray(raw.outputs) ? raw.outputs.map((entry) => parseBasketOutput(entry)) : [];
+    const constraints = raw.constraints && typeof raw.constraints === 'object'
+      ? raw.constraints as Record<string, unknown>
+      : {};
+    return {
+      basketId: readOptionalString(raw.basketId),
+      mode: mode ?? 'multi-to-one',
+      inputs,
+      outputs,
+      constraints: {
+        slippageBps: typeof constraints.slippageBps === 'number' ? constraints.slippageBps : undefined,
+        deadlineSeconds: typeof constraints.deadlineSeconds === 'number' ? constraints.deadlineSeconds : undefined,
+        maxLegs: typeof constraints.maxLegs === 'number' ? constraints.maxLegs : undefined,
+      },
+    };
+  }
+
+  function parseBasketInput(value: unknown): IntentBasket['inputs'][number] {
+    if (!value || typeof value !== 'object') throw new Error('basket input must be an object');
+    const raw = value as Record<string, unknown>;
+    return {
+      chainId: parsePositiveInt(raw.chainId, 'input.chainId'),
+      token: readRequiredString(raw.token, 'input.token'),
+      amount: parseBigIntString(raw.amount, 'input.amount'),
+      wallet: readRequiredString(raw.wallet, 'input.wallet'),
+      decimals: typeof raw.decimals === 'number' ? raw.decimals : undefined,
+      slippageBps: typeof raw.slippageBps === 'number' ? raw.slippageBps : undefined,
+    };
+  }
+
+  function parseBasketOutput(value: unknown): IntentBasket['outputs'][number] {
+    if (!value || typeof value !== 'object') throw new Error('basket output must be an object');
+    const raw = value as Record<string, unknown>;
+    return {
+      chainId: parsePositiveInt(raw.chainId, 'output.chainId'),
+      token: readRequiredString(raw.token, 'output.token'),
+      decimals: typeof raw.decimals === 'number' ? raw.decimals : undefined,
+      allocationBps: typeof raw.allocationBps === 'number' ? raw.allocationBps : undefined,
+      fixedAmount: readOptionalString(raw.fixedAmount),
+      recipient: readOptionalString(raw.recipient),
+      nativeAddress: readOptionalString(raw.nativeAddress),
+    };
+  }
+
+  function parseWalletScanRequest(value: unknown): { wallet: string; chainIds: number[]; tokensByChain?: Record<number, string[]> } {
+    if (!value || typeof value !== 'object') throw new Error('wallet scan payload required');
+    const raw = value as Record<string, unknown>;
+    const chainIds = parseNumberArray(raw.chainIds);
+    if (chainIds.length === 0) throw new Error('chainIds must contain at least one chain');
+    return {
+      wallet: readRequiredString(raw.wallet, 'wallet'),
+      chainIds,
+      tokensByChain: parseTokensByChain(raw.tokensByChain),
+    };
+  }
+
+  function parseWalletLiquidationRequest(value: unknown) {
+    if (!value || typeof value !== 'object') throw new Error('wallet liquidation payload required');
+    const raw = value as Record<string, unknown>;
+    const target = raw.target;
+    if (!target || typeof target !== 'object') throw new Error('target required');
+    const targetRaw = target as Record<string, unknown>;
+    return {
+      wallet: readRequiredString(raw.wallet, 'wallet'),
+      chainIds: parseNumberArray(raw.chainIds),
+      tokensByChain: parseTokensByChain(raw.tokensByChain),
+      minBalanceWei: readOptionalString(raw.minBalanceWei),
+      slippageBps: typeof raw.slippageBps === 'number' ? raw.slippageBps : undefined,
+      target: {
+        chainId: parsePositiveInt(targetRaw.chainId, 'target.chainId'),
+        token: readRequiredString(targetRaw.token, 'target.token'),
+        recipient: readOptionalString(targetRaw.recipient),
+        nativeAddress: readOptionalString(targetRaw.nativeAddress),
+      },
+    };
+  }
+
+  function parseErc7683Order(value: unknown): Erc7683Order {
+    if (!value || typeof value !== 'object') throw new Error('erc7683 order payload required');
+    return value as Erc7683Order;
+  }
+
+  function parseSolverRegistration(value: unknown) {
+    if (!value || typeof value !== 'object') throw new Error('solver registration payload required');
+    const raw = value as Record<string, unknown>;
+    return {
+      id: readRequiredString(raw.id, 'id'),
+      type: readRequiredString(raw.type, 'type') as SolverType,
+      displayName: readRequiredString(raw.displayName, 'displayName'),
+      contactEmail: readOptionalString(raw.contactEmail),
+      capabilities: raw.capabilities && typeof raw.capabilities === 'object'
+        ? raw.capabilities as Record<string, unknown>
+        : {},
+      reliability: raw.reliability && typeof raw.reliability === 'object'
+        ? raw.reliability as Record<string, unknown>
+        : undefined,
+      active: Boolean(raw.active),
+    };
+  }
+
+  function parseNumberArray(value: unknown): number[] {
+    if (!Array.isArray(value)) return [];
+    return value
+      .map((entry) => Number(entry))
+      .filter((entry) => Number.isInteger(entry) && entry > 0);
+  }
+
+  function parseTokensByChain(value: unknown): Record<number, string[]> | undefined {
+    if (!value || typeof value !== 'object') return undefined;
+    const out: Record<number, string[]> = {};
+    for (const [chainId, tokens] of Object.entries(value as Record<string, unknown>)) {
+      if (!Array.isArray(tokens)) continue;
+      const parsed = tokens
+        .map((entry) => readOptionalString(entry))
+        .filter((entry): entry is string => Boolean(entry));
+      if (parsed.length) out[Number(chainId)] = parsed;
+    }
+    return Object.keys(out).length ? out : undefined;
+  }
+
+  function parseRpcOverrides(value: unknown) {
+    if (!value || typeof value !== 'object') return undefined;
+    const out: Record<number, string> = {};
+    for (const [chainId, url] of Object.entries(value as Record<string, unknown>)) {
+      if (typeof url !== 'string' || !url.trim()) continue;
+      out[Number(chainId)] = url.trim();
+    }
+    return Object.keys(out).length ? out : undefined;
+  }
+
+  function readOptionalString(value: unknown): string | undefined {
+    if (typeof value !== 'string') return undefined;
+    const trimmed = value.trim();
+    return trimmed ? trimmed : undefined;
+  }
+
+  function readRequiredString(value: unknown, field: string): string {
+    const parsed = readOptionalString(value);
+    if (!parsed) throw new Error(`${field} is required`);
+    return parsed;
+  }
+
+  function parsePositiveInt(value: unknown, field: string): number {
+    const parsed = Number(value);
+    if (!Number.isInteger(parsed) || parsed <= 0) throw new Error(`${field} must be a positive integer`);
+    return parsed;
+  }
+
+  function parseBigIntString(value: unknown, field: string): string {
+    const normalized = typeof value === 'string' ? value.trim() : String(value ?? '');
+    if (!/^\d+$/.test(normalized) || BigInt(normalized) <= 0n) {
+      throw new Error(`${field} must be a positive integer string`);
+    }
+    return normalized;
+  }
+
+  async function assertActiveSolver(
+    repo: SolversRepository | undefined,
+    solverId: string | undefined,
+  ): Promise<void> {
+    if (!repo || !solverId) return;
+    const solver = await repo.get(solverId);
+    if (!solver) throw new Error(`solver ${solverId} is not registered`);
+    if (!solver.active) throw new Error(`solver ${solverId} is not active`);
   }
 }

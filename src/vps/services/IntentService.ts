@@ -59,6 +59,8 @@ export class IntentService {
       integratorId?: string;
       agentId?: string;
       routeSource?: Intent['routeSource'];
+      parentBasketId?: string;
+      solverId?: string;
     },
   ): Promise<Intent> {
     const normalized = typeof metadata === 'string'
@@ -74,6 +76,8 @@ export class IntentService {
       integratorId: normalized.integratorId,
       agentId: normalized.agentId,
       routeSource: normalized.routeSource,
+      parentBasketId: normalized.parentBasketId,
+      solverId: normalized.solverId,
       createdAt: Date.now(),
       updatedAt: Date.now(),
       retryCount: 0,
@@ -99,6 +103,8 @@ export class IntentService {
       integratorId?: string;
       agentId?: string;
       routeSource?: Intent['routeSource'];
+      parentBasketId?: string;
+      solverId?: string;
     },
   ): Promise<Intent> {
     const quote = this.materializeSelectedOfferQuote(offer);

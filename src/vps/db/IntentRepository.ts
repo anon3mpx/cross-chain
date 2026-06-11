@@ -109,6 +109,8 @@ export class IntentRepository {
           integratorId: intent.integratorId,
           agentId: intent.agentId,
           routeSource: intent.routeSource,
+          parentBasketId: intent.parentBasketId,
+          solverId: intent.solverId,
           quote: toDbJson(intent.quote),
           createdAt: intent.createdAt,
           updatedAt: intent.updatedAt,
@@ -176,6 +178,8 @@ export class IntentRepository {
           integratorId: updated.integratorId,
           agentId: updated.agentId,
           routeSource: updated.routeSource,
+          parentBasketId: updated.parentBasketId,
+          solverId: updated.solverId,
           updatedAt: updated.updatedAt,
         },
         actor: options.actor,
@@ -203,7 +207,7 @@ export class IntentRepository {
       `SELECT intent_id, status, quote, user_address,
               src_tx_hash, rail_tx_id, dst_tx_hash,
               created_at, updated_at, retry_count, fallback_rail,
-              error_message, partner_api_key, partner_id, integrator_id, agent_id, route_source
+              error_message, partner_api_key, partner_id, integrator_id, agent_id, route_source, parent_basket_id, solver_id
        FROM intents
        WHERE intent_id = $1`,
       [intentId],
@@ -218,7 +222,7 @@ export class IntentRepository {
       `SELECT intent_id, status, quote, user_address,
               src_tx_hash, rail_tx_id, dst_tx_hash,
               created_at, updated_at, retry_count, fallback_rail,
-              error_message, partner_api_key, partner_id, integrator_id, agent_id, route_source
+              error_message, partner_api_key, partner_id, integrator_id, agent_id, route_source, parent_basket_id, solver_id
        FROM intents
        WHERE quote->>'layerZeroValueTransferApiQuoteId' = $1
        ORDER BY updated_at DESC
@@ -235,7 +239,7 @@ export class IntentRepository {
       `SELECT intent_id, status, quote, user_address,
               src_tx_hash, rail_tx_id, dst_tx_hash,
               created_at, updated_at, retry_count, fallback_rail,
-              error_message, partner_api_key, partner_id, integrator_id, agent_id, route_source
+              error_message, partner_api_key, partner_id, integrator_id, agent_id, route_source, parent_basket_id, solver_id
        FROM intents
        WHERE status = $1
        ORDER BY updated_at DESC
@@ -274,6 +278,29 @@ export class IntentRepository {
 
     if (rows.length === 0) return null;
     return this.rowToRefundCase(rows[0]);
+  }
+
+  async findIntentsByBasket(basketId: string, partnerId?: string): Promise<Intent[]> {
+    const params: unknown[] = [basketId];
+    const partnerClause = partnerId
+      ? (() => {
+          params.push(partnerId);
+          return ` AND partner_id = $${params.length}`;
+        })()
+      : '';
+
+    const { rows } = await this.pool.query(
+      `SELECT intent_id, status, quote, user_address,
+              src_tx_hash, rail_tx_id, dst_tx_hash,
+              created_at, updated_at, retry_count, fallback_rail,
+              error_message, partner_api_key, partner_id, integrator_id, agent_id, route_source, parent_basket_id, solver_id
+       FROM intents
+       WHERE parent_basket_id = $1${partnerClause}
+       ORDER BY created_at ASC`,
+      params,
+    );
+
+    return rows.map((row) => this.rowToIntent(row));
   }
 
   async upsertRefundCase(input: RefundCaseUpsert): Promise<IntentRefundCase> {
@@ -426,7 +453,7 @@ export class IntentRepository {
       `SELECT intent_id, status, quote, user_address,
               src_tx_hash, rail_tx_id, dst_tx_hash,
               created_at, updated_at, retry_count, fallback_rail,
-              error_message, partner_api_key, partner_id, integrator_id, agent_id, route_source
+              error_message, partner_api_key, partner_id, integrator_id, agent_id, route_source, parent_basket_id, solver_id
        FROM intents
        WHERE intent_id = $1
        FOR UPDATE`,
@@ -441,14 +468,14 @@ export class IntentRepository {
     const row = toIntentRow(intent);
     try {
       await client.query(
-        `INSERT INTO intents (
+         `INSERT INTO intents (
            intent_id, status, user_address, src_chain_id, dst_chain_id,
            rail, fallback_rail, quote, src_tx_hash, rail_tx_id, dst_tx_hash,
-           retry_count, error_message, partner_api_key, partner_id, integrator_id, agent_id, route_source, created_at, updated_at
+           retry_count, error_message, partner_api_key, partner_id, integrator_id, agent_id, route_source, parent_basket_id, solver_id, created_at, updated_at
          ) VALUES (
            $1, $2, $3, $4, $5,
            $6, $7, $8::jsonb, $9, $10, $11,
-           $12, $13, $14, $15, $16, $17, $18, $19, $20
+           $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22
          )
          ON CONFLICT (intent_id)
          DO UPDATE SET
@@ -469,6 +496,8 @@ export class IntentRepository {
            integrator_id = EXCLUDED.integrator_id,
            agent_id = EXCLUDED.agent_id,
            route_source = EXCLUDED.route_source,
+           parent_basket_id = EXCLUDED.parent_basket_id,
+           solver_id = EXCLUDED.solver_id,
            updated_at = EXCLUDED.updated_at,
            version = intents.version + 1`,
         [
@@ -490,6 +519,8 @@ export class IntentRepository {
           row.integrator_id,
           row.agent_id,
           row.route_source,
+          row.parent_basket_id,
+          row.solver_id,
           row.created_at,
           row.updated_at,
         ],
@@ -549,6 +580,8 @@ export class IntentRepository {
       integratorId: row.integrator_id ?? undefined,
       agentId: row.agent_id ?? undefined,
       routeSource: row.route_source ?? undefined,
+      parentBasketId: row.parent_basket_id ?? undefined,
+      solverId: row.solver_id ?? undefined,
     };
   }
 
@@ -611,6 +644,8 @@ export class IntentRepository {
       integratorId: intent.integratorId ?? null,
       agentId: intent.agentId ?? null,
       routeSource: intent.routeSource ?? null,
+      parentBasketId: intent.parentBasketId ?? null,
+      solverId: intent.solverId ?? null,
     });
 
     return normalize(current) !== normalize(updated);

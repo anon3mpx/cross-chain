@@ -117,6 +117,7 @@ export class ReliabilityRecorder {
       integratorId: (intent as unknown as { integratorId?: string }).integratorId,
       agentId: (intent as unknown as { agentId?: string }).agentId,
       routeSource: (intent as unknown as { routeSource?: string }).routeSource,
+      solverId: (intent as unknown as { solverId?: string }).solverId,
       settledAt,
     };
   }

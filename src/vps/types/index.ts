@@ -401,6 +401,8 @@ export interface Intent {
   integratorId?:    string;
   agentId?:         string;
   routeSource?:     'partner-api' | 'ui' | 'agent-sdk' | 'external-solver' | 'internal';
+  parentBasketId?:  string;
+  solverId?:        string;
   actualOut?:       bigint;
   actualFeeUsd?:    number;
 }

@@ -153,6 +153,8 @@ export function toIntentRow(intent: Intent) {
     integrator_id: intent.integratorId ?? null,
     agent_id: intent.agentId ?? null,
     route_source: intent.routeSource ?? null,
+    parent_basket_id: intent.parentBasketId ?? null,
+    solver_id: intent.solverId ?? null,
     created_at: new Date(intent.createdAt),
     updated_at: new Date(intent.updatedAt),
   };

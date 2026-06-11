@@ -20,6 +20,8 @@ test('collectMigrationFiles returns schema first and SQL migrations in lexical o
       'migrations/20260605_add_reliability_and_attribution.sql',
       'migrations/20260609_add_hyperlane_nexus_rail_constraints.sql',
       'migrations/20260610_add_phase3_bridge_rail_constraints.sql',
+      'migrations/20260611_add_phase4_platform_tables.sql',
+      'migrations/20260611_complete_phase4_platform_surfaces.sql',
     ],
   );
 });
