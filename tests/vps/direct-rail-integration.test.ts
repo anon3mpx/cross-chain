@@ -9,6 +9,9 @@ const THOR_ROUTER_IFACE = new Interface([
 const HYPERLANE_WARP_ROUTE_IFACE = new Interface([
   'function transferRemote(uint32 destinationDomain, bytes32 recipient, uint256 amount) payable returns (bytes32)',
 ]);
+const OPTIMISM_L2_BRIDGE_IFACE = new Interface([
+  'function bridgeETHTo(address _to,uint32 _minGasLimit,bytes _extraData) external payable',
+]);
 
 test('provider_direct THOR offers return deposit instructions instead of RouterV1 calldata', async () => {
   const integration = await buildSelectedOfferIntegration('0x' + '11'.repeat(32), {
@@ -286,6 +289,7 @@ test('provider_direct Chainflip offers return deposit helpers and ERC-20 transfe
       depositAddress: '0x4444444444444444444444444444444444444444',
       channelId: 'cf-channel-1',
       expectedAmountOut: '990000',
+      refundAddress: 'bc1qchainfliprefund',
       quote: {
         srcChainId: 1,
         tokenIn: '0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48',
@@ -299,6 +303,7 @@ test('provider_direct Chainflip offers return deposit helpers and ERC-20 transfe
   assert.equal(integration.action.depositAddress, '0x4444444444444444444444444444444444444444');
   assert.equal(integration.action.channelId, 'cf-channel-1');
   assert.equal(integration.action.expectedAmountOut, '990000');
+  assert.equal(integration.action.refundAddress, 'bc1qchainfliprefund');
   assert.equal(integration.tx?.to, '0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48');
   assert.equal(integration.tx?.chainId, 1);
   assert.equal(integration.tx?.value, '0');
@@ -367,4 +372,72 @@ test('provider_direct TeleSwap offers return deposit helpers for direct source d
   assert.equal(integration.tx?.to, '0x1111111111111111111111111111111111111111');
   assert.equal(integration.tx?.value, '0');
   assert.equal(integration.tx?.chainId, 137);
+});
+
+test('provider_direct native bridge offers return Optimism bridge tx helpers and approvals', async () => {
+  const integration = await buildSelectedOfferIntegration('0x' + 'dd'.repeat(32), {
+    rail: 'OPTIMISM_NATIVE_BRIDGE',
+    offerType: 'optimism_native_bridge_direct',
+    executionMode: 'provider_direct',
+    execution: {
+      provider: 'optimism_standard_bridge',
+      direction: 'deposit',
+      settlementKind: 'erc20',
+      requiresPatient: false,
+      approvals: [{
+        token: '0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48',
+        spender: '0x99C9fc46f92E8a1c0deC1b1747d010903E884bE1',
+        amount: '1000000',
+      }],
+      tx: {
+        to: '0x99C9fc46f92E8a1c0deC1b1747d010903E884bE1',
+        data: '0x',
+        value: '0',
+        chainId: 1,
+      },
+    },
+  } as any, '0x3333333333333333333333333333333333333333');
+
+  assert.equal(integration.mode, 'provider_direct');
+  assert.equal(integration.action.kind, 'optimism_standard_bridge');
+  assert.equal(integration.action.direction, 'deposit');
+  assert.equal(integration.action.settlementKind, 'erc20');
+  assert.equal(integration.approvals?.[0]?.spender, '0x99C9fc46f92E8a1c0deC1b1747d010903E884bE1');
+});
+
+test('provider_direct native bridge withdrawals preserve patient-only semantics in the tx helper', async () => {
+  const txData = OPTIMISM_L2_BRIDGE_IFACE.encodeFunctionData('bridgeETHTo', [
+    '0x3333333333333333333333333333333333333333',
+    200_000,
+    '0x',
+  ]);
+  const integration = await buildSelectedOfferIntegration('0x' + 'ee'.repeat(32), {
+    rail: 'OPTIMISM_NATIVE_BRIDGE',
+    offerType: 'optimism_native_bridge_direct',
+    executionMode: 'provider_direct',
+    execution: {
+      provider: 'optimism_standard_bridge',
+      direction: 'withdraw',
+      settlementKind: 'native',
+      challengePeriodSeconds: 604_800,
+      requiresPatient: true,
+      tx: {
+        to: '0x4200000000000000000000000000000000000010',
+        data: txData,
+        value: '1000000000000000',
+        chainId: 10,
+      },
+    },
+  } as any, '0x3333333333333333333333333333333333333333');
+
+  assert.equal(integration.mode, 'provider_direct');
+  assert.equal(integration.action.kind, 'optimism_standard_bridge');
+  assert.equal(integration.action.direction, 'withdraw');
+  assert.equal(integration.action.requiresPatient, true);
+  assert.equal(integration.action.challengePeriodSeconds, 604_800);
+  assert.equal(integration.tx?.to, '0x4200000000000000000000000000000000000010');
+  assert.equal(integration.tx?.value, '1000000000000000');
+
+  const decoded = OPTIMISM_L2_BRIDGE_IFACE.decodeFunctionData('bridgeETHTo', integration.tx!.data);
+  assert.equal(decoded._to.toLowerCase(), '0x3333333333333333333333333333333333333333');
 });

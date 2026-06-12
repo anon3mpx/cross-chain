@@ -37,8 +37,9 @@ export interface SwapOptions {
   from:         SwapFrom;
   to:           SwapTo;
   wallet:       string;    // User's EVM wallet address
+  refundAddress?: string;  // Required for provider-direct non-EVM source flows
   slippagePct?: number;    // Default 0.5%
-  urgency?:     'fast' | 'normal';
+  urgency?:     'fast' | 'normal' | 'patient';
   gasToken?:    string;    // Paymaster: pay gas in this token (default: native)
 }
 
@@ -325,6 +326,7 @@ export class RufloSDK {
         dstChainId:      opts.to.chainId,
         userAddress:     opts.wallet,
         nativeDstAddress: opts.to.nativeAddress,
+        refundAddress:   opts.refundAddress,
         urgency:         opts.urgency ?? 'normal',
         rpcProviders:    this._wireRpcOverrides(),
         integratorId:    this.integratorId,

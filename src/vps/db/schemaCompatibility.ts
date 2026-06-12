@@ -15,7 +15,7 @@ type ConstraintErrorLike = {
 };
 
 export function staleProviderDirectRailSchemaMessage(): string {
-  return 'Postgres schema is missing provider-direct rail support. Run `npm run db:migrate` against the live database before using Gas.zip, Hyperlane Nexus, Chainflip, Maya, or TeleSwap offers.';
+  return 'Postgres schema is missing provider-direct rail support. Run `npm run db:migrate` against the live database before using Gas.zip, Hyperlane Nexus, the Optimism native bridge, Chainflip, Maya, or TeleSwap offers.';
 }
 
 export async function assertPostgresRailSchemaCompatibility(client: PgQueryable): Promise<void> {
@@ -40,6 +40,7 @@ export async function assertPostgresRailSchemaCompatibility(client: PgQueryable)
       !def
       || !normalized.includes('GASZIP')
       || !normalized.includes('HYPERLANE_NEXUS')
+      || !normalized.includes('OPTIMISM_NATIVE_BRIDGE')
       || !normalized.includes('CHAINFLIP')
       || !normalized.includes('MAYA')
       || !normalized.includes('TELESWAP')
@@ -64,11 +65,13 @@ export function toFriendlyIntentPersistenceError(
   if ((
     rail === 'GASZIP'
     || rail === 'HYPERLANE_NEXUS'
+    || rail === 'OPTIMISM_NATIVE_BRIDGE'
     || rail === 'CHAINFLIP'
     || rail === 'MAYA'
     || rail === 'TELESWAP'
     || fallbackRail === 'GASZIP'
     || fallbackRail === 'HYPERLANE_NEXUS'
+    || fallbackRail === 'OPTIMISM_NATIVE_BRIDGE'
     || fallbackRail === 'CHAINFLIP'
     || fallbackRail === 'MAYA'
     || fallbackRail === 'TELESWAP'

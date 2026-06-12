@@ -23,6 +23,7 @@ export type SelectedOfferIntegration =
       memo: string;
       expiresAt: number;
       expectedAmountOut: string;
+      refundAddress?: string;
     };
     tx?: {
       to: string;
@@ -83,6 +84,7 @@ export type SelectedOfferIntegration =
       depositAddress: string;
       channelId: string;
       expectedAmountOut: string;
+      refundAddress?: string;
     };
     tx?: {
       to: string;
@@ -99,6 +101,7 @@ export type SelectedOfferIntegration =
       memo: string;
       expiresAt: number;
       expectedAmountOut: string;
+      refundAddress?: string;
     };
     tx?: {
       to: string;
@@ -114,8 +117,30 @@ export type SelectedOfferIntegration =
       depositAddress: string;
       swapId?: string;
       expectedAmountOut: string;
+      refundAddress?: string;
     };
     tx?: {
+      to: string;
+      data: string;
+      value: string;
+      chainId: number;
+    };
+  }
+  | {
+    mode: 'provider_direct';
+    action: {
+      kind: 'optimism_standard_bridge';
+      direction: 'deposit' | 'withdraw';
+      settlementKind: 'native' | 'erc20';
+      challengePeriodSeconds?: number;
+      requiresPatient: boolean;
+    };
+    approvals?: Array<{
+      token: string;
+      spender: string;
+      amount: string;
+    }>;
+    tx: {
       to: string;
       data: string;
       value: string;
@@ -189,6 +214,14 @@ function isTeleSwapProviderDirectOffer(offer: RailOffer): boolean {
   return offer.rail === 'TELESWAP' || offer.offerType === 'teleswap_direct';
 }
 
+function isOptimismNativeBridgeProviderDirectOffer(offer: RailOffer): boolean {
+  const provider = typeof offer.execution?.provider === 'string'
+    ? offer.execution.provider.toLowerCase()
+    : '';
+  if (provider === 'optimism_standard_bridge') return true;
+  return offer.rail === 'OPTIMISM_NATIVE_BRIDGE' || offer.offerType === 'optimism_native_bridge_direct';
+}
+
 function readLayerZeroValueTransferApiUserSteps(offer: RailOffer): LayerZeroValueTransferApiUserStep[] {
   const execution = offer.execution as Record<string, unknown>;
   const raw = execution.layerZeroValueTransferApiUserSteps ?? execution.userSteps;
@@ -238,6 +271,7 @@ export async function buildSelectedOfferIntegration(
     const memo = String(source.memo ?? '');
     const expiresAt = Number(source.expiry ?? 0);
     const expectedAmountOut = String(source.expected_amount_out ?? '');
+    const refundAddress = String(source.refund_address ?? executionQuote.refundAddress ?? '').trim();
 
     const router = String(source.router ?? (offer.execution as Record<string, unknown>).router ?? '');
     const amountInRaw = executionQuote.amountIn;
@@ -260,6 +294,7 @@ export async function buildSelectedOfferIntegration(
         memo,
         expiresAt,
         expectedAmountOut,
+        ...(refundAddress ? { refundAddress } : {}),
       },
       ...(canBuildTx
         ? {
@@ -377,6 +412,7 @@ export async function buildSelectedOfferIntegration(
     const depositAddress = String(execution.depositAddress ?? '').trim();
     const channelId = String(execution.channelId ?? quote?.chainflipChannelId ?? '').trim();
     const expectedAmountOut = String(execution.expectedAmountOut ?? quote?.estimatedOut ?? '');
+    const refundAddress = String(execution.refundAddress ?? quote?.refundAddress ?? '').trim();
     const tokenIn = String(quote?.tokenIn ?? '').trim();
     const amountInRaw = quote?.amountIn;
     const amountIn = typeof amountInRaw === 'bigint'
@@ -397,6 +433,7 @@ export async function buildSelectedOfferIntegration(
         depositAddress,
         channelId,
         expectedAmountOut,
+        ...(refundAddress ? { refundAddress } : {}),
       },
       ...(tx ? { tx } : {}),
     };
@@ -409,6 +446,7 @@ export async function buildSelectedOfferIntegration(
     const memo = String(execution.memo ?? '').trim();
     const expiresAt = Number(execution.expiresAt ?? quote?.expiresAt ?? 0);
     const expectedAmountOut = String(execution.expectedAmountOut ?? quote?.estimatedOut ?? '');
+    const refundAddress = String(execution.refundAddress ?? quote?.refundAddress ?? '').trim();
     const routerAddress = String(execution.routerAddress ?? '').trim();
     const tokenIn = String(quote?.tokenIn ?? '').trim();
     const amountInRaw = quote?.amountIn;
@@ -446,6 +484,7 @@ export async function buildSelectedOfferIntegration(
         memo,
         expiresAt,
         expectedAmountOut,
+        ...(refundAddress ? { refundAddress } : {}),
       },
       ...(tx ? { tx } : {}),
     };
@@ -457,6 +496,7 @@ export async function buildSelectedOfferIntegration(
     const depositAddress = String(execution.depositAddress ?? '').trim();
     const swapId = String(execution.swapId ?? quote?.teleSwapSwapId ?? '').trim();
     const expectedAmountOut = String(execution.expectedAmountOut ?? quote?.estimatedOut ?? '');
+    const refundAddress = String(execution.refundAddress ?? quote?.refundAddress ?? '').trim();
     const tokenIn = String(quote?.tokenIn ?? '').trim();
     const amountInRaw = quote?.amountIn;
     const amountIn = typeof amountInRaw === 'bigint'
@@ -476,8 +516,44 @@ export async function buildSelectedOfferIntegration(
         depositAddress,
         ...(swapId ? { swapId } : {}),
         expectedAmountOut,
+        ...(refundAddress ? { refundAddress } : {}),
       },
       ...(tx ? { tx } : {}),
+    };
+  }
+
+  if (isOptimismNativeBridgeProviderDirectOffer(offer)) {
+    const execution = offer.execution as Record<string, unknown>;
+    const rawTx = execution.tx as Record<string, unknown> | undefined;
+    const rawApprovals = Array.isArray(execution.approvals) ? execution.approvals as Array<Record<string, unknown>> : [];
+    if (!rawTx) {
+      throw new Error(`Selected native bridge offer ${offer.offerId} is missing transaction helper data`);
+    }
+
+    return {
+      mode: 'provider_direct',
+      action: {
+        kind: 'optimism_standard_bridge',
+        direction: execution.direction === 'withdraw' ? 'withdraw' : 'deposit',
+        settlementKind: execution.settlementKind === 'native' ? 'native' : 'erc20',
+        challengePeriodSeconds: typeof execution.challengePeriodSeconds === 'number'
+          ? execution.challengePeriodSeconds
+          : undefined,
+        requiresPatient: Boolean(execution.requiresPatient),
+      },
+      approvals: rawApprovals.length > 0
+        ? rawApprovals.map((approval) => ({
+          token: String(approval.token ?? ''),
+          spender: String(approval.spender ?? ''),
+          amount: String(approval.amount ?? ''),
+        }))
+        : undefined,
+      tx: {
+        to: String(rawTx.to ?? ''),
+        data: String(rawTx.data ?? '0x'),
+        value: String(rawTx.value ?? '0'),
+        chainId: Number(rawTx.chainId ?? 0),
+      },
     };
   }
 

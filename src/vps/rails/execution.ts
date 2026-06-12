@@ -9,6 +9,10 @@ import { GasZipMonitorWorker } from '../services/gaszip/GasZipMonitorWorker';
 import { ChainflipMonitorWorker } from '../services/chainflip/ChainflipMonitorWorker';
 import { MayaMonitorWorker } from '../services/maya/MayaMonitorWorker';
 import { TeleSwapMonitorWorker } from '../services/teleswap/TeleSwapMonitorWorker';
+import {
+  OptimismNativeBridgeMonitorWorker,
+  RpcOptimismNativeBridgeStatusClient,
+} from '../services/nativebridge/OptimismNativeBridgeMonitorWorker';
 import { RpcProviderRegistry } from '../services/RpcProviderRegistry';
 import { Rail } from '../types';
 import { getRailVariantLabel, RailVariantLabel } from './registry';
@@ -268,6 +272,54 @@ class HyperlaneNexusRailExecutionAdapter implements RailExecutionAdapter<Hyperla
   }
 }
 
+class OptimismNativeBridgeRailExecutionAdapter implements RailExecutionAdapter<OptimismNativeBridgeMonitorWorker> {
+  readonly rail = Rail.OPTIMISM_NATIVE_BRIDGE;
+
+  async start(
+    context: RailExecutionContext,
+    options: RailExecutionOptions,
+  ): Promise<RailExecutionHandle<OptimismNativeBridgeMonitorWorker>> {
+    const enabled = options.enabled?.[Rail.OPTIMISM_NATIVE_BRIDGE] ?? readBool('ENABLE_OPTIMISM_NATIVE_BRIDGE', true);
+    if (!enabled) {
+      return {
+        rail: this.rail,
+        mode: 'disabled',
+        label: 'optimism-native-bridge-monitor',
+        visualLabels: ['OPTIMISM_NATIVE_BRIDGE'],
+        async stop() {
+          return;
+        },
+      };
+    }
+
+    const worker = new OptimismNativeBridgeMonitorWorker(
+      context.intentService,
+      new RpcOptimismNativeBridgeStatusClient(async (chainId) => {
+        try {
+          const registry = context.rpcProviderRegistry ?? new RpcProviderRegistry();
+          return 'getProvider' in registry
+            ? registry.getProvider(chainId).asEthersProvider()
+            : registry.getReadProvider(chainId);
+        } catch {
+          return null;
+        }
+      }),
+    );
+    await worker.start();
+
+    return {
+      rail: this.rail,
+      mode: 'worker',
+      label: 'optimism-native-bridge-monitor',
+      visualLabels: ['OPTIMISM_NATIVE_BRIDGE'],
+      instance: worker,
+      async stop() {
+        worker.stop();
+      },
+    };
+  }
+}
+
 class ChainflipRailExecutionAdapter implements RailExecutionAdapter<ChainflipMonitorWorker> {
   readonly rail = Rail.CHAINFLIP;
 
@@ -381,6 +433,7 @@ const DEFAULT_ADAPTERS: RailExecutionAdapter[] = [
   new THORChainRailExecutionAdapter(),
   new LayerZeroValueTransferApiRailExecutionAdapter(),
   new HyperlaneNexusRailExecutionAdapter(),
+  new OptimismNativeBridgeRailExecutionAdapter(),
   new GasZipRailExecutionAdapter(),
   new ChainflipRailExecutionAdapter(),
   new MayaRailExecutionAdapter(),

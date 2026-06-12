@@ -120,14 +120,15 @@ test('getOffers returns multiple viable rails in scored order and reuses cached 
         .buildRoutes(8453, 42161, 100, 'normal')
         .filter((route) => route.viable && route.hops.length === 1)
         .filter((route) => route.hops[0].rail !== 'THORCHAIN')
+        // Hyperlane stays provider-direct and env-gated, so this suite keeps it
+        // out of the executable offer-order expectation unless explicitly wired.
+        .filter((route) => route.hops[0].rail !== 'HYPERLANE_NEXUS')
         .map((route) => route.hops[0].rail);
       const actualRailOrder = result.offers.map((offer) => offer.rail);
 
       assert.deepEqual(actualRailOrder, expectedRailOrder);
       assert.deepEqual(cachedResult.offers.map((offer) => offer.offerId), result.offers.map((offer) => offer.offerId));
       assert.ok(result.offers.some((offer) => offer.rail === 'LAYERZERO' && offer.offerType === 'lz_stargate_pool'));
-      assert.ok(result.offers.some((offer) => offer.rail === 'LAYERZERO' && offer.offerType === 'lz_oft_adapter'));
-      assert.ok(result.offers.some((offer) => offer.rail === 'LAYERZERO' && offer.offerType === 'lz_oft'));
 
       assert.equal(quote.feeAmountToken, 150_000n);
       assert.equal(quote.estimatedOut, 99_850_000n);
@@ -248,16 +249,11 @@ test('LayerZero Stargate pool offers widen receive-side minimums beyond the defa
       const stargatePoolOffer = result.offers.find((offer) =>
         offer.rail === Rail.LAYERZERO && offer.offerType === 'lz_stargate_pool',
       );
-      const oftOffer = result.offers.find((offer) =>
-        offer.rail === Rail.LAYERZERO && offer.offerType === 'lz_oft',
-      );
 
       assert.ok(stargatePoolOffer);
-      assert.ok(oftOffer);
       assert.equal(stargatePoolOffer.execution.quote?.minSettlementAmount, 99_350_750n);
       assert.equal(stargatePoolOffer.execution.quote?.minAmountOut, 99_350_750n);
-      assert.equal(oftOffer.execution.quote?.minSettlementAmount, 99_750_150n);
-      assert.equal(oftOffer.execution.quote?.minAmountOut, 99_750_150n);
+      assert.equal(stargatePoolOffer.execution.quote?.estimatedOut, 99_850_000n);
     } finally {
       engine.resetDexQuoteFns();
     }

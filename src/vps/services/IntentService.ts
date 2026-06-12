@@ -23,7 +23,11 @@ const STUCK_THRESHOLDS_MS: Record<Rail, number> = {
   [Rail.WORMHOLE]: 10 * 60 * 1000,
   [Rail.GASZIP]: 10 * 60 * 1000,
   [Rail.HYPERLANE_NEXUS]: 10 * 60 * 1000,
+  [Rail.OPTIMISM_NATIVE_BRIDGE]: 14 * 24 * 60 * 60 * 1000,
   [Rail.THORCHAIN]: 20 * 60 * 1000,
+  [Rail.CHAINFLIP]: 20 * 60 * 1000,
+  [Rail.MAYA]: 30 * 60 * 1000,
+  [Rail.TELESWAP]: 2 * 60 * 60 * 1000,
 };
 
 const TERMINAL_STATUSES = new Set<IntentStatus>([

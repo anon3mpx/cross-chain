@@ -98,6 +98,17 @@ import {
   getRailConfig,
   isCctpFastPluginId,
 } from '../rails/registry';
+import {
+  OPTIMISM_DEFAULT_MIN_GAS_LIMIT,
+  OPTIMISM_DEPOSIT_ETA_SECONDS,
+  OPTIMISM_L1_BRIDGE_IFACE,
+  OPTIMISM_L1_STANDARD_BRIDGE,
+  OPTIMISM_L2_BRIDGE_IFACE,
+  OPTIMISM_L2_STANDARD_BRIDGE,
+  OPTIMISM_NATIVE_BRIDGE_RAIL_PROVIDER,
+  OPTIMISM_NATIVE_TOKEN_SENTINEL,
+  resolveOptimismNativeBridgeRoute,
+} from './nativebridge/optimism';
 
 const CACHE_TTL_MS = 120_000; // Cache full quotes for 2 minutes. This is a tradeoff to reduce RPC calls while keeping quotes reasonably fresh.
 const LOWER_HEX_ADDR_RE = /^0x[0-9a-f]{40}$/;
@@ -724,6 +735,7 @@ export class QuoteEngine {
       tokenIn: req.tokenIn,
       tokenOut: req.tokenOut,
       destinationAddress: req.nativeDstAddress ?? req.userAddress,
+      refundAddress: this._defaultRefundAddress(req),
       routeAssetAlias: route.hops[0].routeAssetAlias,
       sourceTokenAddress: offer.sourceSettlementAsset.tokenAddress,
       destinationTokenAddress: offer.destinationSettlementAsset.tokenAddress,
@@ -838,7 +850,8 @@ export class QuoteEngine {
           && route.hops[0].rail !== Rail.CHAINFLIP
           && route.hops[0].rail !== Rail.MAYA
           && route.hops[0].rail !== Rail.TELESWAP
-          && route.hops[0].rail !== Rail.HYPERLANE_NEXUS,
+          && route.hops[0].rail !== Rail.HYPERLANE_NEXUS
+          && route.hops[0].rail !== Rail.OPTIMISM_NATIVE_BRIDGE,
       );
 
     const [
@@ -849,6 +862,7 @@ export class QuoteEngine {
       teleSwapOffer,
       layerZeroValueTransferApiOffer,
       hyperlaneNexusOffer,
+      optimismNativeBridgeOffer,
       gasZipOffer,
     ] = await Promise.all([
       Promise.all(candidateRoutes.map(async (route) => {
@@ -864,6 +878,7 @@ export class QuoteEngine {
       this._buildTeleSwapProviderDirectOffer(req),
       this._buildLayerZeroValueTransferApiProviderDirectOffer(req),
       this._buildHyperlaneNexusProviderDirectOffer(req),
+      this._buildOptimismNativeBridgeProviderDirectOffer(req),
       this._buildGasZipProviderDirectOffer(req),
     ]);
 
@@ -874,6 +889,7 @@ export class QuoteEngine {
     if (teleSwapOffer) offers.push(teleSwapOffer);
     if (layerZeroValueTransferApiOffer) offers.push(layerZeroValueTransferApiOffer);
     if (hyperlaneNexusOffer) offers.push(hyperlaneNexusOffer);
+    if (optimismNativeBridgeOffer) offers.push(optimismNativeBridgeOffer);
     if (gasZipOffer) offers.push(gasZipOffer);
     if (offers.length === 0) return null;
 
@@ -912,6 +928,7 @@ export class QuoteEngine {
       tokenIn: req.tokenIn,
       tokenOut: req.tokenOut,
       destinationAddress: req.nativeDstAddress ?? req.userAddress,
+      refundAddress: this._defaultRefundAddress(req),
     });
     if (!quoteRequest) return null;
 
@@ -977,6 +994,7 @@ export class QuoteEngine {
       swapDataSrc: '0x',
       swapDataDst: '0x',
       nativeDstAddress: req.nativeDstAddress,
+      refundAddress: this._defaultRefundAddress(req),
       thorAsset: thorQuote.quote.to_asset ?? undefined,
       minThorOutput,
       routeAsset,
@@ -1023,6 +1041,7 @@ export class QuoteEngine {
         inboundAddress: thorQuote.quote.inbound_address,
         memo: thorQuote.quote.memo,
         thorchainExpiry: thorQuote.quote.expiry,
+        refundAddress: quote.refundAddress,
         feeAmountToken: quote.feeAmountToken,
         providerFeeUSD: railFeeUSD,
         protocolFeeUSD,
@@ -1052,7 +1071,7 @@ export class QuoteEngine {
         tokenOut: req.tokenOut,
         amountIn: req.amountIn,
         destinationAddress,
-        refundAddress: req.srcChainId === 0 ? req.userAddress : undefined,
+        refundAddress: this._defaultRefundAddress(req),
       });
     } catch {
       return null;
@@ -1117,6 +1136,7 @@ export class QuoteEngine {
       swapDataSrc: '0x',
       swapDataDst: '0x',
       nativeDstAddress: req.nativeDstAddress,
+      refundAddress: this._defaultRefundAddress(req),
       chainflipChannelId: result.channelId,
     };
 
@@ -1156,6 +1176,7 @@ export class QuoteEngine {
         brokerFeeAmount: result.brokerFeeAmount.toString(),
         sourceFee: result.networkFees.sourceFee.toString(),
         destinationFee: result.networkFees.destinationFee.toString(),
+        refundAddress: quote.refundAddress,
       },
     };
   }
@@ -1239,6 +1260,7 @@ export class QuoteEngine {
       swapDataSrc: '0x',
       swapDataDst: '0x',
       nativeDstAddress: req.nativeDstAddress,
+      refundAddress: this._defaultRefundAddress(req),
     };
 
     return {
@@ -1276,6 +1298,7 @@ export class QuoteEngine {
         memo: result.memo,
         expectedAmountOut: result.expectedAmountOut.toString(),
         expiresAt: result.expiresAtUnix,
+        refundAddress: quote.refundAddress,
       },
     };
   }
@@ -1294,7 +1317,7 @@ export class QuoteEngine {
         tokenOut: req.tokenOut,
         amountIn: req.amountIn,
         destinationAddress: req.nativeDstAddress ?? req.userAddress,
-        refundAddress: req.srcChainId === 0 ? req.userAddress : undefined,
+        refundAddress: this._defaultRefundAddress(req),
       });
     } catch {
       return null;
@@ -1358,6 +1381,7 @@ export class QuoteEngine {
       swapDataSrc: '0x',
       swapDataDst: '0x',
       nativeDstAddress: req.nativeDstAddress,
+      refundAddress: this._defaultRefundAddress(req),
       teleSwapSwapId: result.swapId,
     };
 
@@ -1396,6 +1420,176 @@ export class QuoteEngine {
         protocolFeeAmount: result.protocolFeeAmount.toString(),
         dexRouter: result.dexRouter,
         swapId: result.swapId,
+        refundAddress: quote.refundAddress,
+      },
+    };
+  }
+
+  private async _buildOptimismNativeBridgeProviderDirectOffer(
+    req: QuoteRequest,
+  ): Promise<RailOffer | null> {
+    const route = resolveOptimismNativeBridgeRoute(
+      req.srcChainId,
+      req.dstChainId,
+      req.tokenIn,
+      req.tokenOut,
+    );
+    if (!route) return null;
+    if (route.requiresPatient && req.urgency !== 'patient') return null;
+
+    const config = getRailConfig(Rail.OPTIMISM_NATIVE_BRIDGE);
+    const intentId = this._makeIntentId();
+    const expiresAt = Math.floor(Date.now() / 1000) + 5 * 60;
+    const recipient = getAddress(req.userAddress);
+    const settlementToken = route.settlementSymbol === 'USDC'
+      ? SettlementToken.USDC
+      : route.settlementSymbol === 'USDT'
+        ? SettlementToken.USDT
+        : SettlementToken.ETH;
+    const sourceAsset = route.settlementKind === 'native'
+      ? this._buildOptimismNativeBridgeAssetRef(req.srcChainId, OPTIMISM_NATIVE_TOKEN_SENTINEL, route.settlementSymbol, route.decimals, 'native')
+      : this._buildOptimismNativeBridgeAssetRef(req.srcChainId, req.tokenIn, route.settlementSymbol, route.decimals, 'erc20');
+    const destinationAsset = route.settlementKind === 'native'
+      ? this._buildOptimismNativeBridgeAssetRef(req.dstChainId, OPTIMISM_NATIVE_TOKEN_SENTINEL, route.settlementSymbol, route.decimals, 'native')
+      : this._buildOptimismNativeBridgeAssetRef(req.dstChainId, req.tokenOut, route.settlementSymbol, route.decimals, 'erc20');
+    const amounts = this._buildBreakdownAmounts({
+      input: this._tokenAmount(req.srcChainId, req.tokenIn, req.amountIn, sourceAsset),
+      bridgeSettlement: this._tokenAmount(req.dstChainId, req.tokenOut, req.amountIn, destinationAsset),
+      minimumBridgeSettlement: this._tokenAmount(req.dstChainId, req.tokenOut, req.amountIn, destinationAsset),
+      output: this._tokenAmount(req.dstChainId, req.tokenOut, req.amountIn, destinationAsset),
+      minimumOutput: this._tokenAmount(req.dstChainId, req.tokenOut, req.amountIn, destinationAsset),
+    });
+
+    const tx = route.direction === 'deposit'
+      ? route.settlementKind === 'native'
+        ? {
+          to: OPTIMISM_L1_STANDARD_BRIDGE,
+          data: OPTIMISM_L1_BRIDGE_IFACE.encodeFunctionData('depositETHTo', [
+            recipient,
+            OPTIMISM_DEFAULT_MIN_GAS_LIMIT,
+            '0x',
+          ]),
+          value: req.amountIn.toString(),
+          chainId: req.srcChainId,
+        }
+        : {
+          to: OPTIMISM_L1_STANDARD_BRIDGE,
+          data: OPTIMISM_L1_BRIDGE_IFACE.encodeFunctionData('depositERC20To', [
+            route.l1Token,
+            route.l2Token,
+            recipient,
+            req.amountIn,
+            OPTIMISM_DEFAULT_MIN_GAS_LIMIT,
+            '0x',
+          ]),
+          value: '0',
+          chainId: req.srcChainId,
+        }
+      : route.settlementKind === 'native'
+        ? {
+          to: OPTIMISM_L2_STANDARD_BRIDGE,
+          data: OPTIMISM_L2_BRIDGE_IFACE.encodeFunctionData('bridgeETHTo', [
+            recipient,
+            OPTIMISM_DEFAULT_MIN_GAS_LIMIT,
+            '0x',
+          ]),
+          value: req.amountIn.toString(),
+          chainId: req.srcChainId,
+        }
+        : {
+          to: OPTIMISM_L2_STANDARD_BRIDGE,
+          data: OPTIMISM_L2_BRIDGE_IFACE.encodeFunctionData('bridgeERC20To', [
+            route.l2Token,
+            route.l1Token,
+            recipient,
+            req.amountIn,
+            OPTIMISM_DEFAULT_MIN_GAS_LIMIT,
+            '0x',
+          ]),
+          value: '0',
+          chainId: req.srcChainId,
+        };
+    const approvals = route.settlementKind === 'erc20'
+      ? [{
+        token: req.tokenIn,
+        spender: tx.to,
+        amount: req.amountIn.toString(),
+      }]
+      : undefined;
+
+    const quote: QuoteResult = {
+      intentId,
+      srcChainId: req.srcChainId,
+      dstChainId: req.dstChainId,
+      tokenIn: req.tokenIn,
+      tokenOut: req.tokenOut,
+      amountIn: req.amountIn,
+      estimatedOut: req.amountIn,
+      minAmountOut: req.amountIn,
+      minSrcSwapOut: 0n,
+      amounts,
+      feeAmountUSD: 0,
+      feeAmountToken: 0n,
+      rail: Rail.OPTIMISM_NATIVE_BRIDGE,
+      railType: config.railType,
+      settlementToken,
+      routeAsset: sourceAsset,
+      settlementAssetId: route.settlementKind === 'erc20'
+        ? this._settlementAssetId(req.srcChainId, req.tokenIn)
+        : this._zeroBytes32(),
+      expectedDstSettlementToken: req.tokenOut,
+      expectedDstSettlementAssetId: route.settlementKind === 'erc20'
+        ? this._settlementAssetId(req.dstChainId, req.tokenOut)
+        : this._zeroBytes32(),
+      minSettlementAmount: req.amountIn,
+      dstGasLimit: 0,
+      etaSeconds: route.etaSeconds,
+      expiresAt,
+      railPluginId: ZERO_PLUGIN_ID,
+      railData: '0x',
+      swapPluginIdSrc: ZERO_PLUGIN_ID,
+      swapPluginIdDst: ZERO_PLUGIN_ID,
+      swapDataSrc: '0x',
+      swapDataDst: '0x',
+      offerType: 'optimism_native_bridge_direct',
+      executionMode: 'provider_direct',
+    };
+
+    return {
+      offerId: intentId,
+      rail: Rail.OPTIMISM_NATIVE_BRIDGE,
+      offerType: 'optimism_native_bridge_direct',
+      railType: config.railType,
+      srcChainId: req.srcChainId,
+      dstChainId: req.dstChainId,
+      tokenIn: req.tokenIn,
+      tokenOut: req.tokenOut,
+      amountIn: req.amountIn,
+      estimatedOut: req.amountIn,
+      minAmountOut: req.amountIn,
+      expiresAt,
+      deliveryShape: 'direct',
+      executionMode: 'provider_direct',
+      routeAsset: sourceAsset,
+      amounts: quote.amounts,
+      legs: quote.legs,
+      sourceSettlementAsset: sourceAsset,
+      destinationSettlementAsset: destinationAsset,
+      economics: {
+        providerFeeUSD: 0,
+        protocolFeeUSD: 0,
+        sourceGasUSD: 0,
+        settlementTimeSeconds: route.etaSeconds,
+      },
+      execution: {
+        provider: OPTIMISM_NATIVE_BRIDGE_RAIL_PROVIDER,
+        quote,
+        direction: route.direction,
+        settlementKind: route.settlementKind,
+        challengePeriodSeconds: route.requiresPatient ? route.etaSeconds : undefined,
+        requiresPatient: route.requiresPatient,
+        tx,
+        approvals,
       },
     };
   }
@@ -1733,6 +1927,33 @@ export class QuoteEngine {
         destinationDomain: result.destinationDomain,
         interchainGasFee: result.interchainGasFee.toString(),
       },
+    };
+  }
+
+  private _defaultRefundAddress(req: QuoteRequest): string | undefined {
+    const configured = req.refundAddress?.trim();
+    if (configured) return configured;
+
+    const srcChain = getChainConfig(req.srcChainId);
+    return srcChain && !srcChain.isEVM ? req.userAddress : undefined;
+  }
+
+  private _buildOptimismNativeBridgeAssetRef(
+    chainId: number,
+    token: string,
+    canonicalAssetId: string,
+    decimals: number,
+    kind: 'native' | 'erc20',
+  ): ProviderAssetRef {
+    return {
+      canonicalAssetId,
+      providerAssetId: `optimism-native-bridge:${chainId}:${kind === 'native' ? 'native' : token.toLowerCase()}`,
+      tokenAddress: kind === 'erc20' ? token : undefined,
+      srcTokenAddress: kind === 'erc20' ? token : undefined,
+      dstTokenAddress: kind === 'erc20' ? token : undefined,
+      decimals,
+      assetKind: kind,
+      assetStandard: kind,
     };
   }
 

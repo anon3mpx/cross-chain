@@ -54,6 +54,7 @@ export type RailVariantLabel =
   | 'THORCHAIN'
   | 'GASZIP'
   | 'HYPERLANE_NEXUS'
+  | 'OPTIMISM_NATIVE_BRIDGE'
   | 'CHAINFLIP'
   | 'MAYA'
   | 'TELESWAP';
@@ -69,6 +70,7 @@ export const PLUGIN_ID = {
   THORCHAIN_V1: '0x390774707b6ae71a0ce31d10394e70b6ac75b3b62ec4db96c9672cafd1b516c9',
   GASZIP_V1: '0x' + '0'.repeat(64),
   HYPERLANE_NEXUS_V1: '0x' + '0'.repeat(64),
+  OPTIMISM_NATIVE_BRIDGE_V1: '0x' + '0'.repeat(64),
   CHAINFLIP_V1: '0x' + '0'.repeat(64),
   MAYA_V1: '0x' + '0'.repeat(64),
   TELESWAP_V1: '0x' + '0'.repeat(64),
@@ -352,9 +354,31 @@ export const RAIL_PROVIDERS: Record<Rail, RailProviderDefinition> = {
     fallbackRails: [Rail.AXELAR, Rail.LAYERZERO, Rail.VIA_LABS],
     refundCustodyLocation: RefundCustodyLocation.EXTERNAL_PROTOCOL,
   },
+  [Rail.OPTIMISM_NATIVE_BRIDGE]: {
+    rail: Rail.OPTIMISM_NATIVE_BRIDGE,
+    enumValue: 8,
+    aliases: [Rail.OPTIMISM_NATIVE_BRIDGE, 'NATIVE_BRIDGE_OP'],
+    config: {
+      rail: Rail.OPTIMISM_NATIVE_BRIDGE,
+      railType: 'messaging',
+      fee: 0,
+      etaSeconds: 180,
+      supportsUSDC: true,
+      supportsUSDT: true,
+      supportsETH: true,
+      supportsBTC: false,
+      supportsSOL: false,
+      nativeUSDC: false,
+      reliabilityScore: 0.999,
+      pluginId: PLUGIN_ID.OPTIMISM_NATIVE_BRIDGE_V1,
+      requiresNativeAddr: false,
+    },
+    fallbackRails: [Rail.CCTP, Rail.LAYERZERO, Rail.AXELAR],
+    refundCustodyLocation: RefundCustodyLocation.EXTERNAL_PROTOCOL,
+  },
   [Rail.CHAINFLIP]: {
     rail: Rail.CHAINFLIP,
-    enumValue: 8,
+    enumValue: 9,
     aliases: [Rail.CHAINFLIP],
     config: {
       rail: Rail.CHAINFLIP,
@@ -377,7 +401,7 @@ export const RAIL_PROVIDERS: Record<Rail, RailProviderDefinition> = {
   },
   [Rail.MAYA]: {
     rail: Rail.MAYA,
-    enumValue: 9,
+    enumValue: 10,
     aliases: [Rail.MAYA],
     config: {
       rail: Rail.MAYA,
@@ -400,7 +424,7 @@ export const RAIL_PROVIDERS: Record<Rail, RailProviderDefinition> = {
   },
   [Rail.TELESWAP]: {
     rail: Rail.TELESWAP,
-    enumValue: 10,
+    enumValue: 11,
     aliases: [Rail.TELESWAP],
     config: {
       rail: Rail.TELESWAP,
@@ -424,16 +448,16 @@ export const RAIL_PROVIDERS: Record<Rail, RailProviderDefinition> = {
 };
 
 export const CHAIN_RAILS: Record<number, Rail[]> = {
-  // Axelar, Via Labs, and Wormhole are intentionally disabled for now.
-  // Keep provider definitions in code, but do not advertise them as deployable rails.
-  1: [Rail.CCTP, Rail.LAYERZERO, Rail.THORCHAIN, Rail.CHAINFLIP, Rail.MAYA, Rail.HYPERLANE_NEXUS],
+  // Axelar and Via Labs are advertised only where the broader runtime can
+  // resolve route assets and the operator has deployed or configured the rail.
+  1: [Rail.CCTP, Rail.LAYERZERO, Rail.THORCHAIN, Rail.CHAINFLIP, Rail.MAYA, Rail.HYPERLANE_NEXUS, Rail.OPTIMISM_NATIVE_BRIDGE, Rail.VIA_LABS],
   // CCTP fast is modeled as a CCTP quote variant, not a standalone rail here.
-  10: [Rail.CCTP, Rail.LAYERZERO, Rail.THORCHAIN, Rail.HYPERLANE_NEXUS],
-  42161: [Rail.CCTP, Rail.LAYERZERO, Rail.THORCHAIN, Rail.CHAINFLIP, Rail.MAYA, Rail.HYPERLANE_NEXUS],
-  8453: [Rail.CCTP, Rail.LAYERZERO, Rail.THORCHAIN, Rail.HYPERLANE_NEXUS],
-  137: [Rail.CCTP, Rail.LAYERZERO, Rail.THORCHAIN, Rail.TELESWAP, Rail.HYPERLANE_NEXUS],
-  43114: [Rail.CCTP, Rail.LAYERZERO, Rail.THORCHAIN, Rail.MAYA, Rail.HYPERLANE_NEXUS],
-  56: [Rail.LAYERZERO, Rail.THORCHAIN, Rail.MAYA, Rail.TELESWAP, Rail.HYPERLANE_NEXUS],
+  10: [Rail.CCTP, Rail.LAYERZERO, Rail.THORCHAIN, Rail.HYPERLANE_NEXUS, Rail.OPTIMISM_NATIVE_BRIDGE, Rail.VIA_LABS],
+  42161: [Rail.CCTP, Rail.LAYERZERO, Rail.THORCHAIN, Rail.CHAINFLIP, Rail.MAYA, Rail.HYPERLANE_NEXUS, Rail.VIA_LABS],
+  8453: [Rail.CCTP, Rail.LAYERZERO, Rail.THORCHAIN, Rail.HYPERLANE_NEXUS, Rail.VIA_LABS],
+  137: [Rail.CCTP, Rail.LAYERZERO, Rail.THORCHAIN, Rail.TELESWAP, Rail.HYPERLANE_NEXUS, Rail.VIA_LABS],
+  43114: [Rail.CCTP, Rail.LAYERZERO, Rail.THORCHAIN, Rail.MAYA, Rail.HYPERLANE_NEXUS, Rail.VIA_LABS],
+  56: [Rail.LAYERZERO, Rail.THORCHAIN, Rail.MAYA, Rail.TELESWAP, Rail.HYPERLANE_NEXUS, Rail.VIA_LABS],
   369: [Rail.LAYERZERO],
   143: [Rail.LAYERZERO],
   146: [Rail.LAYERZERO],
@@ -453,9 +477,9 @@ export const CHAIN_RAILS: Record<number, Rail[]> = {
   1284: [Rail.LAYERZERO],
   42220: [Rail.LAYERZERO],
   11155111: [Rail.CCTP, Rail.LAYERZERO],
-  421614: [Rail.CCTP, Rail.LAYERZERO],
-  84532: [Rail.CCTP, Rail.LAYERZERO],
-  11155420: [Rail.CCTP, Rail.LAYERZERO],
+  421614: [Rail.CCTP, Rail.LAYERZERO, Rail.AXELAR],
+  84532: [Rail.CCTP, Rail.LAYERZERO, Rail.AXELAR],
+  11155420: [Rail.CCTP, Rail.LAYERZERO, Rail.AXELAR],
   43113: [Rail.CCTP, Rail.LAYERZERO],
   80002: [Rail.CCTP, Rail.LAYERZERO],
   97: [Rail.LAYERZERO],
@@ -627,6 +651,8 @@ export function getRailVariantLabel(rail: Rail, railPluginId?: string): RailVari
       return 'GASZIP';
     case Rail.HYPERLANE_NEXUS:
       return 'HYPERLANE_NEXUS';
+    case Rail.OPTIMISM_NATIVE_BRIDGE:
+      return 'OPTIMISM_NATIVE_BRIDGE';
     case Rail.CHAINFLIP:
       return 'CHAINFLIP';
     case Rail.MAYA:

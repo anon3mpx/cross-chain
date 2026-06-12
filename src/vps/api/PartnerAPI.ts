@@ -9,7 +9,7 @@ import { IntentEngine } from '../services/IntentEngine';
 import { IntentService } from '../services/IntentService';
 import { QuoteEngine } from '../services/QuoteEngine';
 import { buildSelectedOfferIntegration } from '../services/DirectRailIntegrationBuilder';
-import { Intent } from '../types';
+import { Intent, IntentStatus } from '../types';
 import { parseOfferSelection, parseQuoteRequest, serializeGasZipComposition, serializeOfferSet, serializeQuote } from './quoteCodec';
 import { getRailVariantLabel } from '../rails/registry';
 import { RpcProviderRegistry } from '../services/RpcProviderRegistry';
@@ -266,6 +266,41 @@ export function buildPartnerAPI(
         ? 400
         : 500;
       res.status(code).json({ error: code === 400 ? 'INVALID_REQUEST' : 'INTERNAL', message: msg });
+    }
+  });
+
+  router.post('/intent/:id/submitted', async (req: Request, res: Response) => {
+    const apiKey = (req as any).apiKey as string;
+    const check = keyManager.validateKey(apiKey);
+    if (!check.allowed) return res.status(401).json({ error: check.reason });
+
+    try {
+      const intentId = String(req.params.id);
+      const intent = await loadIntent(intentId);
+      if (intent === 'unavailable') {
+        return res.status(503).json({ error: 'STATUS_UNAVAILABLE' });
+      }
+      if (!intent) {
+        return res.status(404).json({ error: 'NOT_FOUND' });
+      }
+      if (intent.partnerApiKey && intent.partnerApiKey !== apiKey) {
+        return res.status(403).json({ error: 'UNAUTHORIZED_INTENT' });
+      }
+      if (intent.userAddress.toLowerCase() !== readRequiredString(req.body?.userAddress, 'userAddress').toLowerCase()) {
+        return res.status(403).json({ error: 'UNAUTHORIZED_INTENT' });
+      }
+
+      const submission = parseProviderDirectSubmission(req.body);
+      const updated = intent.status === 'SUBMITTED'
+        ? intent
+        : await intentService.markSubmitted(intent.intentId, submission.sourceTxHash, {
+          actor: submission.userAddress,
+          eventSource: 'partner-provider-direct-submitted',
+          allowedFrom: [IntentStatus.QUOTED, IntentStatus.SUBMITTED],
+        });
+      res.status(202).json(await serializeIntent(updated));
+    } catch (err) {
+      res.status(400).json({ error: String(err) });
     }
   });
 
@@ -599,6 +634,27 @@ export function buildPartnerAPI(
       return 'unavailable';
     }
   }
+
+  async function serializeIntent(intent: Intent) {
+    const refund = await intentService.getRefundCase(intent.intentId);
+    return {
+      intentId: intent.intentId,
+      status: intent.status,
+      srcTxHash: intent.srcTxHash,
+      dstTxHash: intent.dstTxHash,
+      railTxId: intent.railTxId,
+      rail: intent.quote.rail,
+      railVariant: getRailVariantLabel(intent.quote.rail, intent.quote.railPluginId),
+      etaSeconds: intent.quote.etaSeconds,
+      createdAt: intent.createdAt,
+      updatedAt: intent.updatedAt,
+      errorMessage: intent.errorMessage,
+      canCancel: intentService.canCancel(intent.status),
+      canCancelInWallet: intent.status === IntentStatus.SUBMITTED && Boolean(intent.srcTxHash),
+      canRequestRefund: intentService.canRequestRefund(intent.status),
+      refund,
+    };
+  }
 }
 
 // ── Webhook push helper ────────────────────────────────────────────────────────
@@ -796,6 +852,15 @@ function parseWalletLiquidationRequest(value: unknown) {
       recipient: readOptionalString(targetRaw.recipient),
       nativeAddress: readOptionalString(targetRaw.nativeAddress),
     },
+  };
+}
+
+function parseProviderDirectSubmission(value: unknown): { userAddress: string; sourceTxHash: string } {
+  if (!value || typeof value !== 'object') throw new Error('provider-direct submission payload required');
+  const raw = value as Record<string, unknown>;
+  return {
+    userAddress: readRequiredString(raw.userAddress, 'userAddress'),
+    sourceTxHash: readRequiredString(raw.sourceTxHash, 'sourceTxHash'),
   };
 }
 

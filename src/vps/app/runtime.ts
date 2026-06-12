@@ -34,6 +34,7 @@ import { PostgresIdempotencyStore, InMemoryIdempotencyStore, type IdempotencySto
 import { PostgresRelayerNonceStore, InMemoryRelayerNonceStore, type RelayerNonceStore } from '../db/RelayerNonceStore';
 import { SdkTeleSwapQuoteWorker } from '../services/teleswap/TeleSwapQuoteWorker';
 import { TeleSwapMonitorWorker } from '../services/teleswap/TeleSwapMonitorWorker';
+import { OptimismNativeBridgeMonitorWorker } from '../services/nativebridge/OptimismNativeBridgeMonitorWorker';
 import { BasketQuoteEngine } from '../services/BasketQuoteEngine';
 import { BasketStatusEngine } from '../services/BasketStatusEngine';
 import { WalletScanner } from '../services/WalletScanner';
@@ -67,6 +68,7 @@ export interface RuntimeContext {
   teleSwapMonitorWorker?: TeleSwapMonitorWorker;
   layerZeroValueTransferApiMonitorWorker?: LayerZeroValueTransferApiMonitorWorker;
   hyperlaneNexusMonitorWorker?: HyperlaneNexusMonitorWorker;
+  optimismNativeBridgeMonitorWorker?: OptimismNativeBridgeMonitorWorker;
   apiKeyManager?: ApiKeyManager;
   partnerApiRouter?: ReturnType<typeof buildPartnerAPI>;
   postgres?: PostgresIntentStore;
@@ -110,6 +112,7 @@ export async function buildRuntime(options: RuntimeOptions = {}): Promise<Runtim
   const enableChainflip = envBool('ENABLE_CHAINFLIP', Boolean(process.env.CHAINFLIP_BROKER_URL));
   const enableMaya = envBool('ENABLE_MAYA', false);
   const enableTeleSwap = envBool('ENABLE_TELESWAP', Boolean(process.env.TELESWAP_API_URL));
+  const enableOptimismNativeBridge = envBool('ENABLE_OPTIMISM_NATIVE_BRIDGE', true);
   const enableThorchainCanary = envBool('ENABLE_THORCHAIN_CANARY', false);
   const thorchainCanaryAllowlist = parseCsv(process.env.THORCHAIN_CANARY_ALLOWLIST);
   const enablePartnerApi = options.enablePartnerApi ?? envBool('ENABLE_PARTNER_API', false);
@@ -231,6 +234,7 @@ export async function buildRuntime(options: RuntimeOptions = {}): Promise<Runtim
       [Rail.CHAINFLIP]: options.railExecution?.[Rail.CHAINFLIP] ?? enableChainflip,
       [Rail.MAYA]: options.railExecution?.[Rail.MAYA] ?? enableMaya,
       [Rail.TELESWAP]: options.railExecution?.[Rail.TELESWAP] ?? enableTeleSwap,
+      [Rail.OPTIMISM_NATIVE_BRIDGE]: options.railExecution?.[Rail.OPTIMISM_NATIVE_BRIDGE] ?? enableOptimismNativeBridge,
     },
   });
   const cctpRelayWorker = railExecutionManager.getInstance<CctpAttestationWorker>(Rail.CCTP);
@@ -240,6 +244,7 @@ export async function buildRuntime(options: RuntimeOptions = {}): Promise<Runtim
   const teleSwapMonitorWorker = railExecutionManager.getInstance<TeleSwapMonitorWorker>(Rail.TELESWAP);
   const layerZeroValueTransferApiMonitorWorker = railExecutionManager.getInstance<LayerZeroValueTransferApiMonitorWorker>(Rail.LAYERZERO);
   const hyperlaneNexusMonitorWorker = railExecutionManager.getInstance<HyperlaneNexusMonitorWorker>(Rail.HYPERLANE_NEXUS);
+  const optimismNativeBridgeMonitorWorker = railExecutionManager.getInstance<OptimismNativeBridgeMonitorWorker>(Rail.OPTIMISM_NATIVE_BRIDGE);
 
   const apiKeyManager = enablePartnerApi ? new ApiKeyManager() : undefined;
   const partnerApiRouter = apiKeyManager
@@ -272,6 +277,7 @@ export async function buildRuntime(options: RuntimeOptions = {}): Promise<Runtim
     teleSwapMonitorWorker,
     layerZeroValueTransferApiMonitorWorker,
     hyperlaneNexusMonitorWorker,
+    optimismNativeBridgeMonitorWorker,
     postgres,
     reliability,
     basketRepository,

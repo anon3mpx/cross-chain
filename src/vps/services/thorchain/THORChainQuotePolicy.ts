@@ -52,6 +52,7 @@ export interface BuildTHORChainQuoteRequestInput {
   srcChainId: number;
   dstChainId: number;
   destinationAddress?: string;
+  refundAddress?: string;
   routeAssetAlias: string;
   sourceTokenAddress?: string;
   destinationTokenAddress?: string;
@@ -70,6 +71,7 @@ export async function buildTHORChainQuoteRequest(
     tokenIn: input.sourceTokenAddress ?? input.tokenIn,
     tokenOut: input.destinationTokenAddress ?? input.tokenOut,
     destinationAddress: input.destinationAddress,
+    refundAddress: input.refundAddress,
   });
 }
 
@@ -80,6 +82,7 @@ export interface BuildTHORChainQuoteRequestFromPairInput {
   tokenIn: string;
   tokenOut: string;
   destinationAddress?: string;
+  refundAddress?: string;
 }
 
 export async function buildTHORChainQuoteRequestFromPair(
@@ -103,6 +106,7 @@ export async function buildTHORChainQuoteRequestFromPair(
     fromAssetDecimals: fromAsset.decimals,
     toAssetDecimals: toAsset.decimals,
     destinationAddress: normalizeDestinationAddress(input.dstChainId, input.destinationAddress),
+    refundAddress: normalizeRefundAddress(input.srcChainId, input.refundAddress),
   };
 }
 
@@ -377,6 +381,23 @@ function normalizeDestinationAddress(
 ): string | undefined {
   if (!destinationAddress) return undefined;
   const trimmed = destinationAddress.trim();
+  if (!trimmed) return undefined;
+
+  if (!isKnownEvmChain(chainId)) return trimmed;
+
+  try {
+    return getAddress(trimmed);
+  } catch {
+    return undefined;
+  }
+}
+
+function normalizeRefundAddress(
+  chainId: number,
+  refundAddress?: string,
+): string | undefined {
+  if (!refundAddress) return undefined;
+  const trimmed = refundAddress.trim();
   if (!trimmed) return undefined;
 
   if (!isKnownEvmChain(chainId)) return trimmed;

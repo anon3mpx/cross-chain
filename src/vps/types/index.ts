@@ -21,6 +21,7 @@ export enum Rail {
   WORMHOLE  = 'WORMHOLE',   // EVM↔SVM SPL tokens + NTT, 30+ chains
   GASZIP    = 'GASZIP',     // Provider-direct destination native gas delivery via Gas.zip API
   HYPERLANE_NEXUS = 'HYPERLANE_NEXUS', // Provider-direct stablecoin warp routes via Hyperlane Nexus
+  OPTIMISM_NATIVE_BRIDGE = 'OPTIMISM_NATIVE_BRIDGE', // Official Standard Bridge rollout for ETH <-> Optimism
 
   // ── Liquidity rail (AMM-based, direct native delivery, no ReceiverV1) ─────
   THORCHAIN = 'THORCHAIN',  // Free+slip, native BTC/ETH/SOL/DOGE/AVAX/BSC/BASE
@@ -31,7 +32,17 @@ export enum Rail {
 
 // ── Rail category helpers ──────────────────────────────────────────────────────
 export const LIQUIDITY_RAILS = new Set([Rail.THORCHAIN, Rail.CHAINFLIP, Rail.MAYA, Rail.TELESWAP]);
-export const MESSAGING_RAILS = new Set([Rail.CCTP, Rail.CCTP_FAST, Rail.AXELAR, Rail.LAYERZERO, Rail.VIA_LABS, Rail.WORMHOLE, Rail.GASZIP, Rail.HYPERLANE_NEXUS]);
+export const MESSAGING_RAILS = new Set([
+  Rail.CCTP,
+  Rail.CCTP_FAST,
+  Rail.AXELAR,
+  Rail.LAYERZERO,
+  Rail.VIA_LABS,
+  Rail.WORMHOLE,
+  Rail.GASZIP,
+  Rail.HYPERLANE_NEXUS,
+  Rail.OPTIMISM_NATIVE_BRIDGE,
+]);
 
 // ── Non-EVM pseudo chain IDs (used internally, never on-chain) ────────────────
 export const CHAIN_ID = {
@@ -144,9 +155,10 @@ export interface QuoteRequest {
   dstChainId:   number;
   userAddress:  string;
   nativeDstAddress?: string;  // Required for BTC/SOL destinations
+  refundAddress?: string;     // Required for provider-direct non-EVM source flows
   destinationGas?: DestinationGasRequest[];
   autoFundDestinationGas?: AutoFundDestinationGasRequest;
-  urgency?:     'fast' | 'normal';
+  urgency?:     'fast' | 'normal' | 'patient';
 }
 
 export interface DestinationGasRequest {
@@ -262,6 +274,7 @@ export interface QuoteResult {
   chainflipChannelId?: string;
   teleSwapSwapId?: string;
   nativeDstAddress?: string;    // User's BTC/SOL/DOGE address
+  refundAddress?: string;       // Source-chain refund address for provider-direct flows
   selectedByUser?:   boolean;   // true when intent came from explicit offer selection
   offerType?:        RailOfferType;
   executionMode?:    ExecutionMode;
@@ -291,6 +304,7 @@ export type RailOfferType =
   | 'gaszip_api_direct'
   | 'thor_api_direct'
   | 'hyperlane_nexus_direct'
+  | 'optimism_native_bridge_direct'
   | 'chainflip_broker_direct'
   | 'maya_direct'
   | 'teleswap_direct';

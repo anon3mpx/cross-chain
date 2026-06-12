@@ -31,6 +31,8 @@ const TEST_ENV: Record<string, string> = {
   CHAIN_42161_TOKEN_VIA_LABS_ETH: ARB_ETH,
   CHAIN_42161_TOKEN_THORCHAIN_ETH: ARB_ETH,
   CHAIN_8453_ROUTER_V1: '0x1111111111111111111111111111111111111111',
+  CHAIN_8453_EMPSEAL_ROUTER: '0x4444444444444444444444444444444444444444',
+  CHAIN_42161_EMPSEAL_ROUTER: '0x5555555555555555555555555555555555555555',
   CHAIN_42161_RECEIVER_V1: '0x2222222222222222222222222222222222222222',
   VPS_INTENT_SIGNER_PRIVATE_KEY: '0x59c6995e998f97a5a0044966f0945382db45d7d771f4f5c4b7b0d5c3d53d4f52',
 };
@@ -118,6 +120,22 @@ function registerDexQuotes(engine: { registerDexQuoteFn(chainId: number, fn: (..
   });
 }
 
+function buildEmpsealSwapPlanStub() {
+  return {
+    buildSwapPlan: async (input: { tokenIn: string; tokenOut: string; amountIn: bigint }) => ({
+      amountOut: input.amountIn,
+      trade: {
+        amountIn: input.amountIn,
+        amountOut: input.amountIn,
+        path: [input.tokenIn, input.tokenOut],
+        adapters: ['0x' + '11'.repeat(20)],
+      },
+      data: '0x1234',
+      feeBps: 0,
+    }),
+  };
+}
+
 function assertSelectionIntegration(integration: any) {
   if (integration?.mode === 'provider_direct') {
     assert.equal(integration.action?.kind, 'thorchain_swap');
@@ -142,7 +160,9 @@ test('status quote selection creates an intent from the selected offer', async (
       buildStatusAPI,
     } = await loadVpsModules();
 
-    const quoteEngine = new QuoteEngine();
+    const quoteEngine = new QuoteEngine(undefined, {
+      empsealQuoteWorker: buildEmpsealSwapPlanStub(),
+    });
     registerDexQuotes(quoteEngine);
 
     const intentService = new IntentService(new IntentEngine());
@@ -208,7 +228,9 @@ test('partner quote selection creates an intent from the selected offer', async 
       buildPartnerAPI,
     } = await loadVpsModules();
 
-    const quoteEngine = new QuoteEngine();
+    const quoteEngine = new QuoteEngine(undefined, {
+      empsealQuoteWorker: buildEmpsealSwapPlanStub(),
+    });
     registerDexQuotes(quoteEngine);
 
     const intentService = new IntentService(new IntentEngine());
@@ -294,7 +316,9 @@ test('status quote selection returns fallback offers when selected offer is unav
       buildStatusAPI,
     } = await loadVpsModules();
 
-    const quoteEngine = new QuoteEngine();
+    const quoteEngine = new QuoteEngine(undefined, {
+      empsealQuoteWorker: buildEmpsealSwapPlanStub(),
+    });
     registerDexQuotes(quoteEngine);
 
     const intentService = new IntentService(new IntentEngine());
@@ -348,7 +372,9 @@ test('partner quote selection returns fallback offers when selected offer is una
       buildPartnerAPI,
     } = await loadVpsModules();
 
-    const quoteEngine = new QuoteEngine();
+    const quoteEngine = new QuoteEngine(undefined, {
+      empsealQuoteWorker: buildEmpsealSwapPlanStub(),
+    });
     registerDexQuotes(quoteEngine);
 
     const intentService = new IntentService(new IntentEngine());
