@@ -18,6 +18,7 @@ import { createQuoteCacheFromEnv, QuoteCache } from '../cache/QuoteCache';
 import { registerDexQuoteAdapters } from '../bootstrap/dexAdapters';
 import { RailExecutionHandle, RailExecutionManager } from '../rails/execution';
 import { Rail } from '../types';
+import { RpcProviderRegistry } from '../services/RpcProviderRegistry';
 
 export interface RuntimeOptions {
   enableEventMonitor?: boolean;
@@ -90,7 +91,8 @@ export async function buildRuntime(options: RuntimeOptions = {}): Promise<Runtim
       ? new LayerZeroValueTransferApiQuoteWorker(undefined, { enabled: true })
       : undefined,
   });
-  registerDexQuoteAdapters(quoteEngine, process.env);
+  const rpcProviderRegistry = new RpcProviderRegistry();
+  registerDexQuoteAdapters(quoteEngine, process.env, rpcProviderRegistry);
 
   const rails = new RailSelector();
   const recoveryEngine = enableRecovery
@@ -112,7 +114,7 @@ export async function buildRuntime(options: RuntimeOptions = {}): Promise<Runtim
       )
     : undefined;
 
-  const eventMonitor = enableEventMonitor ? new EventMonitor(intentService) : undefined;
+  const eventMonitor = enableEventMonitor ? new EventMonitor(intentService, rpcProviderRegistry) : undefined;
   if (eventMonitor) {
     for (const chain of Object.values(CHAIN_CONFIGS)) {
       if (!chain.isEVM) continue;
@@ -122,7 +124,7 @@ export async function buildRuntime(options: RuntimeOptions = {}): Promise<Runtim
     }
   }
 
-  const railExecutionManager = new RailExecutionManager({ intentService });
+  const railExecutionManager = new RailExecutionManager({ intentService, rpcProviderRegistry });
   const railExecutions = await railExecutionManager.startAll({
     enabled: {
       [Rail.CCTP]: options.railExecution?.[Rail.CCTP] ?? enableCctpRelay,

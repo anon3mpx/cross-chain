@@ -22,6 +22,7 @@ const PIMLICO_URLS: Record<number, string> = {
 };
 
 const ENTRYPOINT_V7 = '0x0000000071727De22E5E9d8BAf0edAc6f37da032';
+const TOKEN_RATE_CACHE_TTL_MS = 5 * 60 * 1000;
 
 // Token → ETH rates cache (refreshed every 5 min by keeper)
 const tokenRateCache = new Map<string, { rate: bigint; ts: number }>();
@@ -130,7 +131,7 @@ export class PaymasterService {
       // e.g. USDC: (3000 / 1.0) * 1e18 = 3000e18 USDC wei per ETH
       const rate = BigInt(Math.round((ethPriceUSD / priceUSD) * 1e18));
       rates.push(rate);
-      tokenRateCache.set(token, { rate, ts: Date.now() });
+      tokenRateCache.set(this._normalizeRateCacheKey(token), { rate, ts: Date.now() });
     }
     await paymasterContract.setTokenRateBatch(tokens, rates);
   }
@@ -157,9 +158,21 @@ export class PaymasterService {
   private _computeMaxTokenFee(gasLimits: any, maxFeePerGas: bigint, token: string, chainId: number): bigint {
     const gasTotal  = BigInt(gasLimits.callGasLimit) + BigInt(gasLimits.verificationGasLimit) + BigInt(gasLimits.preVerificationGas);
     const ethCost   = gasTotal * maxFeePerGas * 12n / 10n; // 120% buffer
-    const cached    = tokenRateCache.get(`${chainId}:${token}`);
+    const cached    = this._getCachedRate(chainId, token);
     const rate      = cached?.rate ?? 3000n * 10n ** 18n; // fallback: $3000 ETH
     return (ethCost * rate) / (10n ** 18n);
+  }
+
+  private _getCachedRate(chainId: number, token: string): { rate: bigint; ts: number } | undefined {
+    const normalized = this._normalizeRateCacheKey(token);
+    const cached = tokenRateCache.get(`${chainId}:${normalized}`) ?? tokenRateCache.get(normalized);
+    if (!cached) return undefined;
+    if ((Date.now() - cached.ts) > TOKEN_RATE_CACHE_TTL_MS) return undefined;
+    return cached;
+  }
+
+  private _normalizeRateCacheKey(token: string): string {
+    return token.trim().toLowerCase();
   }
 
   private _encodeMulticall(sender: string, calls: { to: string; data: string; value: string }[]): string {

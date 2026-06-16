@@ -177,6 +177,78 @@ contract CCTPFastRailPluginTest {
         _assertTrue(!ok, "expected maxFee cap revert");
     }
 
+    function testBridgeRevertsWhenDestinationCallerIsNotExplicitlyConfigured() public {
+        CCTPFastRailPlugin unconfigured = new CCTPFastRailPlugin(
+            address(tokenMessenger),
+            address(usdc),
+            address(this)
+        );
+        unconfigured.setChainDomain(DST_CHAIN, DST_DOMAIN);
+        unconfigured.setDestinationReceiver(DST_CHAIN, DST_RECEIVER);
+
+        uint256 amount = 100e6;
+        usdc.approve(address(unconfigured), amount);
+
+        IntentTypes.BridgeParams memory params = IntentTypes.BridgeParams({
+            intentId: keccak256("intent-fast-unconfigured-caller"),
+            routeTokenAddr: address(usdc),
+            amount: amount,
+            routeAssetId: bytes32(0),
+            expectedDstRouteToken: address(0),
+            expectedDstRouteAssetId: bytes32(0),
+            minRouteAmount: 0,
+            dstChainId: DST_CHAIN,
+            railData: abi.encode(uint32(1000), 1e6),
+            dstReceiver: address(0xBEEF),
+            dstCalldata: hex"",
+            gasForDst: 200_000,
+            finalRecipient: address(0xABCD),
+            nativeDstAddress: bytes(""),
+            thorAssetIdentifier: "",
+            minThorOutput: 0
+        });
+
+        (bool ok,) = address(unconfigured).call(abi.encodeWithSelector(unconfigured.bridge.selector, params));
+        _assertTrue(!ok, "expected destination caller config revert");
+    }
+
+    function testBridgeAllowsExplicitOpenDestinationCaller() public {
+        CCTPFastRailPlugin openRelay = new CCTPFastRailPlugin(
+            address(tokenMessenger),
+            address(usdc),
+            address(this)
+        );
+        openRelay.setChainDomain(DST_CHAIN, DST_DOMAIN);
+        openRelay.setDestinationReceiver(DST_CHAIN, DST_RECEIVER);
+        openRelay.setOpenDestinationCaller(DST_CHAIN);
+
+        uint256 amount = 100e6;
+        usdc.approve(address(openRelay), amount);
+
+        IntentTypes.BridgeParams memory params = IntentTypes.BridgeParams({
+            intentId: keccak256("intent-fast-open-caller"),
+            routeTokenAddr: address(usdc),
+            amount: amount,
+            routeAssetId: bytes32(0),
+            expectedDstRouteToken: address(0),
+            expectedDstRouteAssetId: bytes32(0),
+            minRouteAmount: 0,
+            dstChainId: DST_CHAIN,
+            railData: abi.encode(uint32(1000), 1e6),
+            dstReceiver: address(0xBEEF),
+            dstCalldata: hex"",
+            gasForDst: 200_000,
+            finalRecipient: address(0xABCD),
+            nativeDstAddress: bytes(""),
+            thorAssetIdentifier: "",
+            minThorOutput: 0
+        });
+
+        openRelay.bridge(params);
+
+        _assertEq(tokenMessenger.lastDestinationCaller(), bytes32(0), "expected open destination caller");
+    }
+
     function _assertEq(uint256 a, uint256 b, string memory err) internal pure {
         require(a == b, err);
     }

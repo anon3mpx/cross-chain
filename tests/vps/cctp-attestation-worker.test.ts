@@ -1,12 +1,31 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { EventEmitter } from 'node:events';
 import { AbiCoder } from 'ethers';
+import { CHAIN_CONFIGS } from '../../src/vps/config/chains';
 import {
   buildReceiverExecutionPayloadFromIntent,
+  CctpAttestationWorker,
   recoverFastTransferExecuteAmountFromReceiverBalance,
 } from '../../src/vps/services/CctpAttestationWorker';
 
 const abiCoder = AbiCoder.defaultAbiCoder();
+
+function withEnv(extraEnv: Record<string, string | undefined>, fn: () => void | Promise<void>) {
+  const previous = new Map<string, string | undefined>();
+  for (const [key, value] of Object.entries(extraEnv)) {
+    previous.set(key, process.env[key]);
+    if (value === undefined) delete process.env[key];
+    else process.env[key] = value;
+  }
+
+  return Promise.resolve(fn()).finally(() => {
+    for (const [key, value] of previous) {
+      if (value === undefined) delete process.env[key];
+      else process.env[key] = value;
+    }
+  });
+}
 
 test('buildReceiverExecutionPayloadFromIntent matches ReceiverV1 execution payload layout', () => {
   const intent = {
@@ -74,4 +93,42 @@ test('recoverFastTransferExecuteAmountFromReceiverBalance throws when receiver b
     () => recoverFastTransferExecuteAmountFromReceiverBalance(996_000n, payload),
     /receiver balance .* is below minRouteAmount/i,
   );
+});
+
+test('CctpAttestationWorker uses injected polling RPC helpers when no chain rpcUrl env is present', async () => {
+  await withEnv({
+    CCTP_RELAYER_PRIVATE_KEY: '0x' + '11'.repeat(32),
+    CHAIN_8453_RPC_URL: undefined,
+    CHAIN_8453_RPC_FALLBACK: undefined,
+    CHAIN_8453_RPC_1: undefined,
+  }, async () => {
+    const previousRouter = CHAIN_CONFIGS[8453].routerV1;
+    CHAIN_CONFIGS[8453].routerV1 = undefined;
+
+    const worker = new CctpAttestationWorker(
+      {} as any,
+      {
+        getPollingRpcUrl(chainId: number) {
+          if (chainId === 8453) return 'https://base-poll-a.example';
+          throw new Error(`no polling rpc for ${chainId}`);
+        },
+        reportFailure() {},
+      } as any,
+      () => {
+        const provider = new EventEmitter() as any;
+        provider.destroy = () => undefined;
+        provider.pollingInterval = 0;
+        return provider;
+      },
+    );
+    (worker as any)._backfillRecentIntentEvents = async () => undefined;
+
+    try {
+      await worker.start();
+      assert.equal((worker as any).providers.has(8453), true);
+      worker.stop();
+    } finally {
+      CHAIN_CONFIGS[8453].routerV1 = previousRouter;
+    }
+  });
 });

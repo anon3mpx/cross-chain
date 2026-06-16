@@ -779,7 +779,13 @@ export class QuoteEngine {
       layerZeroValueTransferApiOffer,
       gasZipOffer,
     ] = await Promise.all([
-      Promise.all(candidateRoutes.map((route) => this._buildOffer(req, route, amountUSD))),
+      Promise.all(candidateRoutes.map(async (route) => {
+        try {
+          return await this._buildOffer(req, route, amountUSD);
+        } catch {
+          return null;
+        }
+      })),
       this._buildTHORChainProviderDirectOffer(req, amountUSD),
       this._buildLayerZeroValueTransferApiProviderDirectOffer(req),
       this._buildGasZipProviderDirectOffer(req),

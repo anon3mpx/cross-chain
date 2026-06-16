@@ -32,6 +32,8 @@ contract LayerZeroRailPlugin is IRailPlugin, ERC165, Ownable2Step {
     mapping(uint32 => mapping(uint8 => LzRouteConfig)) public routeConfigs;
     // EVM chainId + route family + source route asset => approved OFT implementation
     mapping(uint32 => mapping(uint8 => mapping(bytes32 => address))) public routeOftByAssetId;
+    // Per-intent LayerZero options overrides are disabled by default and must be owner-enabled.
+    bool public optionsOverrideEnabled;
 
     event LayerZeroBridgeInitiated(
         bytes32 indexed intentId,
@@ -41,6 +43,7 @@ contract LayerZeroRailPlugin is IRailPlugin, ERC165, Ownable2Step {
         uint256 amount,
         bytes32 railTxId
     );
+    event OptionsOverrideEnabledSet(bool enabled);
 
     error UnsupportedRoute(uint32 dstChainId);
     error RouteFamilyNotConfigured(uint32 dstChainId, uint8 family);
@@ -53,6 +56,7 @@ contract LayerZeroRailPlugin is IRailPlugin, ERC165, Ownable2Step {
     error InvalidRouteToken(address routeToken);
     error RouteOftNotConfigured(uint32 dstChainId, uint8 family, bytes32 routeAssetId);
     error UnexpectedRouteOft(address provided, address expected);
+    error OptionsOverrideDisabled();
 
     uint8 public constant FAMILY_OFT = 0;
     uint8 public constant FAMILY_OFT_ADAPTER = 1;
@@ -120,7 +124,7 @@ contract LayerZeroRailPlugin is IRailPlugin, ERC165, Ownable2Step {
             to: _addressToBytes32(dstReceiver),
             amountLD: amount,
             minAmountLD: amount,
-            extraOptions: decoded.optionsOverride.length == 0 ? route.options : decoded.optionsOverride,
+            extraOptions: _resolveOptions(route.options, decoded.optionsOverride),
             composeMsg: payload,
             oftCmd: bytes("")
         });
@@ -164,7 +168,7 @@ contract LayerZeroRailPlugin is IRailPlugin, ERC165, Ownable2Step {
             to: _addressToBytes32(dstReceiver),
             amountLD: params.amount,
             minAmountLD: params.minRouteAmount == 0 ? params.amount : params.minRouteAmount,
-            extraOptions: decoded.optionsOverride.length == 0 ? route.options : decoded.optionsOverride,
+            extraOptions: _resolveOptions(route.options, decoded.optionsOverride),
             composeMsg: composePayload,
             oftCmd: bytes("")
         });
@@ -269,6 +273,11 @@ contract LayerZeroRailPlugin is IRailPlugin, ERC165, Ownable2Step {
         return keccak256(abi.encode(block.chainid, routeToken));
     }
 
+    function setOptionsOverrideEnabled(bool enabled) external onlyOwner {
+        optionsOverrideEnabled = enabled;
+        emit OptionsOverrideEnabledSet(enabled);
+    }
+
     function _storeRouteConfig(
         uint32 chainId,
         uint8 family,
@@ -334,6 +343,16 @@ contract LayerZeroRailPlugin is IRailPlugin, ERC165, Ownable2Step {
             (uint8, address, bytes)
         );
         if (decoded.routeOft == address(0)) revert InvalidRouteOft(decoded.routeOft);
+    }
+
+    function _resolveOptions(bytes memory routeOptions, bytes memory optionsOverride)
+        internal
+        view
+        returns (bytes memory)
+    {
+        if (optionsOverride.length == 0) return routeOptions;
+        if (!optionsOverrideEnabled) revert OptionsOverrideDisabled();
+        return optionsOverride;
     }
 
     function _familyFromRouteOft(address routeOft) internal pure returns (uint8) {

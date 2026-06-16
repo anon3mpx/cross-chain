@@ -1,7 +1,7 @@
 import { ethers } from 'ethers';
-import { getChainConfig } from '../../config/chains';
 import { IntentStatus, Rail } from '../../types';
 import { IntentService } from '../IntentService';
+import { RpcProviderRegistry } from '../RpcProviderRegistry';
 import {
   GasZipClient,
   type GasZipClientLike,
@@ -216,8 +216,12 @@ export class GasZipMonitorWorker {
   }
 }
 
+const defaultRpcProviderRegistry = new RpcProviderRegistry();
+
 const defaultGasZipReceiptProviderFactory: GasZipReceiptProviderFactory = (chainId) => {
-  const chain = getChainConfig(chainId);
-  if (!chain?.rpcUrl) return null;
-  return new ethers.JsonRpcProvider(chain.rpcUrl);
+  try {
+    return defaultRpcProviderRegistry.getReadProvider(chainId);
+  } catch {
+    return null;
+  }
 };

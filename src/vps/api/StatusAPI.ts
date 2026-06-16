@@ -13,8 +13,9 @@ import { QuoteEngine } from '../services/QuoteEngine';
 import { buildSelectedOfferIntegration } from '../services/DirectRailIntegrationBuilder';
 import { ComposedIntentStatus, Intent, IntentStatus, Rail } from '../types';
 import { parseOfferSelection, parseQuoteRequest, serializeGasZipComposition, serializeOfferSet, serializeQuote } from './quoteCodec';
-import { buildIntentActionMessage, IntentAction, SIGNATURE_WINDOW_MS } from '../utils/intentActionAuth';
+import { buildIntentActionId, buildIntentActionMessage, IntentAction, SIGNATURE_WINDOW_MS } from '../utils/intentActionAuth';
 import { getRailVariantLabel } from '../rails/registry';
+import { RpcProviderRegistry } from '../services/RpcProviderRegistry';
 import {
   LayerZeroValueTransferApiBuildUserStepsRequest,
   LayerZeroValueTransferApiClient,
@@ -52,6 +53,26 @@ interface LayerZeroValueTransferApiHttpClient {
 
 interface StatusApiOptions {
   layerZeroValueTransferApiClient?: LayerZeroValueTransferApiHttpClient;
+  rpcProviderRegistry?: Pick<RpcProviderRegistry, 'getReadProvider'>;
+}
+
+class MemoryIntentActionReplayStore {
+  private readonly consumed = new Map<string, number>();
+
+  claim(actionId: string, ttlMs: number): boolean {
+    const now = Date.now();
+    for (const [key, expiresAt] of this.consumed.entries()) {
+      if (expiresAt <= now) this.consumed.delete(key);
+    }
+    const existing = this.consumed.get(actionId);
+    if (existing && existing > now) return false;
+    this.consumed.set(actionId, now + Math.max(ttlMs, 1000));
+    return true;
+  }
+
+  release(actionId: string): void {
+    this.consumed.delete(actionId);
+  }
 }
 
 class MemoryRateLimitStore implements RateLimitStore {
@@ -139,6 +160,7 @@ class RedisRateLimitStore implements RateLimitStore {
 }
 
 const memoryRateLimitStore = new MemoryRateLimitStore();
+const intentActionReplayStore = new MemoryIntentActionReplayStore();
 
 function readIntEnv(name: string, fallback: number): number {
   const raw = process.env[name];
@@ -147,16 +169,27 @@ function readIntEnv(name: string, fallback: number): number {
   return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
 }
 
+function readBoolEnv(name: string, fallback: boolean): boolean {
+  const raw = process.env[name];
+  if (!raw) return fallback;
+  return ['1', 'true', 'yes', 'on'].includes(raw.trim().toLowerCase());
+}
+
 function clientKey(req: Request): string {
-  const cfConnectingIp = req.headers['cf-connecting-ip'];
-  const firstCfConnectingIp = Array.isArray(cfConnectingIp)
-    ? cfConnectingIp[0]
-    : cfConnectingIp;
-  const forwardedFor = req.headers['x-forwarded-for'];
-  const firstForwarded = Array.isArray(forwardedFor)
-    ? forwardedFor[0]
-    : forwardedFor?.split(',')[0];
-  return (firstCfConnectingIp || firstForwarded || req.ip || req.socket.remoteAddress || 'unknown').trim();
+  if (readBoolEnv('VPS_TRUST_PROXY_HEADERS', false)) {
+    const cfConnectingIp = req.headers['cf-connecting-ip'];
+    const firstCfConnectingIp = Array.isArray(cfConnectingIp)
+      ? cfConnectingIp[0]
+      : cfConnectingIp;
+    const forwardedFor = req.headers['x-forwarded-for'];
+    const firstForwarded = Array.isArray(forwardedFor)
+      ? forwardedFor[0]
+      : forwardedFor?.split(',')[0];
+    if (firstCfConnectingIp || firstForwarded) {
+      return (firstCfConnectingIp || firstForwarded || '').trim();
+    }
+  }
+  return (req.ip || req.socket.remoteAddress || 'unknown').trim();
 }
 
 function buildRateLimitStore(): RateLimitStore {
@@ -213,9 +246,11 @@ export function buildStatusAPI(
   options: StatusApiOptions = {},
 ): express.Application {
   const app = express();
+  app.set('trust proxy', readBoolEnv('VPS_TRUST_PROXY_HEADERS', false));
   const providers = new Map<number, ethers.JsonRpcProvider>();
   const layerZeroValueTransferApiClient =
     options.layerZeroValueTransferApiClient ?? new LayerZeroValueTransferApiClient();
+  const rpcProviderRegistry = options.rpcProviderRegistry ?? new RpcProviderRegistry();
 
   app.use((req, res, next) => {
     res.setHeader('Access-Control-Allow-Origin', process.env.VPS_CORS_ORIGIN ?? '*');
@@ -552,22 +587,41 @@ export function buildStatusAPI(
 
   router.post('/intent/:id/submitted', async (req: Request, res: Response) => {
     const intentId = String(req.params.id);
+    let actionId: string | undefined;
+    let claimed = false;
     try {
       const auth = parseSignedIntentAction(req, intentId, 'submitted');
+      actionId = auth.actionId;
+      if (actionId) {
+        claimed = intentActionReplayStore.claim(actionId, SIGNATURE_WINDOW_MS);
+        if (!claimed) {
+          throw new IntentLifecycleError('ACTION_ALREADY_USED', 'Signed request has already been used.', 409);
+        }
+      }
       const intent = await intentService.markSubmitted(intentId, auth.srcTxHash, {
         actor: auth.userAddress,
         eventSource: 'wallet-submit',
       });
       res.status(202).json(await serializeIntent(intent));
     } catch (err) {
+      if (actionId && claimed) intentActionReplayStore.release(actionId);
       handleLifecycleError(res, err);
     }
   });
 
   router.post('/intent/:id/cancel', async (req: Request, res: Response) => {
     const intentId = String(req.params.id);
+    let actionId: string | undefined;
+    let claimed = false;
     try {
       const auth = parseSignedIntentAction(req, intentId, 'cancel');
+      actionId = auth.actionId;
+      if (actionId) {
+        claimed = intentActionReplayStore.claim(actionId, SIGNATURE_WINDOW_MS);
+        if (!claimed) {
+          throw new IntentLifecycleError('ACTION_ALREADY_USED', 'Signed request has already been used.', 409);
+        }
+      }
       const current = await intentService.getIntent(intentId);
       if (!current) {
         throw new IntentLifecycleError('INTENT_NOT_FOUND', `Intent not found: ${intentId}`, 404);
@@ -578,14 +632,24 @@ export function buildStatusAPI(
         : await intentService.cancel(intentId, auth.userAddress, auth.reason);
       res.json(await serializeIntent(intent));
     } catch (err) {
+      if (actionId && claimed) intentActionReplayStore.release(actionId);
       handleLifecycleError(res, err);
     }
   });
 
   router.post('/intent/:id/refund', async (req: Request, res: Response) => {
     const intentId = String(req.params.id);
+    let actionId: string | undefined;
+    let claimed = false;
     try {
       const auth = parseSignedIntentAction(req, intentId, 'refund');
+      actionId = auth.actionId;
+      if (actionId) {
+        claimed = intentActionReplayStore.claim(actionId, SIGNATURE_WINDOW_MS);
+        if (!claimed) {
+          throw new IntentLifecycleError('ACTION_ALREADY_USED', 'Signed request has already been used.', 409);
+        }
+      }
       const reason = auth.reason?.trim();
       if (!reason) {
         return res.status(400).json({ error: 'reason is required' });
@@ -593,6 +657,7 @@ export function buildStatusAPI(
       const refund = await intentService.requestRefund(intentId, auth.userAddress, reason);
       res.status(202).json({ ok: true, refund, ts: Date.now() });
     } catch (err) {
+      if (actionId && claimed) intentActionReplayStore.release(actionId);
       handleLifecycleError(res, err);
     }
   });
@@ -647,7 +712,7 @@ export function buildStatusAPI(
     req: Request,
     intentId: string,
     action: IntentAction,
-  ): { userAddress: string; reason?: string; srcTxHash: string; replacementTxHash?: string } {
+  ): { userAddress: string; reason?: string; srcTxHash: string; replacementTxHash?: string; actionId?: string } {
     const body = req.body && typeof req.body === 'object'
       ? (req.body as Record<string, unknown>)
       : {};
@@ -658,10 +723,15 @@ export function buildStatusAPI(
     const replacementTxHash = typeof body.replacementTxHash === 'string'
       ? body.replacementTxHash.trim()
       : undefined;
+    const nonce = typeof body.nonce === 'string' ? body.nonce.trim() : '';
     const timestamp = Number(body.timestamp);
+    const requireNonce = readBoolEnv('VPS_REQUIRE_INTENT_ACTION_NONCE', false);
 
     if (!userAddress || !signature || !Number.isFinite(timestamp)) {
       throw new IntentLifecycleError('INVALID_SIGNATURE_PAYLOAD', 'userAddress, signature and timestamp are required.');
+    }
+    if (requireNonce && !nonce) {
+      throw new IntentLifecycleError('INVALID_SIGNATURE_PAYLOAD', 'nonce is required.');
     }
     if (action === 'submitted' && !srcTxHash) {
       throw new IntentLifecycleError('INVALID_SIGNATURE_PAYLOAD', 'srcTxHash is required for submitted intents.');
@@ -677,6 +747,7 @@ export function buildStatusAPI(
         intentId,
         userAddress: normalized,
         timestamp,
+        nonce,
         reason,
         srcTxHash,
         replacementTxHash,
@@ -686,7 +757,21 @@ export function buildStatusAPI(
         throw new IntentLifecycleError('INVALID_SIGNATURE', 'Wallet signature does not match the provided address.', 401);
       }
 
-      return { userAddress: normalized, reason, srcTxHash, replacementTxHash };
+      return {
+        userAddress: normalized,
+        reason,
+        srcTxHash,
+        replacementTxHash,
+        actionId: nonce ? buildIntentActionId(action, {
+          intentId,
+          userAddress: normalized,
+          timestamp,
+          nonce,
+          reason,
+          srcTxHash,
+          replacementTxHash,
+        }) : undefined,
+      };
     } catch (err) {
       if (err instanceof IntentLifecycleError) throw err;
       throw new IntentLifecycleError('INVALID_SIGNATURE', 'Unable to verify wallet signature.', 401);
@@ -937,7 +1022,7 @@ export function buildStatusAPI(
     if (existing) return existing;
 
     const chain = CHAIN_CONFIGS[chainId];
-    if (!chain?.isEVM || !chain.rpcUrl) {
+    if (!chain?.isEVM) {
       throw new IntentLifecycleError(
         'CHAIN_RPC_UNAVAILABLE',
         `No EVM RPC is configured for source chain ${chainId}.`,
@@ -945,9 +1030,7 @@ export function buildStatusAPI(
       );
     }
 
-    const provider = new ethers.JsonRpcProvider(chain.rpcUrl, chainId, {
-      staticNetwork: true,
-    });
+    const provider = rpcProviderRegistry.getReadProvider(chainId);
     providers.set(chainId, provider);
     return provider;
   }

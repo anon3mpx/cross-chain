@@ -4,6 +4,8 @@ pragma solidity ^0.8.24;
 import "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import "@openzeppelin/contracts/access/Ownable2Step.sol";
 import "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
+import "@openzeppelin/contracts/utils/cryptography/ECDSA.sol";
+import "@openzeppelin/contracts/utils/cryptography/MessageHashUtils.sol";
 
 /// @title EMPX-Cross-Chain Paymaster — EIP-4337 Token Paymaster
 /// @notice Sponsors gas for users paying with their input token (USDC, ARB, etc.)
@@ -35,11 +37,17 @@ contract Paymaster is Ownable2Step, ReentrancyGuard {
     // Maximum gas we'll sponsor per UserOp (prevents griefing)
     uint256 public constant MAX_GAS_LIMIT = 500_000;
 
+    // Token rates must be refreshed by the VPS keeper before this window expires.
+    uint48 public constant RATE_TTL = 10 minutes;
+
     // Markup on gas cost (covers rate volatility): 120% = 20% buffer
     uint256 public constant GAS_MARKUP_BPS = 12_000; // 120%
 
+    // Per-token last update timestamp for rate freshness checks.
+    mapping(address => uint48) public tokenRateUpdatedAt;
+
     event GasSponsored(address indexed user, address token, uint256 tokenFee, uint256 ethCost);
-    event RateUpdated(address indexed token, uint256 rate);
+    event RateUpdated(address indexed token, uint256 rate, uint48 updatedAt);
     event SignerUpdated(address newSigner);
 
     error InvalidSignature();
@@ -49,6 +57,10 @@ contract Paymaster is Ownable2Step, ReentrancyGuard {
     error InsufficientTokenBalance(address user, address token);
     error OnlyEntryPoint();
     error TokenFeeExceedsMax(uint256 tokenFee, uint256 maxTokenFee);
+    error ZeroAddress(string field);
+    error InvalidRate(address token, uint256 rate);
+    error RateStale(address token, uint48 updatedAt, uint48 currentTimestamp);
+    error ArrayLengthMismatch(uint256 tokensLength, uint256 ratesLength);
 
     modifier onlyEntryPoint() {
         if (msg.sender != entryPoint) revert OnlyEntryPoint();
@@ -56,6 +68,8 @@ contract Paymaster is Ownable2Step, ReentrancyGuard {
     }
 
     constructor(address _entryPoint, address _signer, address _owner) Ownable(_owner) {
+        if (_entryPoint == address(0)) revert ZeroAddress("entryPoint");
+        if (_signer == address(0)) revert ZeroAddress("paymasterSigner");
         entryPoint = _entryPoint;
         paymasterSigner = _signer;
     }
@@ -70,7 +84,7 @@ contract Paymaster is Ownable2Step, ReentrancyGuard {
         UserOperation calldata userOp,
         bytes32 userOpHash,
         uint256 maxCost
-    ) external onlyEntryPoint returns (bytes memory context, uint256 validationData) {
+    ) external view onlyEntryPoint returns (bytes memory context, uint256 validationData) {
         // Decode paymasterAndData
         (address token, uint256 maxTokenFee, bytes memory sig, uint48 expiry) =
             abi.decode(userOp.paymasterAndData[20:], (address, uint256, bytes, uint48));
@@ -84,7 +98,7 @@ contract Paymaster is Ownable2Step, ReentrancyGuard {
         validationData = (uint256(expiry) << 160);
 
         // Verify token is supported and user can cover the fee
-        uint256 rate = tokenToEthRate[token];
+        uint256 rate = _freshTokenRate(token);
         if (rate == 0) revert UnsupportedToken(token);
 
         uint256 tokenFee = _ethToToken(maxCost * GAS_MARKUP_BPS / 10_000, rate);
@@ -122,18 +136,28 @@ contract Paymaster is Ownable2Step, ReentrancyGuard {
 
     /// @notice VPS keeper updates rates every ~5 minutes
     function setTokenRate(address token, uint256 rate) external onlyOwner {
+        if (token == address(0)) revert ZeroAddress("token");
+        if (rate == 0) revert InvalidRate(token, rate);
         tokenToEthRate[token] = rate;
-        emit RateUpdated(token, rate);
+        tokenRateUpdatedAt[token] = uint48(block.timestamp);
+        emit RateUpdated(token, rate, uint48(block.timestamp));
     }
 
     function setTokenRateBatch(address[] calldata tokens, uint256[] calldata rates) external onlyOwner {
+        if (tokens.length != rates.length) revert ArrayLengthMismatch(tokens.length, rates.length);
         for (uint i = 0; i < tokens.length; i++) {
-            tokenToEthRate[tokens[i]] = rates[i];
-            emit RateUpdated(tokens[i], rates[i]);
+            address token = tokens[i];
+            uint256 rate = rates[i];
+            if (token == address(0)) revert ZeroAddress("token");
+            if (rate == 0) revert InvalidRate(token, rate);
+            tokenToEthRate[token] = rate;
+            tokenRateUpdatedAt[token] = uint48(block.timestamp);
+            emit RateUpdated(token, rate, uint48(block.timestamp));
         }
     }
 
     function setSigner(address _signer) external onlyOwner {
+        if (_signer == address(0)) revert ZeroAddress("paymasterSigner");
         paymasterSigner = _signer;
         emit SignerUpdated(_signer);
     }
@@ -158,10 +182,32 @@ contract Paymaster is Ownable2Step, ReentrancyGuard {
         return (ethAmount * rate) / 1e18;
     }
 
+    function _freshTokenRate(address token) internal view returns (uint256 rate) {
+        rate = tokenToEthRate[token];
+        if (rate == 0) return 0;
+
+        uint48 updatedAt = tokenRateUpdatedAt[token];
+        uint48 currentTimestamp = uint48(block.timestamp);
+        if (updatedAt == 0 || currentTimestamp > updatedAt + RATE_TTL) {
+            revert RateStale(token, updatedAt, currentTimestamp);
+        }
+    }
+
     function _recoverSigner(bytes32 digest, bytes memory sig) internal pure returns (address) {
-        bytes32 ethHash = keccak256(abi.encodePacked("\x19Ethereum Signed Message:\n32", digest));
-        (bytes32 r, bytes32 s, uint8 v) = abi.decode(sig, (bytes32, bytes32, uint8));
-        return ecrecover(ethHash, v, r, s);
+        bytes32 ethHash = MessageHashUtils.toEthSignedMessageHash(digest);
+
+        if (sig.length == 65) {
+            (address recovered, ECDSA.RecoverError err,) = ECDSA.tryRecover(ethHash, sig);
+            return err == ECDSA.RecoverError.NoError ? recovered : address(0);
+        }
+
+        if (sig.length == 96) {
+            (bytes32 r, bytes32 s, uint8 v) = abi.decode(sig, (bytes32, bytes32, uint8));
+            (address recovered, ECDSA.RecoverError err,) = ECDSA.tryRecover(ethHash, v, r, s);
+            return err == ECDSA.RecoverError.NoError ? recovered : address(0);
+        }
+
+        return address(0);
     }
 
     receive() external payable {}

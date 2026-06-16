@@ -6,7 +6,9 @@
 
 import { ethers } from 'ethers';
 import { ChainConfig } from '../types';
+import { isRetryableInfraError } from '../app/infraErrors';
 import { IntentService } from './IntentService';
+import { RpcProviderRegistry } from './RpcProviderRegistry';
 
 // ABI fragments — only the events we care about
 const ROUTER_ABI = [
@@ -19,33 +21,22 @@ const RECEIVER_ABI = [
 
 export class EventMonitor {
   private providers: Map<number, ethers.JsonRpcProvider> = new Map();
-  private fallbackProviders: Map<number, ethers.JsonRpcProvider> = new Map();
+  private chains: Map<number, ChainConfig> = new Map();
   private contracts: Map<string, ethers.Contract> = new Map(); // key = `${chainId}:${address}`
 
-  constructor(private intentService: IntentService) {}
+  constructor(
+    private intentService: IntentService,
+    private rpcProviderRegistry: Pick<RpcProviderRegistry, 'getPollingRpcUrl' | 'reportFailure'> = new RpcProviderRegistry(),
+  ) {}
 
   // ── Setup ──────────────────────────────────────────────────────────────────
 
   addChain(chain: ChainConfig): void {
-    if (!chain.rpcUrl) return;
-    const pollingIntervalMs = this._readIntEnv('RPC_POLLING_INTERVAL_MS', 4000);
-    const primary  = new ethers.JsonRpcProvider(chain.rpcUrl, chain.chainId, {
-      polling: true,
-      batchMaxCount: 1,
-      staticNetwork: true,
-    });
-    primary.pollingInterval = pollingIntervalMs;
-    const fallback = chain.rpcFallback
-      ? new ethers.JsonRpcProvider(chain.rpcFallback, chain.chainId, {
-          polling: true,
-          batchMaxCount: 1,
-          staticNetwork: true,
-        })
-      : undefined;
-    if (fallback) fallback.pollingInterval = pollingIntervalMs;
-    this.providers.set(chain.chainId, primary);
-    if (fallback) this.fallbackProviders.set(chain.chainId, fallback);
-
+    if (!chain.isEVM) return;
+    this.chains.set(chain.chainId, chain);
+    const provider = this._buildProvider(chain);
+    if (!provider) return;
+    this.providers.set(chain.chainId, provider);
     if (chain.routerV1) this._watchRouter(chain);
     if (chain.receiverV1) this._watchReceiver(chain);
   }
@@ -70,7 +61,6 @@ export class EventMonitor {
       });
     });
 
-    provider.on('error', () => this._switchToFallback(chain.chainId));
   }
 
   // ── Receiver Events (destination chain) ───────────────────────────────────
@@ -106,17 +96,6 @@ export class EventMonitor {
       });
     });
 
-    provider.on('error', () => this._switchToFallback(chain.chainId));
-  }
-
-  // ── Provider Failover ─────────────────────────────────────────────────────
-
-  private _switchToFallback(chainId: number): void {
-    const fallback = this.fallbackProviders.get(chainId);
-    if (!fallback) return;
-    console.warn(`[EventMonitor] Switching chain ${chainId} to fallback RPC`);
-    this.providers.set(chainId, fallback);
-    // Re-attach listeners (simplified — production would re-register all contracts)
   }
 
   // ── Cleanup ───────────────────────────────────────────────────────────────
@@ -124,7 +103,47 @@ export class EventMonitor {
   stop(): void {
     this.contracts.forEach(contract => contract.removeAllListeners());
     this.providers.forEach(provider => provider.destroy());
-    this.fallbackProviders.forEach(provider => provider.destroy());
+  }
+
+  private _buildProvider(chain: ChainConfig): ethers.JsonRpcProvider | null {
+    let rpcUrl: string;
+    try {
+      rpcUrl = this.rpcProviderRegistry.getPollingRpcUrl(chain.chainId);
+    } catch {
+      return null;
+    }
+
+    const pollingIntervalMs = this._readIntEnv('RPC_POLLING_INTERVAL_MS', 4000);
+    const provider = new ethers.JsonRpcProvider(rpcUrl, chain.chainId, {
+      polling: true,
+      batchMaxCount: 1,
+      staticNetwork: true,
+    });
+    provider.pollingInterval = pollingIntervalMs;
+    provider.on('error', (err) => {
+      if (!isRetryableInfraError(err)) return;
+      this.rpcProviderRegistry.reportFailure(chain.chainId, 'poll', rpcUrl, err);
+      this._rebuildChain(chain.chainId);
+    });
+    return provider;
+  }
+
+  private _rebuildChain(chainId: number): void {
+    const chain = this.chains.get(chainId);
+    if (!chain) return;
+
+    this.contracts.get(`${chainId}:router`)?.removeAllListeners();
+    this.contracts.get(`${chainId}:receiver`)?.removeAllListeners();
+    this.contracts.delete(`${chainId}:router`);
+    this.contracts.delete(`${chainId}:receiver`);
+
+    this.providers.get(chainId)?.destroy();
+    const provider = this._buildProvider(chain);
+    if (!provider) return;
+    this.providers.set(chainId, provider);
+
+    if (chain.routerV1) this._watchRouter(chain);
+    if (chain.receiverV1) this._watchReceiver(chain);
   }
 
   private _readIntEnv(name: string, fallback: number): number {

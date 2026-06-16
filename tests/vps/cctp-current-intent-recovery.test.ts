@@ -3,11 +3,42 @@ import assert from 'node:assert/strict';
 import { AbiCoder, Interface } from 'ethers';
 import {
   buildRecoveryExecutionFromSourceTxData,
+  getRpcCandidates,
   withDirectDelivery,
   withRecoverySwapData,
 } from '../../src/vps/scripts/recoverCurrentStuckCctpIntent';
 
 const abiCoder = AbiCoder.defaultAbiCoder();
+
+function withEnv(extraEnv: Record<string, string | undefined>, fn: () => void | Promise<void>) {
+  const previous = new Map<string, string | undefined>();
+  for (const [key, value] of Object.entries(extraEnv)) {
+    previous.set(key, process.env[key]);
+    if (value === undefined) delete process.env[key];
+    else process.env[key] = value;
+  }
+
+  return Promise.resolve(fn()).finally(() => {
+    for (const [key, value] of previous) {
+      if (value === undefined) delete process.env[key];
+      else process.env[key] = value;
+    }
+  });
+}
+
+test('getRpcCandidates prefers numbered runtime RPC env keys before legacy fallback keys', async () => {
+  await withEnv({
+    CHAIN_42161_RPC_1: 'https://arb-a.example',
+    CHAIN_42161_RPC_2: 'https://arb-b.example',
+    CHAIN_42161_RPC_URL: 'https://arb-legacy.example',
+    CHAIN_42161_RPC_FALLBACK: 'https://arb-legacy-backup.example',
+  }, () => {
+    assert.deepEqual(getRpcCandidates(42161), [
+      'https://arb-a.example',
+      'https://arb-b.example',
+    ]);
+  });
+});
 
 const ROUTER_IFACE = new Interface([
   'function initiateSwap((address user,address tokenIn,address tokenOut,uint256 amountIn,uint256 minAmountOut,uint256 minSrcSwapOut,uint32 dstChainId,uint8 rail,address routeToken,bytes32 routeAssetId,address expectedDstRouteToken,bytes32 expectedDstRouteAssetId,uint256 minRouteAmount,uint256 feeAmount,bytes swapDataSrc,bytes swapDataDst,bytes32 swapPluginIdSrc,bytes32 dstSwapPluginId,bytes32 railPluginId,bytes railData,uint256 dstGasLimit,address dstReceiver,bytes nativeDstAddress,string thorAssetIdentifier,uint256 minThorOutput,bytes32 intentId,uint256 deadline) intent,bytes signature)',

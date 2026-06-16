@@ -5,6 +5,7 @@ import { THORChainMonitorWorker } from '../services/thorchain/THORChainMonitorWo
 import { LayerZeroValueTransferApiClient } from '../services/layerzero/LayerZeroValueTransferApiClient';
 import { LayerZeroValueTransferApiMonitorWorker } from '../services/layerzero/LayerZeroValueTransferApiMonitorWorker';
 import { GasZipMonitorWorker } from '../services/gaszip/GasZipMonitorWorker';
+import { RpcProviderRegistry } from '../services/RpcProviderRegistry';
 import { Rail } from '../types';
 import { getRailVariantLabel, RailVariantLabel } from './registry';
 
@@ -12,6 +13,7 @@ export type RailExecutionMode = 'worker' | 'passive' | 'disabled';
 
 export interface RailExecutionContext {
   intentService: IntentService;
+  rpcProviderRegistry?: Pick<RpcProviderRegistry, 'getPollingRpcUrl' | 'reportFailure' | 'getReadProvider'>;
 }
 
 export interface RailExecutionOptions {
@@ -71,7 +73,7 @@ class CctpRailExecutionAdapter implements RailExecutionAdapter<CctpAttestationWo
       };
     }
 
-    const worker = new CctpAttestationWorker(context.intentService);
+    const worker = new CctpAttestationWorker(context.intentService, context.rpcProviderRegistry);
     await worker.start();
 
     return {
@@ -183,7 +185,17 @@ class GasZipRailExecutionAdapter implements RailExecutionAdapter<GasZipMonitorWo
       };
     }
 
-    const worker = new GasZipMonitorWorker(context.intentService);
+    const worker = new GasZipMonitorWorker(
+      context.intentService,
+      undefined,
+      async (chainId) => {
+        try {
+          return context.rpcProviderRegistry?.getReadProvider(chainId) ?? new RpcProviderRegistry().getReadProvider(chainId);
+        } catch {
+          return null;
+        }
+      },
+    );
     await worker.start();
 
     return {

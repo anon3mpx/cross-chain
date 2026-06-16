@@ -11,7 +11,9 @@ import {
 import { CHAIN_CONFIGS } from '../config/chains';
 import { getSettlementTokenAddress } from '../config/contracts';
 import { Rail, SettlementToken } from '../types';
+import { isRetryableInfraError } from '../app/infraErrors';
 import { IntentService } from './IntentService';
+import { RpcProviderRegistry } from './RpcProviderRegistry';
 import { getCctpDomain, getRailEnumValue } from '../rails/registry';
 
 const ROUTER_ABI = [
@@ -85,6 +87,8 @@ interface RetryEntry {
   nextAttemptAt: number;
   lastError: string;
 }
+
+type PollingRpcProviderFactory = (rpcUrl: string, chainId: number) => JsonRpcProvider;
 
 export function buildReceiverExecutionPayloadFromIntent(intent: any): string {
   return AbiCoder.defaultAbiCoder().encode(
@@ -172,8 +176,20 @@ export class CctpAttestationWorker {
   private reconcileTimer?: ReturnType<typeof setInterval>;
   private reconciling = false;
   private running = false;
+  private readonly providerFactory: PollingRpcProviderFactory;
 
-  constructor(private intentService: IntentService) {}
+  constructor(
+    private intentService: IntentService,
+    private rpcProviderRegistry: Pick<RpcProviderRegistry, 'getPollingRpcUrl' | 'reportFailure'> = new RpcProviderRegistry(),
+    providerFactory?: PollingRpcProviderFactory,
+  ) {
+    this.providerFactory = providerFactory ?? ((rpcUrl, chainId) => new JsonRpcProvider(rpcUrl, chainId, {
+      polling: true,
+      // Some public/testnet RPCs return malformed batched responses.
+      batchMaxCount: 1,
+      staticNetwork: true,
+    }));
+  }
 
   async start(): Promise<void> {
     if (this.running) return;
@@ -189,15 +205,19 @@ export class CctpAttestationWorker {
     const pollingIntervalMs = this._readIntEnv('RPC_POLLING_INTERVAL_MS', 4000);
 
     for (const chain of Object.values(CHAIN_CONFIGS)) {
-      if (!chain.isEVM || !chain.rpcUrl) continue;
-      const provider = new JsonRpcProvider(chain.rpcUrl, chain.chainId, {
-        polling: true,
-        // Some public/testnet RPCs return malformed batched responses.
-        batchMaxCount: 1,
-        staticNetwork: true,
-      });
+      if (!chain.isEVM) continue;
+      let rpcUrl: string;
+      try {
+        rpcUrl = this.rpcProviderRegistry.getPollingRpcUrl(chain.chainId);
+      } catch {
+        continue;
+      }
+      const provider = this.providerFactory(rpcUrl, chain.chainId);
       provider.pollingInterval = pollingIntervalMs;
       provider.on('error', (err) => {
+        if (isRetryableInfraError(err)) {
+          this.rpcProviderRegistry.reportFailure(chain.chainId, 'poll', rpcUrl, err);
+        }
         console.warn(`[CCTP Relay] provider error chain=${chain.chainId}`, err);
       });
       this.providers.set(chain.chainId, provider);
