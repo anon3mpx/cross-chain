@@ -4,6 +4,9 @@ import { assertPostgresRailSchemaCompatibility } from '../db/schemaCompatibility
 import { buildPartnerAPI, setupWebhookPush } from '../api/PartnerAPI';
 import { NativeUsdOracle } from '../services/NativeUsdOracle';
 import { ApiKeyManager } from '../services/ApiKeyManager';
+import { InMemoryPartnerRepository } from '../db/InMemoryPartnerRepository';
+import { PostgresPartnerRepository } from '../db/PostgresPartnerRepository';
+import type { PartnerRepository } from '../db/PartnerRepository';
 import { EventMonitor } from '../services/EventMonitor';
 import { CctpAttestationWorker } from '../services/CctpAttestationWorker';
 import { IntentEngine } from '../services/IntentEngine';
@@ -80,6 +83,7 @@ export interface RuntimeContext {
   walletLiquidator: WalletLiquidator;
   erc7683Adapter: Erc7683Adapter;
   solversRepository?: PostgresSolversRepository;
+  partnerRepository?: PartnerRepository;
   idempotency: IdempotencyStore;
   nonceStore: RelayerNonceStore;
   usdOracle: NativeUsdOracle;
@@ -246,7 +250,14 @@ export async function buildRuntime(options: RuntimeOptions = {}): Promise<Runtim
   const hyperlaneNexusMonitorWorker = railExecutionManager.getInstance<HyperlaneNexusMonitorWorker>(Rail.HYPERLANE_NEXUS);
   const optimismNativeBridgeMonitorWorker = railExecutionManager.getInstance<OptimismNativeBridgeMonitorWorker>(Rail.OPTIMISM_NATIVE_BRIDGE);
 
-  const apiKeyManager = enablePartnerApi ? new ApiKeyManager() : undefined;
+  const partnerRepository: PartnerRepository | undefined = postgres
+    ? new PostgresPartnerRepository(postgres.pool)
+    : enablePartnerApi
+      ? new InMemoryPartnerRepository()
+      : undefined;
+  const apiKeyManager = enablePartnerApi && partnerRepository
+    ? new ApiKeyManager({ repository: partnerRepository })
+    : undefined;
   const partnerApiRouter = apiKeyManager
     ? buildPartnerAPI(apiKeyManager, intentService, quoteEngine, rpcProviderRegistry, idempotency, {
         basketQuoteEngine,
@@ -287,6 +298,7 @@ export async function buildRuntime(options: RuntimeOptions = {}): Promise<Runtim
     walletLiquidator,
     erc7683Adapter,
     solversRepository,
+    partnerRepository,
     idempotency,
     nonceStore,
     usdOracle,

@@ -14,6 +14,7 @@
     "tx:send:calldata": "node src/vps/scripts/sendBridgeCalldata.js",
     "tx:send:thor": "node src/vps/scripts/sendThorchainTx.js",
     "vps:api": "tsx src/vps/app/api.ts",
+    "vps:partner-api": "tsx src/vps/app/partner-api.ts",
     "vps:worker": "tsx src/vps/app/worker.ts"
   },
   "devDependencies": {

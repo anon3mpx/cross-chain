@@ -4,7 +4,7 @@
 // ─────────────────────────────────────────────────────────
 import express, { Request, Response, NextFunction } from 'express';
 import { createHash } from 'node:crypto';
-import { ApiKeyManager, PartnerTier } from '../services/ApiKeyManager';
+import { ApiKeyManager, PARTNER_TIER_DEFINITIONS, PartnerTier } from '../services/ApiKeyManager';
 import { IntentEngine } from '../services/IntentEngine';
 import { IntentService } from '../services/IntentService';
 import { QuoteEngine } from '../services/QuoteEngine';
@@ -51,12 +51,12 @@ export function buildPartnerAPI(
   // ── POST /partner/register ─────────────────────────────────────────────────
   // Self-service registration — returns apiKey + webhookSecret.
   // In production this would require email verification.
-  router.post('/register', (req: Request, res: Response) => {
+  router.post('/register', async (req: Request, res: Response) => {
     const { name, contactEmail, payoutAddress, webhookUrl } = req.body;
     if (!name || !contactEmail) {
       return res.status(400).json({ error: 'name and contactEmail required' });
     }
-    const partner = keyManager.registerPartner({
+    const partner = await keyManager.registerPartner({
       name, contactEmail, payoutAddress, webhookUrl,
       tier: PartnerTier.FREE,
       feeShareBps: 0,
@@ -77,13 +77,20 @@ export function buildPartnerAPI(
     });
   });
 
+  router.get('/tiers', (_req: Request, res: Response) => {
+    res.json({
+      tiers: PARTNER_TIER_DEFINITIONS,
+      defaultTier: PartnerTier.FREE,
+    });
+  });
+
   // ── Auth middleware — mandatory, no fallback ───────────────────────────────
   const requireKey = (req: Request, res: Response, next: NextFunction) => {
     const key = req.headers['x-api-key'] as string | undefined;
     if (!key) {
       return res.status(401).json({
         error: 'UNREGISTERED',
-        message: 'API key required. Register at https://ruflo.io/developers',
+        message: 'API key required. Register through POST /partner/register on https://partners.empx.io.',
       });
     }
     (req as any).apiKey = key;
@@ -94,7 +101,7 @@ export function buildPartnerAPI(
   // ── POST /partner/quote ────────────────────────────────────────────────────
   router.post('/quote', async (req: Request, res: Response) => {
     const apiKey = (req as any).apiKey;
-    const check  = keyManager.checkQuote(apiKey);
+    const check = await keyManager.checkQuote(apiKey);
     if (!check.allowed) {
       if (check.reason === 'RATE_LIMIT') res.set('Retry-After', '60');
       return res.status(check.reason === 'UNREGISTERED' || check.reason === 'INVALID_KEY' ? 401 : 429).json({
@@ -145,7 +152,7 @@ export function buildPartnerAPI(
         partnerEarnings: {
           rebatePerTx:   partnerRebate.toString(),
           feeShareBps:   check.partner.feeShareBps,
-          claimableNow:  keyManager.getRebateSummary(apiKey).totalUSDC,
+          claimableNow: (await keyManager.getRebateSummary(apiKey)).totalUSDC,
         },
       });
     } catch (err) {
@@ -162,7 +169,7 @@ export function buildPartnerAPI(
 
   router.post('/swap-single-chain', async (req: Request, res: Response) => {
     const apiKey = (req as any).apiKey;
-    const check = keyManager.checkQuote(apiKey);
+    const check = await keyManager.checkQuote(apiKey);
     if (!check.allowed) {
       if (check.reason === 'RATE_LIMIT') res.set('Retry-After', '60');
       return res.status(check.reason === 'UNREGISTERED' || check.reason === 'INVALID_KEY' ? 401 : 429).json({
@@ -200,7 +207,7 @@ export function buildPartnerAPI(
 
   router.post('/quote/select', async (req: Request, res: Response) => {
     const apiKey = (req as any).apiKey;
-    const check  = keyManager.validateKey(apiKey);
+    const check = await keyManager.validateKey(apiKey);
     if (!check.allowed) {
       return res.status(401).json({ error: check.reason });
     }
@@ -253,7 +260,7 @@ export function buildPartnerAPI(
         partnerEarnings: {
           rebatePerTx: partnerRebate.toString(),
           feeShareBps: check.partner.feeShareBps,
-          claimableNow: keyManager.getRebateSummary(apiKey).totalUSDC,
+          claimableNow: (await keyManager.getRebateSummary(apiKey)).totalUSDC,
         },
         integration,
       });
@@ -271,7 +278,7 @@ export function buildPartnerAPI(
 
   router.post('/intent/:id/submitted', async (req: Request, res: Response) => {
     const apiKey = (req as any).apiKey as string;
-    const check = keyManager.validateKey(apiKey);
+    const check = await keyManager.validateKey(apiKey);
     if (!check.allowed) return res.status(401).json({ error: check.reason });
 
     try {
@@ -531,7 +538,7 @@ export function buildPartnerAPI(
 
   // ── GET /partner/intent/:id ────────────────────────────────────────────────
   router.get('/intent/:id', async (req: Request, res: Response) => {
-    const check = keyManager.validateKey((req as any).apiKey);
+    const check = await keyManager.validateKey((req as any).apiKey);
     if (!check.allowed) return res.status(401).json({ error: check.reason });
 
     const intentId = String(req.params.id);
@@ -562,22 +569,22 @@ export function buildPartnerAPI(
 
   // ── GET /partner/rebates ───────────────────────────────────────────────────
   // Show accrued rebates per chain — call anytime to check yield.
-  router.get('/rebates', (req: Request, res: Response) => {
+  router.get('/rebates', async (req: Request, res: Response) => {
     const apiKey = (req as any).apiKey;
-    const check  = keyManager.validateKey(apiKey);
+    const check = await keyManager.validateKey(apiKey);
     if (!check.allowed) return res.status(401).json({ error: check.reason });
     if (check.partner.tier === PartnerTier.FREE) {
       return res.status(403).json({ error: 'UPGRADE_REQUIRED', message: 'Fee sharing available on Growth tier and above.' });
     }
-    res.json(keyManager.getRebateSummary(apiKey));
+    res.json(await keyManager.getRebateSummary(apiKey));
   });
 
   // ── POST /partner/withdraw ─────────────────────────────────────────────────
   // Pull-based withdrawal: partner calls this to claim their accrued rebate.
   // In production: this triggers an on-chain USDC transfer to partner.payoutAddress.
-  router.post('/withdraw', (req: Request, res: Response) => {
+  router.post('/withdraw', async (req: Request, res: Response) => {
     const apiKey  = (req as any).apiKey;
-    const check   = keyManager.validateKey(apiKey);
+    const check = await keyManager.validateKey(apiKey);
     if (!check.allowed) return res.status(401).json({ error: check.reason });
     if (check.partner.tier === PartnerTier.FREE) {
       return res.status(403).json({ error: 'UPGRADE_REQUIRED' });
@@ -606,12 +613,12 @@ export function buildPartnerAPI(
 
   // ── POST /partner/webhook/test ─────────────────────────────────────────────
   router.post('/webhook/test', async (req: Request, res: Response) => {
-    const check = keyManager.validateKey((req as any).apiKey);
+    const check = await keyManager.validateKey((req as any).apiKey);
     if (!check.allowed || !check.partner.webhookUrl) {
       return res.status(400).json({ error: 'NO_WEBHOOK_CONFIGURED' });
     }
     const body = JSON.stringify({ event: 'WEBHOOK_TEST', ts: Date.now() });
-    const sig  = keyManager.signWebhookPayload((req as any).apiKey, body);
+    const sig  = await keyManager.signWebhookPayload((req as any).apiKey, body);
     try {
       const response = await fetch(check.partner.webhookUrl, {
         method: 'POST',
@@ -662,7 +669,7 @@ export function setupWebhookPush(intentEngine: IntentEngine, keyManager: ApiKeyM
   intentEngine.onStateChange(async (intent) => {
     const apiKey = (intent as any).partnerApiKey as string | undefined;
     if (!apiKey) return;
-    const result = keyManager.validateKey(apiKey);
+    const result = await keyManager.validateKey(apiKey);
     if (!result.allowed || !result.partner.webhookUrl) return;
 
     const body = JSON.stringify({
@@ -672,7 +679,7 @@ export function setupWebhookPush(intentEngine: IntentEngine, keyManager: ApiKeyM
       dstTxHash: intent.dstTxHash,
       ts:        Date.now(),
     });
-    const sig = keyManager.signWebhookPayload(apiKey, body);
+    const sig = await keyManager.signWebhookPayload(apiKey, body);
 
     try {
       await fetch(result.partner.webhookUrl, {
@@ -686,7 +693,7 @@ export function setupWebhookPush(intentEngine: IntentEngine, keyManager: ApiKeyM
 
 // ── Error messages ─────────────────────────────────────────────────────────────
 const LIMIT_MESSAGES: Record<string, string> = {
-  UNREGISTERED:   'Register at https://ruflo.io/developers to get an API key.',
+  UNREGISTERED:   'Register through POST /partner/register on https://partners.empx.io to get an API key.',
   INVALID_KEY:    'API key not found. Check your key or re-register.',
   INACTIVE:       'Your account has been suspended. Contact support.',
   RATE_LIMIT:     'Quote rate limit exceeded. Retry after 60s or upgrade your tier.',

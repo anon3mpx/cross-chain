@@ -105,7 +105,7 @@ test('PartnerAPI surfaces explicit destination-gas downgrade reasons when auto-f
   delete process.env.ENABLE_AUTO_FUND_DESTINATION_GAS;
 
   const keyManager = new ApiKeyManager();
-  const partner = keyManager.registerPartner({
+  const partner = await keyManager.registerPartner({
     active: true,
     contactEmail: 'ops@example.com',
     feeShareBps: 0,
@@ -165,7 +165,7 @@ test('PartnerAPI returns auto-attached destination-gas details and forwards the 
   process.env.ENABLE_AUTO_FUND_DESTINATION_GAS = '1';
 
   const keyManager = new ApiKeyManager();
-  const partner = keyManager.registerPartner({
+  const partner = await keyManager.registerPartner({
     active: true,
     contactEmail: 'ops@example.com',
     feeShareBps: 0,

@@ -15,7 +15,7 @@ User / Partner App
    VPS Orchestrator  ──────────────────────────────────────────
    │ QuoteEngine      │ RailSelector     │ IntentEngine        │
    │ EventMonitor     │ RecoveryEngine   │ PaymasterService    │
-   │ PartnerAPI       │ WebSocketAPI     │ RufloSDK            │
+   │ PartnerAPI       │ WebSocketAPI     │ EmpxCrossChainSDK   │
         │
    ┌────┴──────────────────────────────────────────┐
    │            RAIL LAYER                         │
@@ -62,7 +62,7 @@ User-facing protocol pricing is fixed at `0.15%` regardless of the selected rail
 ## Project Structure
 
 ```
-ruflo/
+empx-cross-chain/
 ├── src/
 │   ├── contracts/
 │   │   ├── interfaces/
@@ -94,7 +94,7 @@ ruflo/
 │       │   ├── StatusAPI.ts          Public health + status endpoints
 │       │   └── WebSocketAPI.ts       Real-time intent status streaming
 │       └── sdk/
-│           └── RufloSDK.ts           Client-facing TypeScript SDK
+│           └── EmpxCrossChainSDK.ts  Client-facing TypeScript SDK
 ├── docs/
 │   ├── cross-chain-swap-architecture-report.md
 │   ├── system-walkthrough.md
@@ -111,16 +111,16 @@ ruflo/
 ## Quick Start — Partner Integration
 
 ```bash
-npm install @ruflo/sdk
+npm install @empx-cross-chain/sdk
 ```
 
 ```typescript
-import { RufloSDK, CHAIN_ID } from '@ruflo/sdk';
+import { EmpxCrossChainSDK, CHAIN_ID } from '@empx-cross-chain/sdk';
 
-const ruflo = new RufloSDK({ apiKey: 'rflo_your_key_here' });
+const empx = new EmpxCrossChainSDK({ apiKey: 'your_key_here' });
 
 // EVM → EVM
-const swap = await ruflo.swap({
+const swap = await empx.swap({
   from: { chainId: CHAIN_ID.ARB,  token: '0xARBaddr', amount: '100' },
   to:   { chainId: CHAIN_ID.BASE, token: '0xTokenAddr' },
   wallet: '0xUserWallet',
@@ -132,7 +132,7 @@ const result = await swap.settle();       // resolves when settled on destinatio
 
 ### EVM → Native Bitcoin
 ```typescript
-const swap = await ruflo.swap({
+const swap = await empx.swap({
   from: { chainId: CHAIN_ID.ETH, token: 'NATIVE', amount: '0.1' },
   to:   { chainId: CHAIN_ID.BTC, token: 'BTC', nativeAddress: 'bc1q...' },
   wallet: '0xUserWallet',
@@ -141,7 +141,7 @@ const swap = await ruflo.swap({
 
 ### Get API Key
 ```bash
-curl -X POST https://api.ruflo.io/partner/register \
+curl -X POST https://partners.empx.io/partner/register \
   -H "content-type: application/json" \
   -d '{ "name": "My App", "contactEmail": "dev@example.com" }'
 ```
@@ -150,12 +150,12 @@ curl -X POST https://api.ruflo.io/partner/register \
 
 ## Partner Tiers
 
-| Tier | Quotes/min | Tx/day | Fee Rebate | SLA |
-|---|---|---|---|---|
-| FREE | 60 | 500 | 0% | — |
-| GROWTH | 300 | 5,000 | 15% | — |
-| PARTNER | 600 | 10,000 | 20% | 99.5% |
-| ENTERPRISE | 6,000 | 500,000 | 30% | 99.9% |
+| Tier | Quotes/min | Tx/day | Fee Rebate | SLA | Access |
+|---|---:|---:|---:|---|---|
+| FREE | 60 | 500 | 0% | none | Self-serve API registration |
+| GROWTH | 300 | 5,000 | 15% | none | Approval or paid growth plan |
+| PARTNER | 600 | 10,000 | 20% | 99.5% | Revenue-share agreement |
+| ENTERPRISE | 6,000 | 500,000 | 30% | 99.9% | Custom contract |
 
 Claim rebates anytime: `POST /partner/withdraw`
 
@@ -183,7 +183,7 @@ User signs one UserOp containing:
   1. approve(Paymaster, gasTokenFee)   ← atomic
   2. RouterV1.initiateSwap(intent)     ← atomic
   → Pimlico bundler submits
-  → RufloPaymaster sponsors ETH gas
+  → EMPX Paymaster sponsors ETH gas
   → Fee deducted from input token
 ```
 

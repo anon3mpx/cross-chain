@@ -4,115 +4,125 @@
 // Tracks per-partner rebate accrual with pull-based withdrawal.
 // ─────────────────────────────────────────────────────────
 import crypto from 'crypto';
+import { InMemoryPartnerRepository } from '../db/InMemoryPartnerRepository';
+import type { PartnerRepository, StoredPartner } from '../db/PartnerRepository';
+import { PARTNER_TIER_DEFINITIONS, PartnerTier } from './PartnerTiers';
 
-export enum PartnerTier {
-  FREE       = 'FREE',       // Registered, no fee share, capped volume
-  GROWTH     = 'GROWTH',     // Approved, 15% fee share, higher limits
-  PARTNER    = 'PARTNER',    // Revenue share agreement, 20% fee share
-  ENTERPRISE = 'ENTERPRISE', // Custom contract, 30% fee share
-}
+export { PARTNER_TIER_DEFINITIONS, PartnerTier };
 
 export interface PartnerConfig {
-  apiKey:          string;
-  webhookSecret:   string;    // HMAC secret for signing webhook payloads
-  tier:            PartnerTier;
-  name:            string;
-  contactEmail:    string;
-  feeShareBps:     number;
-  quotesPerMin:    number;
-  maxTxPerDay:     number;
-  webhookUrl?:     string;
+  apiKey: string;
+  webhookSecret: string;
+  tier: PartnerTier;
+  name: string;
+  contactEmail: string;
+  feeShareBps: number;
+  quotesPerMin: number;
+  maxTxPerDay: number;
+  webhookUrl?: string;
   allowedOrigins?: string[];
-  payoutAddress?:  string;    // EVM address to receive rebate payouts (USDC)
-  active:          boolean;
-  registeredAt:    number;
+  payoutAddress?: string;
+  active: boolean;
+  registeredAt: number;
 }
 
 export interface RateLimitState {
-  windowStart:  number;
-  quoteCount:   number;
-  txCount:      number;
-  txCountDate:  string;
-  quotesTotal:  number;
-  execsTotal:   number;
+  windowStart: number;
+  quoteCount: number;
+  txCount: number;
+  txCountDate: string;
+  quotesTotal: number;
+  execsTotal: number;
 }
 
-// Per-chain accrued rebates: apiKey → chainId → amount (in USDC 6-dec units)
-type RebateStore = Map<string, Map<number, bigint>>;
-
-const TIER_DEFAULTS: Record<PartnerTier, Pick<PartnerConfig, 'feeShareBps' | 'quotesPerMin' | 'maxTxPerDay'>> = {
-  [PartnerTier.FREE]:       { feeShareBps: 0,    quotesPerMin: 60,    maxTxPerDay: 500     },
-  [PartnerTier.GROWTH]:     { feeShareBps: 1500, quotesPerMin: 300,   maxTxPerDay: 5_000   },
-  [PartnerTier.PARTNER]:    { feeShareBps: 2000, quotesPerMin: 600,   maxTxPerDay: 10_000  },
-  [PartnerTier.ENTERPRISE]: { feeShareBps: 3000, quotesPerMin: 6_000, maxTxPerDay: 500_000 },
-};
-
-// Abuse: if quote:execute > 80:1 after 1000 quotes, throttle
-const ABUSE_RATIO    = 80;
-const ABUSE_MIN_QUOTES = 1000;
-
 export type RateLimitResult =
-  | { allowed: true;  partner: PartnerConfig }
+  | { allowed: true; partner: PartnerConfig }
   | { allowed: false; reason: 'UNREGISTERED' | 'INVALID_KEY' | 'RATE_LIMIT' | 'DAILY_LIMIT' | 'INACTIVE' | 'ABUSE_DETECTED' };
 
 export interface RebateSummary {
-  apiKey:       string;
-  tier:         PartnerTier;
-  feeShareBps:  number;
+  apiKey: string;
+  tier: PartnerTier;
+  feeShareBps: number;
   payoutAddress?: string;
-  chains:       Record<number, string>;   // chainId → accrued USDC amount string
-  totalUSDC:    string;                   // sum across all chains
+  chains: Record<number, string>;
+  totalUSDC: string;
 }
 
+export interface ApiKeyManagerOptions {
+  repository?: PartnerRepository;
+}
+
+type RebateStore = Map<string, Map<number, bigint>>;
+
+const ABUSE_RATIO = 80;
+const ABUSE_MIN_QUOTES = 1000;
+const API_KEY_PREFIX_LENGTH = 12;
+
 export class ApiKeyManager {
-  private partners    = new Map<string, PartnerConfig>();
-  private rateLimits  = new Map<string, RateLimitState>();
-  private rebates:      RebateStore = new Map();
+  private readonly repository: PartnerRepository;
+  private readonly rateLimits = new Map<string, RateLimitState>();
+  private readonly rebates: RebateStore = new Map();
+  private readonly webhookSecretsByHash = new Map<string, string>();
+
+  constructor(options: ApiKeyManagerOptions = {}) {
+    this.repository = options.repository ?? new InMemoryPartnerRepository();
+  }
 
   // ── Registration (mandatory — no anonymous callers) ────────────────────────
 
-  registerPartner(config: Omit<PartnerConfig, 'apiKey' | 'webhookSecret' | 'registeredAt'>): PartnerConfig {
-    const apiKey       = this._generateKey();
+  async registerPartner(config: Omit<PartnerConfig, 'apiKey' | 'webhookSecret' | 'registeredAt'>): Promise<PartnerConfig> {
+    const apiKey = this.generateKey();
     const webhookSecret = crypto.randomBytes(32).toString('hex');
+    const tierDefaults = PARTNER_TIER_DEFINITIONS[config.tier];
+    const registeredAt = Date.now();
     const full: PartnerConfig = {
       ...config,
-      ...TIER_DEFAULTS[config.tier],
-      // Allow overrides from config
-      feeShareBps:  config.feeShareBps  ?? TIER_DEFAULTS[config.tier].feeShareBps,
-      quotesPerMin: config.quotesPerMin ?? TIER_DEFAULTS[config.tier].quotesPerMin,
-      maxTxPerDay:  config.maxTxPerDay  ?? TIER_DEFAULTS[config.tier].maxTxPerDay,
+      feeShareBps: config.feeShareBps ?? tierDefaults.feeShareBps,
+      quotesPerMin: config.quotesPerMin ?? tierDefaults.quotesPerMin,
+      maxTxPerDay: config.maxTxPerDay ?? tierDefaults.maxTxPerDay,
       apiKey,
       webhookSecret,
-      registeredAt: Date.now(),
+      registeredAt,
     };
-    this.partners.set(apiKey, full);
-    this.rateLimits.set(apiKey, this._freshState());
-    this.rebates.set(apiKey, new Map());
-    return full;
+    const apiKeyHash = this.hashSecret(apiKey);
+    const stored = await this.repository.createPartner({
+      ...full,
+      id: this.partnerIdFromApiKey(apiKey),
+      apiKeyHash,
+      apiKeyPrefix: this.apiKeyPrefix(apiKey),
+      webhookSecretHash: this.hashSecret(webhookSecret),
+    });
+    this.webhookSecretsByHash.set(apiKeyHash, webhookSecret);
+    this.rateLimits.set(apiKeyHash, this.freshState());
+    this.rebates.set(apiKeyHash, new Map());
+    return this.toPartnerConfig(stored, apiKey, webhookSecret);
   }
 
-  updateTier(apiKey: string, tier: PartnerTier): void {
-    const p = this._mustGet(apiKey);
-    Object.assign(p, TIER_DEFAULTS[tier], { tier });
+  async updateTier(apiKey: string, tier: PartnerTier): Promise<void> {
+    const apiKeyHash = this.hashSecret(apiKey);
+    await this.repository.updateTier(apiKeyHash, tier);
   }
 
-  deactivate(apiKey: string): void { this._mustGet(apiKey).active = false; }
-  reactivate(apiKey: string): void { this._mustGet(apiKey).active = true; }
+  async deactivate(apiKey: string): Promise<void> {
+    await this.repository.setActive(this.hashSecret(apiKey), false);
+  }
+
+  async reactivate(apiKey: string): Promise<void> {
+    await this.repository.setActive(this.hashSecret(apiKey), true);
+  }
 
   // ── Rate-limit checks ──────────────────────────────────────────────────────
 
-  checkQuote(apiKey: string | undefined): RateLimitResult {
-    if (!apiKey) return { allowed: false, reason: 'UNREGISTERED' };
-    const partner = this.partners.get(apiKey);
-    if (!partner)        return { allowed: false, reason: 'INVALID_KEY' };
-    if (!partner.active) return { allowed: false, reason: 'INACTIVE' };
+  async checkQuote(apiKey: string | undefined): Promise<RateLimitResult> {
+    const check = await this.validateKey(apiKey);
+    if (!check.allowed) return check;
 
-    const state = this._getState(apiKey);
+    const state = this.getState(this.hashSecret(apiKey!));
     if (Date.now() - state.windowStart > 60_000) {
       state.windowStart = Date.now();
-      state.quoteCount  = 0;
+      state.quoteCount = 0;
     }
-    if (state.quoteCount >= partner.quotesPerMin) return { allowed: false, reason: 'RATE_LIMIT' };
+    if (state.quoteCount >= check.partner.quotesPerMin) return { allowed: false, reason: 'RATE_LIMIT' };
 
     if (state.quotesTotal > ABUSE_MIN_QUOTES && state.execsTotal > 0) {
       if ((state.quotesTotal / state.execsTotal) > ABUSE_RATIO) {
@@ -120,37 +130,38 @@ export class ApiKeyManager {
       }
     }
 
-    state.quoteCount++;
-    state.quotesTotal++;
-    return { allowed: true, partner };
+    state.quoteCount += 1;
+    state.quotesTotal += 1;
+    return check;
   }
 
-  checkSubmit(apiKey: string | undefined): RateLimitResult {
-    if (!apiKey) return { allowed: false, reason: 'UNREGISTERED' };
-    const partner = this.partners.get(apiKey);
-    if (!partner)        return { allowed: false, reason: 'INVALID_KEY' };
-    if (!partner.active) return { allowed: false, reason: 'INACTIVE' };
+  async checkSubmit(apiKey: string | undefined): Promise<RateLimitResult> {
+    const check = await this.validateKey(apiKey);
+    if (!check.allowed) return check;
 
-    const state = this._getState(apiKey);
+    const state = this.getState(this.hashSecret(apiKey!));
     const today = new Date().toISOString().slice(0, 10);
-    if (state.txCountDate !== today) { state.txCountDate = today; state.txCount = 0; }
-    if (state.txCount >= partner.maxTxPerDay) return { allowed: false, reason: 'DAILY_LIMIT' };
+    if (state.txCountDate !== today) {
+      state.txCountDate = today;
+      state.txCount = 0;
+    }
+    if (state.txCount >= check.partner.maxTxPerDay) return { allowed: false, reason: 'DAILY_LIMIT' };
 
-    state.txCount++;
-    state.execsTotal++;
-    return { allowed: true, partner };
+    state.txCount += 1;
+    state.execsTotal += 1;
+    return check;
   }
 
   /**
    * Validates API key presence/existence/activity without mutating counters.
    * Use for read-only endpoints and webhook delivery paths.
    */
-  validateKey(apiKey: string | undefined): RateLimitResult {
+  async validateKey(apiKey: string | undefined): Promise<RateLimitResult> {
     if (!apiKey) return { allowed: false, reason: 'UNREGISTERED' };
-    const partner = this.partners.get(apiKey);
+    const partner = await this.repository.findByApiKeyHash(this.hashSecret(apiKey));
     if (!partner) return { allowed: false, reason: 'INVALID_KEY' };
     if (!partner.active) return { allowed: false, reason: 'INACTIVE' };
-    return { allowed: true, partner };
+    return { allowed: true, partner: this.toPartnerConfig(partner, apiKey) };
   }
 
   // ── Fee split + rebate accrual ─────────────────────────────────────────────
@@ -160,60 +171,96 @@ export class ApiKeyManager {
     return { platformFee: grossFee - partnerRebate, partnerRebate };
   }
 
-  // Called by IntentEngine after each settled intent
   accrueRebate(apiKey: string, chainId: number, amountUSDC: bigint): void {
-    if (!this.rebates.has(apiKey)) this.rebates.set(apiKey, new Map());
-    const chain = this.rebates.get(apiKey)!;
+    const apiKeyHash = this.hashSecret(apiKey);
+    if (!this.rebates.has(apiKeyHash)) this.rebates.set(apiKeyHash, new Map());
+    const chain = this.rebates.get(apiKeyHash)!;
     chain.set(chainId, (chain.get(chainId) ?? 0n) + amountUSDC);
   }
 
-  // Pull-based: partner calls /partner/withdraw to claim. Returns amount and resets.
   claimRebate(apiKey: string, chainId: number): bigint {
-    const chain = this.rebates.get(apiKey);
+    const chain = this.rebates.get(this.hashSecret(apiKey));
     if (!chain) return 0n;
     const amount = chain.get(chainId) ?? 0n;
     chain.set(chainId, 0n);
     return amount;
   }
 
-  getRebateSummary(apiKey: string): RebateSummary {
-    const partner = this._mustGet(apiKey);
-    const chain   = this.rebates.get(apiKey) ?? new Map<number, bigint>();
+  async getRebateSummary(apiKey: string): Promise<RebateSummary> {
+    const check = await this.validateKey(apiKey);
+    if (!check.allowed) throw new Error(`Partner not found: ${apiKey}`);
+    const chain = this.rebates.get(this.hashSecret(apiKey)) ?? new Map<number, bigint>();
     const chains: Record<number, string> = {};
     let total = 0n;
-    chain.forEach((amt, cid) => { chains[cid] = amt.toString(); total += amt; });
+    chain.forEach((amt, cid) => {
+      chains[cid] = amt.toString();
+      total += amt;
+    });
     return {
       apiKey,
-      tier:         partner.tier,
-      feeShareBps:  partner.feeShareBps,
-      payoutAddress: partner.payoutAddress,
+      tier: check.partner.tier,
+      feeShareBps: check.partner.feeShareBps,
+      payoutAddress: check.partner.payoutAddress,
       chains,
-      totalUSDC:    total.toString(),
+      totalUSDC: total.toString(),
     };
   }
 
   // ── Webhook signing ────────────────────────────────────────────────────────
 
-  signWebhookPayload(apiKey: string, body: string): string {
-    const secret = this.partners.get(apiKey)?.webhookSecret ?? '';
+  async signWebhookPayload(apiKey: string, body: string): Promise<string> {
+    const apiKeyHash = this.hashSecret(apiKey);
+    const partner = await this.repository.findByApiKeyHash(apiKeyHash);
+    const cachedSecret = this.webhookSecretsByHash.get(apiKeyHash);
+    // Durable storage keeps the webhook secret hash. Runtime-created partners use
+    // the original secret for HMAC compatibility; restarted processes fall back
+    // to the hash until encrypted webhook-secret storage is added.
+    const secret = cachedSecret ?? partner?.webhookSecretHash ?? '';
     return crypto.createHmac('sha256', secret).update(body).digest('hex');
   }
 
   // ── Internal ───────────────────────────────────────────────────────────────
 
-  private _generateKey(): string {
+  private generateKey(): string {
     return 'rflo_' + crypto.randomBytes(24).toString('hex');
   }
-  private _mustGet(apiKey: string): PartnerConfig {
-    const p = this.partners.get(apiKey);
-    if (!p) throw new Error(`Partner not found: ${apiKey}`);
-    return p;
+
+  private hashSecret(value: string): string {
+    return crypto.createHash('sha256').update(value).digest('hex');
   }
-  private _getState(key: string): RateLimitState {
-    if (!this.rateLimits.has(key)) this.rateLimits.set(key, this._freshState());
-    return this.rateLimits.get(key)!;
+
+  private apiKeyPrefix(apiKey: string): string {
+    return apiKey.slice(0, API_KEY_PREFIX_LENGTH);
   }
-  private _freshState(): RateLimitState {
+
+  private partnerIdFromApiKey(apiKey: string): string {
+    return `ptn_${this.hashSecret(apiKey).slice(0, 24)}`;
+  }
+
+  private getState(apiKeyHash: string): RateLimitState {
+    if (!this.rateLimits.has(apiKeyHash)) this.rateLimits.set(apiKeyHash, this.freshState());
+    return this.rateLimits.get(apiKeyHash)!;
+  }
+
+  private freshState(): RateLimitState {
     return { windowStart: Date.now(), quoteCount: 0, txCount: 0, txCountDate: '', quotesTotal: 0, execsTotal: 0 };
+  }
+
+  private toPartnerConfig(partner: StoredPartner, apiKey: string, webhookSecret = ''): PartnerConfig {
+    return {
+      apiKey,
+      webhookSecret,
+      tier: partner.tier,
+      name: partner.name,
+      contactEmail: partner.contactEmail,
+      feeShareBps: partner.feeShareBps,
+      quotesPerMin: partner.quotesPerMin,
+      maxTxPerDay: partner.maxTxPerDay,
+      webhookUrl: partner.webhookUrl,
+      allowedOrigins: partner.allowedOrigins,
+      payoutAddress: partner.payoutAddress,
+      active: partner.active,
+      registeredAt: partner.registeredAt,
+    };
   }
 }

@@ -9,7 +9,7 @@ import { IntentStatus, Rail } from '../../src/vps/types';
 
 test('WebSocketAPI accepts API key auth via Sec-WebSocket-Protocol', async () => {
   const keyManager = new ApiKeyManager();
-  const partner = keyManager.registerPartner({
+  const partner = await keyManager.registerPartner({
     active: true,
     contactEmail: 'ops@example.com',
     feeShareBps: 0,

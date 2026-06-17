@@ -24,7 +24,7 @@ async function listen(app: express.Express) {
 
 test('PartnerAPI exposes basket quote and solver list surfaces', async () => {
   const keyManager = new ApiKeyManager();
-  const partner = keyManager.registerPartner({
+  const partner = await keyManager.registerPartner({
     active: true,
     contactEmail: 'ops@example.com',
     feeShareBps: 0,
@@ -90,7 +90,7 @@ test('PartnerAPI exposes basket quote and solver list surfaces', async () => {
 
 test('PartnerAPI rejects ERC-7683 solver requests for inactive solvers', async () => {
   const keyManager = new ApiKeyManager();
-  const partner = keyManager.registerPartner({
+  const partner = await keyManager.registerPartner({
     active: true,
     contactEmail: 'ops@example.com',
     feeShareBps: 0,

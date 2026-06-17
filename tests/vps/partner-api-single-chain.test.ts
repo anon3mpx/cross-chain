@@ -26,7 +26,7 @@ async function listen(app: express.Express) {
 
 test('PartnerAPI exposes same-chain swap route and forwards execution context metadata', async () => {
   const keyManager = new ApiKeyManager();
-  const partner = keyManager.registerPartner({
+  const partner = await keyManager.registerPartner({
     active: true,
     contactEmail: 'ops@example.com',
     feeShareBps: 0,

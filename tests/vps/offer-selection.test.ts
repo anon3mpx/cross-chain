@@ -235,7 +235,7 @@ test('partner quote selection creates an intent from the selected offer', async 
 
     const intentService = new IntentService(new IntentEngine());
     const keyManager = new ApiKeyManager();
-    const partner = keyManager.registerPartner({
+    const partner = await keyManager.registerPartner({
       name: 'Test Partner',
       contactEmail: 'partner@example.com',
       tier: PartnerTier.GROWTH,
@@ -379,7 +379,7 @@ test('partner quote selection returns fallback offers when selected offer is una
 
     const intentService = new IntentService(new IntentEngine());
     const keyManager = new ApiKeyManager();
-    const partner = keyManager.registerPartner({
+    const partner = await keyManager.registerPartner({
       name: 'Test Partner',
       contactEmail: 'partner@example.com',
       tier: PartnerTier.GROWTH,

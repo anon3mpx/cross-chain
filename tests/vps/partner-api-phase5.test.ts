@@ -61,7 +61,7 @@ function makePhase5Quote(intentId: string): QuoteResult {
 
 test('PartnerAPI accepts provider-direct submitted callbacks for partner-owned intents', async () => {
   const keyManager = new ApiKeyManager();
-  const partner = keyManager.registerPartner({
+  const partner = await keyManager.registerPartner({
     active: true,
     contactEmail: 'ops@example.com',
     feeShareBps: 0,

@@ -1,12 +1,12 @@
 # Partner API Service Split And WebSocket Plan
 
 > Date: June 8, 2026
-> Scope: current serving model for frontend/status APIs, partner APIs, and WebSocket status streaming; recommended split into separate subdomains/services
+> Scope: implemented serving model for frontend/status APIs, partner APIs, and WebSocket status streaming; recommended split into separate subdomains/services
 
 ## Purpose
 
 This note records the current runtime topology in `ruflo`, what is actually
-being served today, and the recommended path for separating:
+being served today, and the boundary between:
 
 - app-facing APIs for the EMPX frontend/dapp
 - partner-facing APIs for external integrators
@@ -28,15 +28,13 @@ It currently:
 
 - builds the base Express app from `buildStatusAPI(...)`
 - mounts admin routes under `/admin`
-- mounts partner routes under `/partner` only when `ENABLE_PARTNER_API=true`
+- does not mount partner routes
 - listens on one host and one port
 
 Relevant code:
 
-- `src/vps/app/api.ts:31`
-- `src/vps/app/api.ts:37`
-- `src/vps/app/api.ts:40`
-- `src/vps/app/api.ts:49`
+- `src/vps/app/api.ts`
+- `src/vps/app/http.ts`
 
 ### 2. Status/public REST surface
 
@@ -60,21 +58,25 @@ Partner endpoints are implemented in:
 
 - `src/vps/api/PartnerAPI.ts`
 
-They are not served by a separate process today. They are only mounted into
-the same main Express app when enabled in runtime.
+They are served by a dedicated partner process:
+
+- `src/vps/app/partner-api.ts`
+
+The partner process enables `buildRuntime({ enablePartnerApi: true })`, mounts
+the partner router under `/partner`, and applies partner-specific CORS from
+`PARTNER_API_CORS_ORIGIN`.
 
 Runtime wiring:
 
-- `src/vps/app/runtime.ts:84`
-- `src/vps/app/runtime.ts:174`
-- `src/vps/app/runtime.ts:176`
+- `src/vps/app/partner-api.ts`
+- `src/vps/app/runtime.ts`
 
 Mount point:
 
-- `src/vps/app/api.ts:37`
+- `src/vps/app/http.ts`
 
-So, if partner API is enabled on the current deployment, these routes would
-exist on the same host as the status/public app:
+So, when `partners.empx.io` is routed to the partner service, these routes exist
+on the partner host:
 
 - `POST /partner/register`
 - `POST /partner/quote`
@@ -155,7 +157,7 @@ surface and avoids mixing partner onboarding concerns into the frontend domain.
 
 ### 2. Service split
 
-Recommended runtime split:
+Implemented runtime split:
 
 - Service A: frontend/status service
   - mounts `buildStatusAPI(...)`
@@ -163,8 +165,8 @@ Recommended runtime split:
   - does not mount partner routes
 - Service B: partner API service
   - mounts `buildPartnerAPI(...)`
-  - does not mount app/public status routes except any partner-specific
-    intent/status endpoints intentionally exposed
+  - does not mount app/public status routes except partner-specific intent
+    status endpoints intentionally exposed by PartnerAPI
 
 This should be implemented as two separate server entrypoints even if both
 reuse the same underlying runtime components.
@@ -216,10 +218,10 @@ That is not a prerequisite for separating partner REST into its own service.
 
 ### Phase A: split REST surfaces
 
-Implement two server entrypoints:
+Implemented two server entrypoints:
 
-- `frontend/status` server
-- `partner` server
+- `src/vps/app/api.ts`
+- `src/vps/app/partner-api.ts`
 
 Expected behavior:
 
@@ -228,7 +230,7 @@ Expected behavior:
 
 ### Phase B: move proxy/ingress rules
 
-At the edge:
+The Docker/Caddy profile now supports:
 
 - route `crosschain.empx.io` to the frontend/status service
 - route `partners.empx.io` to the partner service
@@ -246,8 +248,9 @@ Before broad partner exposure:
 
 - remove any remaining query-string auth fallback for websocket if websocket is
   ever enabled
-- narrow CORS instead of using broad defaults
-- separate partner-specific rate limits from app/public limits
+- set `VPS_CORS_ORIGIN` for app-facing browser origins
+- set `PARTNER_API_CORS_ORIGIN` for partner-facing browser origins
+- tune partner-specific quote and write limits separately from app/public limits
 - consider partner-only logging, audit trails, and API analytics
 
 ### Phase D: add streaming only if justified
@@ -260,35 +263,18 @@ This should remain a separate decision from the REST service split.
 
 ## Future Improvements
 
-### 1. Separate server entrypoints in code
+### 1. Partner-specific CORS and rate limiting
 
-Add dedicated entrypoints such as:
-
-- `src/vps/app/frontendApi.ts`
-- `src/vps/app/partnerApi.ts`
-
-The runtime can still share:
-
-- `IntentService`
-- `QuoteEngine`
-- `RpcProviderRegistry`
-- Postgres-backed stores
-
-But the HTTP surfaces should no longer be co-mounted by default.
-
-### 2. Partner-specific CORS and rate limiting
-
-Today the base app-level middleware is created inside `buildStatusAPI(...)`.
-Once the split is done, partner service middleware should be independent.
+Partner service middleware is independent of `buildStatusAPI(...)`.
 
 Recommended partner-service controls:
 
-- explicit allowed origins if browser-based partner dashboards are expected
+- explicit allowed origins for approved browser-based partner integrations
 - stricter body-size limits
 - partner-specific quote and write limits
 - separate abuse controls from frontend traffic
 
-### 3. Keep `crosschain.empx.io` app-focused
+### 2. Keep `crosschain.empx.io` app-focused
 
 Longer-term, the frontend domain should avoid carrying partner onboarding or
 partner admin behaviors.
