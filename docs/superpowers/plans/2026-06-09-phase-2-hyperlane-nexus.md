@@ -8,6 +8,8 @@
 
 **Scope note:** This plan intentionally implements the narrower executed Phase 2 slice. Any deferred bridge-side solver decomposition or `HyperlaneNexusSolver` migration belongs to the later Phase 3 bridge doc, not this plan.
 
+**Post-migration hardening note:** Hyperlane route metadata should be catalog-backed, not env-per-route backed. Env remains appropriate for `ENABLE_HYPERLANE_NEXUS`, explorer/runtime controls, and non-route defaults, but broad Hyperlane coverage should come from a typed route catalog.
+
 **Tech Stack:** TypeScript, Node.js, `ethers`, current VPS quote/runtime services, `node:test`
 
 ---
@@ -23,9 +25,10 @@
 - [ ] **Step 1: Write the failing quote-worker tests**
 
 Add tests that prove:
-- the worker returns `null` without a configured warp-route env var,
-- the worker returns a 1:1 quote with parsed IGP fee and destination domain when configured,
-- malformed env addresses are rejected.
+- the worker returns `null` without a catalog route,
+- the worker returns a 1:1 quote with parsed IGP fee and destination domain from catalog metadata,
+- malformed or disabled catalog routes are rejected,
+- per-route env config is ignored unless matching catalog metadata exists.
 
 - [ ] **Step 2: Run the quote-worker test and verify it fails**
 
@@ -58,6 +61,7 @@ Expected: FAIL with missing Hyperlane rail/type/worker symbols.
 ### Task 2: Add Hyperlane rail definitions and worker primitives
 
 **Files:**
+- Create: `src/vps/config/hyperlaneNexusRoutes.ts`
 - Create: `src/vps/services/hyperlane/HyperlaneNexusQuoteWorker.ts`
 - Create: `src/vps/services/hyperlane/HyperlaneNexusMonitorWorker.ts`
 - Modify: `src/vps/types/index.ts`
@@ -75,7 +79,8 @@ Update `src/vps/types/index.ts` to add:
 - [ ] **Step 2: Add the quote worker**
 
 Implement `HyperlaneNexusQuoteWorker.ts` with:
-- env-driven warp-route lookup per source chain and `USDC`/`USDT`,
+- catalog-driven warp-route lookup per source chain and `USDC`/`USDT` from `src/vps/config/hyperlaneNexusRoutes.ts`,
+- no env-per-route warp-route fallback,
 - chain-domain mapping for supported EVM chains,
 - IGP fee and ETA overrides,
 - `quote()` returning `null` for unsupported or unconfigured pairs.
