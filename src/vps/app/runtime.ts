@@ -23,6 +23,7 @@ import { LayerZeroValueTransferApiMonitorWorker } from '../services/layerzero/La
 import { HyperlaneNexusQuoteWorker } from '../services/hyperlane/HyperlaneNexusQuoteWorker';
 import { HyperlaneNexusMonitorWorker } from '../services/hyperlane/HyperlaneNexusMonitorWorker';
 import { MidgardMayaQuoteWorker } from '../services/maya/MayaQuoteWorker';
+import { MayaClient } from '../services/maya/MayaClient';
 import { MayaMonitorWorker } from '../services/maya/MayaMonitorWorker';
 import { createQuoteCacheFromEnv, QuoteCache } from '../cache/QuoteCache';
 import { registerDexQuoteAdapters } from '../bootstrap/dexAdapters';
@@ -45,6 +46,10 @@ import { WalletLiquidator } from '../services/WalletLiquidator';
 import { Erc7683Adapter } from '../services/Erc7683Adapter';
 import { PostgresSolversRepository } from '../db/SolversRepository';
 import { InMemoryBasketRepository, PostgresBasketRepository, type BasketRepository } from '../db/BasketRepository';
+import {
+  checkProviderLimitedRailCapabilities,
+  type RailCapabilityHealthReport,
+} from '../services/RailCapabilityHealth';
 
 export interface RuntimeOptions {
   enableEventMonitor?: boolean;
@@ -64,6 +69,7 @@ export interface RuntimeContext {
   recoveryEngine?: RecoveryEngine;
   railExecutionManager: RailExecutionManager;
   railExecutions: ReadonlyMap<Rail, RailExecutionHandle>;
+  railCapabilityHealth: RailCapabilityHealthReport[];
   cctpRelayWorker?: CctpAttestationWorker;
   thorchainWorker?: THORChainMonitorWorker;
   chainflipMonitorWorker?: ChainflipMonitorWorker;
@@ -121,6 +127,19 @@ export async function buildRuntime(options: RuntimeOptions = {}): Promise<Runtim
   const thorchainCanaryAllowlist = parseCsv(process.env.THORCHAIN_CANARY_ALLOWLIST);
   const enablePartnerApi = options.enablePartnerApi ?? envBool('ENABLE_PARTNER_API', false);
   const enablePostgres = options.enablePostgres ?? shouldEnablePostgres();
+  const railCapabilityHealth = await checkProviderLimitedRailCapabilities({
+    enabled: {
+      [Rail.CHAINFLIP]: enableChainflip,
+      [Rail.MAYA]: enableMaya,
+      [Rail.TELESWAP]: enableTeleSwap,
+    },
+    mayaClient: enableMaya ? new MayaClient() : undefined,
+  });
+  for (const check of railCapabilityHealth) {
+    if (check.status === 'warning') {
+      console.warn(`[RailCapabilityHealth] ${check.rail}: ${check.message}`);
+    }
+  }
 
   const intentEngine = new IntentEngine();
   const postgres = enablePostgres ? createPostgresIntentStore() : undefined;
@@ -281,6 +300,7 @@ export async function buildRuntime(options: RuntimeOptions = {}): Promise<Runtim
     recoveryEngine,
     railExecutionManager,
     railExecutions,
+    railCapabilityHealth,
     cctpRelayWorker,
     thorchainWorker,
     chainflipMonitorWorker,

@@ -1,5 +1,4 @@
 import {
-  CHAIN_ID,
   Intent,
   IntentStatus,
   Rail,
@@ -7,6 +6,7 @@ import {
   RefundCustodyLocation,
   SettlementToken,
 } from '../types';
+import { deriveChainRailsFromCapabilities } from '../config/railCapabilities';
 
 export interface CctpRailMetadata {
   standardPluginId: string;
@@ -447,53 +447,8 @@ export const RAIL_PROVIDERS: Record<Rail, RailProviderDefinition> = {
   },
 };
 
-export const CHAIN_RAILS: Record<number, Rail[]> = {
-  // Axelar and Via Labs are advertised only where the broader runtime can
-  // resolve route assets and the operator has deployed or configured the rail.
-  1: [Rail.CCTP, Rail.LAYERZERO, Rail.THORCHAIN, Rail.CHAINFLIP, Rail.MAYA, Rail.HYPERLANE_NEXUS, Rail.OPTIMISM_NATIVE_BRIDGE, Rail.VIA_LABS],
-  // CCTP fast is modeled as a CCTP quote variant, not a standalone rail here.
-  10: [Rail.CCTP, Rail.LAYERZERO, Rail.THORCHAIN, Rail.HYPERLANE_NEXUS, Rail.OPTIMISM_NATIVE_BRIDGE, Rail.VIA_LABS],
-  42161: [Rail.CCTP, Rail.LAYERZERO, Rail.THORCHAIN, Rail.CHAINFLIP, Rail.MAYA, Rail.HYPERLANE_NEXUS, Rail.VIA_LABS],
-  8453: [Rail.CCTP, Rail.LAYERZERO, Rail.THORCHAIN, Rail.HYPERLANE_NEXUS, Rail.VIA_LABS],
-  137: [Rail.CCTP, Rail.LAYERZERO, Rail.THORCHAIN, Rail.TELESWAP, Rail.HYPERLANE_NEXUS, Rail.VIA_LABS],
-  43114: [Rail.CCTP, Rail.LAYERZERO, Rail.THORCHAIN, Rail.MAYA, Rail.HYPERLANE_NEXUS, Rail.VIA_LABS],
-  56: [Rail.LAYERZERO, Rail.THORCHAIN, Rail.MAYA, Rail.TELESWAP, Rail.HYPERLANE_NEXUS, Rail.VIA_LABS],
-  369: [Rail.LAYERZERO],
-  143: [Rail.LAYERZERO],
-  146: [Rail.LAYERZERO],
-  1329: [Rail.LAYERZERO],
-  80094: [Rail.LAYERZERO],
-  30: [Rail.LAYERZERO],
-  10001: [Rail.LAYERZERO],
-  999: [Rail.LAYERZERO],
-  59144: [Rail.LAYERZERO],
-  5000: [Rail.LAYERZERO],
-  34443: [Rail.LAYERZERO],
-  81457: [Rail.LAYERZERO],
-  534352: [Rail.LAYERZERO],
-  324: [Rail.LAYERZERO],
-  1101: [Rail.LAYERZERO],
-  7777777: [Rail.LAYERZERO],
-  1284: [Rail.LAYERZERO],
-  42220: [Rail.LAYERZERO],
-  11155111: [Rail.CCTP, Rail.LAYERZERO],
-  421614: [Rail.CCTP, Rail.LAYERZERO, Rail.AXELAR],
-  84532: [Rail.CCTP, Rail.LAYERZERO, Rail.AXELAR],
-  11155420: [Rail.CCTP, Rail.LAYERZERO, Rail.AXELAR],
-  43113: [Rail.CCTP, Rail.LAYERZERO],
-  80002: [Rail.CCTP, Rail.LAYERZERO],
-  97: [Rail.LAYERZERO],
-  [CHAIN_ID.BTC]: [Rail.THORCHAIN, Rail.CHAINFLIP, Rail.MAYA, Rail.TELESWAP],
-  [CHAIN_ID.SOL]: [Rail.THORCHAIN, Rail.CCTP, Rail.CHAINFLIP],
-  [CHAIN_ID.DOGE]: [Rail.THORCHAIN, Rail.MAYA],
-  [CHAIN_ID.LTC]: [Rail.THORCHAIN],
-  [CHAIN_ID.BCH]: [Rail.THORCHAIN],
-  [CHAIN_ID.DOT]: [Rail.CHAINFLIP],
-  [CHAIN_ID.KUJI]: [Rail.MAYA],
-  [CHAIN_ID.DASH]: [Rail.MAYA],
-  [CHAIN_ID.ZEC]: [Rail.MAYA],
-  [CHAIN_ID.COSMOS]: [Rail.THORCHAIN],
-};
+// CCTP fast is modeled as a CCTP quote variant, not a standalone rail here.
+export const CHAIN_RAILS: Record<number, Rail[]> = deriveChainRailsFromCapabilities();
 
 export function getRailProvider(rail: Rail): RailProviderDefinition {
   const provider = RAIL_PROVIDERS[rail];

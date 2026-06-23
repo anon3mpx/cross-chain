@@ -1,4 +1,9 @@
 import { Rail } from '../../types';
+import {
+  MAYA_ASSET_CATALOG,
+  getProviderCatalogChainIds,
+  toMayaCatalogAsset,
+} from '../../config/railCapabilities';
 import { MayaClient } from './MayaClient';
 
 export interface MayaQuoteRequest {
@@ -68,36 +73,9 @@ export function toMayaAsset(
   chainId: number,
   tokenAddressOrSymbol: string,
 ): string | null {
-  const key = `${chainId}:${tokenAddressOrSymbol.toUpperCase()}`;
-  const table: Record<string, string> = {
-    '0:BTC': 'BTC.BTC',
-    '98:DOGE': 'DOGE.DOGE',
-    '104:KUJI': 'KUJI.KUJI',
-    '105:DASH': 'DASH.DASH',
-    '106:ZEC': 'ZEC.ZEC',
-    '1:ETH': 'ETH.ETH',
-    '1:USDC': 'ETH.USDC',
-    '1:USDT': 'ETH.USDT',
-    '42161:ETH': 'ARB.ETH',
-    '42161:USDC': 'ARB.USDC',
-    '56:BNB': 'BSC.BNB',
-    '56:USDT': 'BSC.USDT',
-    '43114:AVAX': 'AVAX.AVAX',
-    '43114:USDC': 'AVAX.USDC',
-  };
-  return table[key] ?? null;
+  return toMayaCatalogAsset(chainId, tokenAddressOrSymbol);
 }
 
-export const MAYA_ACCESSIBLE_CHAIN_IDS = new Set<number>([
-  1,
-  42161,
-  56,
-  43114,
-  0,
-  98,
-  104,
-  105,
-  106,
-]);
+export const MAYA_ACCESSIBLE_CHAIN_IDS = getProviderCatalogChainIds(MAYA_ASSET_CATALOG);
 
 export const MAYA_RAIL = Rail.MAYA;

@@ -1,4 +1,9 @@
 import { Rail, SettlementToken } from '../../types';
+import {
+  CHAINFLIP_ASSET_CATALOG,
+  getProviderCatalogChainIds,
+  toChainflipCatalogAsset,
+} from '../../config/railCapabilities';
 import { ChainflipBrokerClient } from './ChainflipBrokerClient';
 
 export interface ChainflipQuoteRequest {
@@ -84,26 +89,9 @@ export function toChainflipAsset(
   chainId: number,
   tokenSymbol: SettlementToken | string,
 ): string | null {
-  const key = `${chainId}:${String(tokenSymbol).toUpperCase()}`;
-  const table: Record<string, string> = {
-    '1:ETH': 'ETH.ETH',
-    '1:USDC': 'ETH.USDC',
-    '42161:ETH': 'ARB.ETH',
-    '42161:USDC': 'ARB.USDC',
-    '0:BTC': 'BTC.BTC',
-    '99:SOL': 'SOL.SOL',
-    '99:USDC': 'SOL.USDC',
-    '103:DOT': 'DOT.DOT',
-  };
-  return table[key] ?? null;
+  return toChainflipCatalogAsset(chainId, String(tokenSymbol));
 }
 
-export const CHAINFLIP_ACCESSIBLE_CHAIN_IDS = new Set<number>([
-  1,
-  42161,
-  0,
-  99,
-  103,
-]);
+export const CHAINFLIP_ACCESSIBLE_CHAIN_IDS = getProviderCatalogChainIds(CHAINFLIP_ASSET_CATALOG);
 
 export const CHAINFLIP_RAIL = Rail.CHAINFLIP;

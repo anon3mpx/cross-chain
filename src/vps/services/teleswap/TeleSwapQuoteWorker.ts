@@ -1,4 +1,5 @@
 import { Rail } from '../../types';
+import { TELESWAP_ROUTE_CHAIN_IDS } from '../../config/railCapabilities';
 
 export interface TeleSwapQuoteRequest {
   srcChainId: number;
@@ -112,10 +113,6 @@ function backoffMs(attempt: number): number {
   return Math.min(250 * 2 ** attempt, 4_000);
 }
 
-export const TELESWAP_ACCESSIBLE_CHAIN_IDS = new Set<number>([
-  0,
-  137,
-  56,
-]);
+export const TELESWAP_ACCESSIBLE_CHAIN_IDS = new Set<number>(TELESWAP_ROUTE_CHAIN_IDS);
 
 export const TELESWAP_RAIL = Rail.TELESWAP;

@@ -18,9 +18,14 @@ usually ecosystem-specific by design.
 
 The current source of truth is split across:
 
+- `src/vps/config/railCapabilities.ts`
+  - typed rail capability catalog
+  - provider-limited Chainflip, Maya, and TeleSwap asset/route catalogs
+  - derived chain-to-rail advertisement input for `CHAIN_RAILS`
 - `src/vps/rails/registry.ts`
   - rail metadata in `RAIL_PROVIDERS`
-  - chain-to-rail advertisement in `CHAIN_RAILS`
+  - chain-to-rail advertisement in `CHAIN_RAILS`, derived from the capability
+    catalog
 - `src/vps/services/QuoteEngine.ts`
   - offer generation and route shaping
 - `src/vps/services/<rail>/*`
@@ -28,11 +33,11 @@ The current source of truth is split across:
 - `src/vps/app/runtime.ts`
   - rail enablement flags and worker construction
 
-The main scalability limitation is `CHAIN_RAILS`: it is a code-level
-`Record<number, Rail[]>`, not a generated catalog. That is acceptable for small
-provider-owned rails, but broad rails should eventually derive availability
-from provider metadata, checked-in catalogs, or database-backed capability
-records.
+`CHAIN_RAILS` now derives from the typed capability catalog instead of
+duplicating chain membership directly in `registry.ts`. That is enough for the
+small provider-owned rails. Broad rails still need deeper route metadata or
+database-backed capability records before they can be safely expanded at large
+chain counts.
 
 ## Rail Categories
 
@@ -63,19 +68,21 @@ Why this shape is acceptable:
 - Runtime configuration only needs provider-level settings such as
   `CHAINFLIP_BROKER_URL`, commission, timeout, and retry values.
 
-Currently missing:
+Current limitations:
 
-- asset support is hardcoded in `toChainflipAsset(...)`
-- `CHAINFLIP_ACCESSIBLE_CHAIN_IDS` is static
-- no provider-discovered asset catalog is cached or validated at startup
+- asset support is now held in `CHAINFLIP_ASSET_CATALOG` inside the typed rail
+  capability catalog and used by `toChainflipAsset(...)`
+- `CHAINFLIP_ACCESSIBLE_CHAIN_IDS` is derived from that catalog
+- startup health validates static catalog consistency, but the current
+  Chainflip broker client does not expose live asset discovery for a provider
+  comparison
 - no operational check that configured Chainflip assets still match the broker
   API's live support
 
 Recommended next improvement:
 
-- move Chainflip asset mapping into a small `chainflip-assets.json` or
-  provider-discovered catalog with tests that verify quote requests use only
-  supported provider asset IDs.
+- add live Chainflip broker asset discovery if/when the broker API contract is
+  available, then compare it against `CHAINFLIP_ASSET_CATALOG` at startup.
 
 ## Maya
 
@@ -95,13 +102,15 @@ Why this shape is acceptable:
 - Defaults exist for `MAYA_MIDGARD_URL` and `MAYA_MAYANODE_URL`, so basic quote
   operation does not require per-chain env entries.
 
-Currently missing:
+Current limitations:
 
-- asset support is hardcoded in `toMayaAsset(...)`
-- `MAYA_ACCESSIBLE_CHAIN_IDS` is static
+- asset support is now held in `MAYA_ASSET_CATALOG` inside the typed rail
+  capability catalog and used by `toMayaAsset(...)`
+- `MAYA_ACCESSIBLE_CHAIN_IDS` is derived from that catalog
 - inbound address discovery exists in the client, but quote availability is not
   derived from live inbound/assets data
-- no startup validation for halted chains or disabled Maya pools
+- startup health now compares catalog chains against Mayanode inbound addresses
+  when Maya is enabled; it reports warnings rather than blocking runtime startup
 
 Recommended next improvement:
 
@@ -126,17 +135,20 @@ Why this shape is acceptable:
 - The API request itself passes `src_chain` and `dst_chain` dynamically, so the
   worker is not locked to one pair internally.
 
-Currently missing:
+Current limitations:
 
-- `TELESWAP_ACCESSIBLE_CHAIN_IDS` is static
-- no live provider capability discovery is used before advertising routes
+- supported route chains are now held in `TELESWAP_ROUTE_CHAIN_IDS` inside the
+  typed rail capability catalog
+- `TELESWAP_ACCESSIBLE_CHAIN_IDS` is derived from that catalog
+- no live provider capability discovery is used before advertising routes,
+  because the current TeleSwap worker only exposes quote/status operations
 - no explicit distinction between "provider supports the route" and "we have
   product confidence to surface the route"
 
 Recommended next improvement:
 
-- treat TeleSwap coverage as provider-limited and move supported routes into a
-  small route catalog that can be reviewed independently from code changes.
+- add a TeleSwap route-discovery API comparison if the provider exposes one;
+  until then, keep `TELESWAP_ROUTE_CHAIN_IDS` as the reviewed product catalog.
 
 ## Optimism Native Bridge
 
@@ -188,12 +200,14 @@ Currently missing:
 - no dedicated Via Labs monitor worker
 - current offer shaping still follows generic messaging semantics rather than a
   Via Labs-specific execution model
-- no Via Labs provider capability catalog
+- no Via Labs provider capability catalog beyond the operator-advertised chain
+  entry in `railCapabilities.ts`
 
 Recommended next improvement:
 
 - rebuild Via Labs as a real provider rail before expanding its advertised
-  coverage. It should have quote, execute/select integration, watch, settle, and
+  coverage, but only after a concrete Via Labs API/layout is available. It
+  should then have quote, execute/select integration, watch, settle, and
   capability discovery or a reviewed route catalog.
 
 ## LayerZero
@@ -215,7 +229,9 @@ Where it stands:
 
 Currently missing:
 
-- `CHAIN_RAILS` still manually advertises chain eligibility
+- route eligibility still needs to derive from complete LayerZero route
+  metadata, even though `CHAIN_RAILS` itself now comes from the rail capability
+  catalog
 - large coverage still requires operationally complete route metadata per asset
   and chain
 - provider API mode depends on `ENABLE_LAYERZERO_TRANSFER_API` and provider API
@@ -244,7 +260,8 @@ Where it stands:
 
 Currently missing:
 
-- `CHAIN_RAILS` still manually advertises chain eligibility
+- route eligibility still needs to derive from complete Axelar route metadata,
+  even though `CHAIN_RAILS` itself now comes from the rail capability catalog
 - advertised support can drift from provider-supported assets if route metadata
   is incomplete
 - no dedicated live-provider validation pass in startup health checks
@@ -271,8 +288,8 @@ Where it stands:
 
 Currently missing:
 
-- CCTP chain availability is still surfaced through manual `CHAIN_RAILS`
-  membership
+- CCTP chain availability is represented in the rail capability catalog but is
+  not yet generated directly from Circle domain and token metadata
 - expansion requires updating domain/token metadata and validating Circle support
 - Solana/non-EVM source-side flows remain a separate product/runtime concern
 
@@ -318,18 +335,18 @@ The rails that need stronger scalability work are:
 - `Via Labs`
 - future generic native-bridge families
 
-The main missing system-level piece is a `RailCapabilityCatalog` that can feed
-`CHAIN_RAILS`, quote availability, tests, and operational checks from the same
-source of truth.
+The main system-level catalog piece is now in place for the provider-limited
+rails: `railCapabilities.ts` feeds `CHAIN_RAILS`, asset lookup helpers, tests,
+and non-blocking startup health checks. The broader messaging rails still need
+deeper provider/route metadata before large coverage expansion.
 
 ## Suggested Follow-Up Work
 
-1. Create a typed rail capability catalog.
-2. Move Chainflip, Maya, and TeleSwap asset maps into small reviewed catalog
-   files.
-3. Derive `CHAIN_RAILS` from catalog data for broad rails.
-4. Add startup health checks that compare configured route support with provider
-   availability where provider APIs expose it.
-5. Rebuild Via Labs as a real quote/select/watch/settle provider rail before
-   widening its advertised coverage.
-
+1. Keep extending `railCapabilities.ts` only from reviewed provider/product
+   support decisions.
+2. Add live Chainflip and TeleSwap provider capability comparisons if those
+   APIs expose route/asset discovery.
+3. Generate LayerZero, Axelar, and CCTP catalog entries from their route/domain
+   metadata instead of maintaining broad-chain membership by hand.
+4. Rebuild Via Labs as a real quote/select/watch/settle provider rail only
+   after a concrete Via Labs API/layout is available.
