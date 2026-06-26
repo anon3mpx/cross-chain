@@ -149,6 +149,12 @@ export function toIntentRow(intent: Intent) {
     retry_count: intent.retryCount,
     error_message: intent.errorMessage ?? null,
     partner_api_key: intent.partnerApiKey ?? null,
+    partner_id: intent.partnerId ?? null,
+    integrator_id: intent.integratorId ?? null,
+    agent_id: intent.agentId ?? null,
+    route_source: intent.routeSource ?? null,
+    parent_basket_id: intent.parentBasketId ?? null,
+    solver_id: intent.solverId ?? null,
     created_at: new Date(intent.createdAt),
     updated_at: new Date(intent.updatedAt),
   };

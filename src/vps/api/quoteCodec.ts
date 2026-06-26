@@ -34,7 +34,11 @@ function parseAmountIn(raw: unknown): bigint {
 export function parseQuoteRequest(input: any, defaultUrgency: 'fast' | 'normal' = 'normal'): QuoteRequest {
   if (!input || typeof input !== 'object') throw new Error('Invalid payload');
 
-  const urgency = input.urgency === 'fast' ? 'fast' : 'normal';
+  const urgency = input.urgency === 'fast'
+    ? 'fast'
+    : input.urgency === 'patient'
+      ? 'patient'
+      : 'normal';
 
   return {
     tokenIn: String(input.tokenIn ?? ''),
@@ -44,6 +48,7 @@ export function parseQuoteRequest(input: any, defaultUrgency: 'fast' | 'normal' 
     dstChainId: Number(input.dstChainId),
     userAddress: String(input.userAddress ?? ''),
     nativeDstAddress: parseOptionalText(input.nativeDstAddress),
+    refundAddress: parseOptionalText(input.refundAddress),
     destinationGas: parseDestinationGasRequests(input.destinationGas),
     urgency: input.urgency ? urgency : defaultUrgency,
   };

@@ -6,6 +6,12 @@ import { buildSelectedOfferIntegration } from '../../src/vps/services/DirectRail
 const THOR_ROUTER_IFACE = new Interface([
   'function depositWithExpiry(address payable vault,address asset,uint256 amount,string memo,uint256 expiration)',
 ]);
+const HYPERLANE_WARP_ROUTE_IFACE = new Interface([
+  'function transferRemote(uint32 destinationDomain, bytes32 recipient, uint256 amount) payable returns (bytes32)',
+]);
+const OPTIMISM_L2_BRIDGE_IFACE = new Interface([
+  'function bridgeETHTo(address _to,uint32 _minGasLimit,bytes _extraData) external payable',
+]);
 
 test('provider_direct THOR offers return deposit instructions instead of RouterV1 calldata', async () => {
   const integration = await buildSelectedOfferIntegration('0x' + '11'.repeat(32), {
@@ -236,4 +242,202 @@ test('provider_direct Gas.zip offers return normalized direct-deposit transactio
   assert.equal(integration.tx?.data, '0x010039');
   assert.equal(integration.tx?.value, '805000000000000');
   assert.equal(integration.tx?.chainId, 8453);
+});
+
+test('provider_direct Hyperlane offers return transferRemote tx helpers and approvals', async () => {
+  const integration = await buildSelectedOfferIntegration('0x' + '99'.repeat(32), {
+    rail: 'HYPERLANE_NEXUS',
+    offerType: 'hyperlane_nexus_direct',
+    executionMode: 'provider_direct',
+    execution: {
+      provider: 'hyperlane_explorer',
+      warpRouteAddress: '0x' + 'a'.repeat(40),
+      destinationDomain: 8453,
+      interchainGasFee: '50000000000000',
+      quote: {
+        srcChainId: 1,
+        tokenIn: '0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48',
+        amountIn: 1_000_000n,
+      },
+    },
+  } as any, '0x3333333333333333333333333333333333333333');
+
+  assert.equal(integration.mode, 'provider_direct');
+  assert.equal(integration.action.kind, 'hyperlane_transfer_remote');
+  assert.equal(integration.action.warpRouteAddress, '0x' + 'a'.repeat(40));
+  assert.equal(integration.action.destinationDomain, 8453);
+  assert.equal(integration.action.interchainGasFee, '50000000000000');
+  assert.equal(integration.approvals?.[0]?.spender, '0x' + 'a'.repeat(40));
+
+  assert.ok(integration.tx);
+  assert.equal(integration.tx!.to, '0x' + 'a'.repeat(40));
+  assert.equal(integration.tx!.value, '50000000000000');
+  assert.equal(integration.tx!.chainId, 1);
+
+  const decoded = HYPERLANE_WARP_ROUTE_IFACE.decodeFunctionData('transferRemote', integration.tx!.data);
+  assert.equal(decoded.destinationDomain, 8453n);
+  assert.equal(decoded.amount.toString(), '1000000');
+});
+
+test('provider_direct Chainflip offers return deposit helpers and ERC-20 transfer txs', async () => {
+  const integration = await buildSelectedOfferIntegration('0x' + 'aa'.repeat(32), {
+    rail: 'CHAINFLIP',
+    offerType: 'chainflip_broker_direct',
+    executionMode: 'provider_direct',
+    execution: {
+      provider: 'chainflip_broker',
+      depositAddress: '0x4444444444444444444444444444444444444444',
+      channelId: 'cf-channel-1',
+      expectedAmountOut: '990000',
+      refundAddress: 'bc1qchainfliprefund',
+      quote: {
+        srcChainId: 1,
+        tokenIn: '0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48',
+        amountIn: 1_000_000n,
+      },
+    },
+  } as any, '0x3333333333333333333333333333333333333333');
+
+  assert.equal(integration.mode, 'provider_direct');
+  assert.equal(integration.action.kind, 'chainflip_deposit');
+  assert.equal(integration.action.depositAddress, '0x4444444444444444444444444444444444444444');
+  assert.equal(integration.action.channelId, 'cf-channel-1');
+  assert.equal(integration.action.expectedAmountOut, '990000');
+  assert.equal(integration.action.refundAddress, 'bc1qchainfliprefund');
+  assert.equal(integration.tx?.to, '0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48');
+  assert.equal(integration.tx?.chainId, 1);
+  assert.equal(integration.tx?.value, '0');
+});
+
+test('provider_direct Maya offers return vault deposit instructions and router tx helpers', async () => {
+  const integration = await buildSelectedOfferIntegration('0x' + 'bb'.repeat(32), {
+    rail: 'MAYA',
+    offerType: 'maya_direct',
+    executionMode: 'provider_direct',
+    execution: {
+      provider: 'maya_midgard',
+      vaultAddress: '0x5555555555555555555555555555555555555555',
+      memo: '=:ARB.USDC:0xabc',
+      expectedAmountOut: '985000',
+      expiresAt: 1_900_000_123,
+      quote: {
+        srcChainId: 1,
+        tokenIn: '0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48',
+        amountIn: 1_000_000n,
+      },
+      routerAddress: '0x6666666666666666666666666666666666666666',
+    },
+  } as any, '0x3333333333333333333333333333333333333333');
+
+  assert.equal(integration.mode, 'provider_direct');
+  assert.equal(integration.action.kind, 'maya_swap');
+  assert.equal(integration.action.depositAddress, '0x5555555555555555555555555555555555555555');
+  assert.equal(integration.action.memo, '=:ARB.USDC:0xabc');
+  assert.equal(integration.action.expectedAmountOut, '985000');
+  assert.ok(integration.tx);
+  assert.equal(integration.tx!.to, '0x6666666666666666666666666666666666666666');
+  assert.equal(integration.tx!.value, '0');
+
+  const decoded = THOR_ROUTER_IFACE.decodeFunctionData('depositWithExpiry', integration.tx!.data);
+  assert.equal(decoded.vault.toLowerCase(), '0x5555555555555555555555555555555555555555');
+  assert.equal(decoded.asset.toLowerCase(), '0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48');
+  assert.equal(decoded.amount.toString(), '1000000');
+  assert.equal(decoded.memo, '=:ARB.USDC:0xabc');
+  assert.equal(decoded.expiration.toString(), '1900000123');
+});
+
+test('provider_direct TeleSwap offers return deposit helpers for direct source deposits', async () => {
+  const integration = await buildSelectedOfferIntegration('0x' + 'cc'.repeat(32), {
+    rail: 'TELESWAP',
+    offerType: 'teleswap_direct',
+    executionMode: 'provider_direct',
+    execution: {
+      provider: 'teleswap_api',
+      depositAddress: '0x7777777777777777777777777777777777777777',
+      swapId: 'ts-swap-1',
+      expectedAmountOut: '970000',
+      quote: {
+        srcChainId: 137,
+        tokenIn: '0x1111111111111111111111111111111111111111',
+        amountIn: 1_000_000n,
+      },
+    },
+  } as any, '0x3333333333333333333333333333333333333333');
+
+  assert.equal(integration.mode, 'provider_direct');
+  assert.equal(integration.action.kind, 'teleswap_deposit');
+  assert.equal(integration.action.depositAddress, '0x7777777777777777777777777777777777777777');
+  assert.equal(integration.action.swapId, 'ts-swap-1');
+  assert.equal(integration.action.expectedAmountOut, '970000');
+  assert.equal(integration.tx?.to, '0x1111111111111111111111111111111111111111');
+  assert.equal(integration.tx?.value, '0');
+  assert.equal(integration.tx?.chainId, 137);
+});
+
+test('provider_direct native bridge offers return Optimism bridge tx helpers and approvals', async () => {
+  const integration = await buildSelectedOfferIntegration('0x' + 'dd'.repeat(32), {
+    rail: 'OPTIMISM_NATIVE_BRIDGE',
+    offerType: 'optimism_native_bridge_direct',
+    executionMode: 'provider_direct',
+    execution: {
+      provider: 'optimism_standard_bridge',
+      direction: 'deposit',
+      settlementKind: 'erc20',
+      requiresPatient: false,
+      approvals: [{
+        token: '0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48',
+        spender: '0x99C9fc46f92E8a1c0deC1b1747d010903E884bE1',
+        amount: '1000000',
+      }],
+      tx: {
+        to: '0x99C9fc46f92E8a1c0deC1b1747d010903E884bE1',
+        data: '0x',
+        value: '0',
+        chainId: 1,
+      },
+    },
+  } as any, '0x3333333333333333333333333333333333333333');
+
+  assert.equal(integration.mode, 'provider_direct');
+  assert.equal(integration.action.kind, 'optimism_standard_bridge');
+  assert.equal(integration.action.direction, 'deposit');
+  assert.equal(integration.action.settlementKind, 'erc20');
+  assert.equal(integration.approvals?.[0]?.spender, '0x99C9fc46f92E8a1c0deC1b1747d010903E884bE1');
+});
+
+test('provider_direct native bridge withdrawals preserve patient-only semantics in the tx helper', async () => {
+  const txData = OPTIMISM_L2_BRIDGE_IFACE.encodeFunctionData('bridgeETHTo', [
+    '0x3333333333333333333333333333333333333333',
+    200_000,
+    '0x',
+  ]);
+  const integration = await buildSelectedOfferIntegration('0x' + 'ee'.repeat(32), {
+    rail: 'OPTIMISM_NATIVE_BRIDGE',
+    offerType: 'optimism_native_bridge_direct',
+    executionMode: 'provider_direct',
+    execution: {
+      provider: 'optimism_standard_bridge',
+      direction: 'withdraw',
+      settlementKind: 'native',
+      challengePeriodSeconds: 604_800,
+      requiresPatient: true,
+      tx: {
+        to: '0x4200000000000000000000000000000000000010',
+        data: txData,
+        value: '1000000000000000',
+        chainId: 10,
+      },
+    },
+  } as any, '0x3333333333333333333333333333333333333333');
+
+  assert.equal(integration.mode, 'provider_direct');
+  assert.equal(integration.action.kind, 'optimism_standard_bridge');
+  assert.equal(integration.action.direction, 'withdraw');
+  assert.equal(integration.action.requiresPatient, true);
+  assert.equal(integration.action.challengePeriodSeconds, 604_800);
+  assert.equal(integration.tx?.to, '0x4200000000000000000000000000000000000010');
+  assert.equal(integration.tx?.value, '1000000000000000');
+
+  const decoded = OPTIMISM_L2_BRIDGE_IFACE.decodeFunctionData('bridgeETHTo', integration.tx!.data);
+  assert.equal(decoded._to.toLowerCase(), '0x3333333333333333333333333333333333333333');
 });

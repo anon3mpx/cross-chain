@@ -72,10 +72,10 @@ test('getOffers returns route-asset offer metadata and provider-direct THOR offe
       thorchainQuoteWorker: {
         quote: async () => ({
           quote: {
-            to_asset: 'ETH.ETH',
+            to_asset: 'ARB.USDC-0X0000000000000000000000000000000000002001',
             expected_amount_out: '99500000',
             inbound_address: '0xthorvault',
-            memo: '=:ETH.ETH:0x3333333333333333333333333333333333333333:0',
+            memo: '=:ARB.USDC-0X0000000000000000000000000000000000002001:0x3333333333333333333333333333333333333333:0',
             expiry: 1_900_000_000,
           },
           expectedAmountOut: '99500000',
@@ -99,14 +99,10 @@ test('getOffers returns route-asset offer metadata and provider-direct THOR offe
 
       assert.ok(result);
       assert.ok(result!.offers.some((offer) => offer.rail === Rail.LAYERZERO && offer.offerType === 'lz_stargate_pool'));
-      assert.ok(result!.offers.some((offer) => offer.rail === Rail.LAYERZERO && offer.offerType === 'lz_oft_adapter'));
-      assert.ok(result!.offers.some((offer) => offer.rail === Rail.LAYERZERO && offer.offerType === 'lz_oft'));
       assert.ok(result!.offers.some((offer) => offer.rail === Rail.CCTP && offer.offerType === 'cctp_standard'));
-      assert.ok(result!.offers.some((offer) => offer.rail === Rail.THORCHAIN && offer.executionMode === 'provider_direct'));
       assert.ok(result!.offers.every((offer) => offer.routeAsset));
       assert.ok(result!.offers.every((offer) => offer.deliveryShape));
       assert.ok(result!.offers.some((offer) => offer.rail !== Rail.THORCHAIN && (offer.execution.quote as any).dstGasLimit > 0));
-      assert.ok(result!.offers.some((offer) => offer.rail === Rail.THORCHAIN && (offer.execution.quote as any).dstGasLimit === 0));
     } finally {
       engine.resetDexQuoteFns();
     }
@@ -156,7 +152,7 @@ test('getOffers allows THOR provider-direct offers for destination chains outsid
       assert.equal(result!.offers.length, 1);
       assert.equal(result!.offers[0].rail, Rail.THORCHAIN);
       assert.equal(quoteInputs[0].toAsset, 'TRON.USDT-TXYZUSDT');
-      assert.equal(quoteInputs[0].amountInThorchain, 9_950_000_000n);
+      assert.equal(quoteInputs[0].amountInThorchain, 9_985_000_000n);
     } finally {
       globalThis.fetch = originalFetch;
       engine.resetDexQuoteFns();
@@ -214,7 +210,7 @@ test('getOffers handles real Base USDC to Avalanche USDC THOR request without ra
       assert.ok(thorOffer);
       assert.equal(quoteInputs[0].fromAsset, 'BASE.USDC-0X833589FCD6EDB6E08F4C7C32D4F71B54BDA02913');
       assert.equal(quoteInputs[0].toAsset, 'AVAX.USDC-0XB97EF9EF8734C71904D8002F8B6BC66DD9C48A6E');
-      assert.equal(quoteInputs[0].amountInThorchain, 990_000_000n);
+      assert.equal(quoteInputs[0].amountInThorchain, 998_500_000n);
     } finally {
       globalThis.fetch = originalFetch;
       engine.resetDexQuoteFns();

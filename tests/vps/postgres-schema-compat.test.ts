@@ -16,23 +16,23 @@ test('assertPostgresRailSchemaCompatibility throws when intents rail constraints
         ],
       }),
     } as any),
-    /missing GASZIP rail support/i,
+    /missing provider-direct rail support/i,
   );
 });
 
-test('assertPostgresRailSchemaCompatibility accepts GASZIP-capable constraints', async () => {
+test('assertPostgresRailSchemaCompatibility accepts Gas.zip and Hyperlane-capable constraints', async () => {
   await assert.doesNotReject(() => assertPostgresRailSchemaCompatibility({
     query: async () => ({
       rows: [
-        { conname: 'intents_rail_check', def: "CHECK ((rail = ANY (ARRAY['CCTP'::text, 'GASZIP'::text])))" },
-        { conname: 'intents_fallback_rail_check', def: "CHECK ((fallback_rail IS NULL OR fallback_rail = ANY (ARRAY['CCTP'::text, 'GASZIP'::text])))" },
-        { conname: 'intent_rail_attempts_rail_check', def: "CHECK ((rail = ANY (ARRAY['CCTP'::text, 'GASZIP'::text])))" },
+        { conname: 'intents_rail_check', def: "CHECK ((rail = ANY (ARRAY['CCTP'::text, 'GASZIP'::text, 'HYPERLANE_NEXUS'::text, 'OPTIMISM_NATIVE_BRIDGE'::text, 'CHAINFLIP'::text, 'MAYA'::text, 'TELESWAP'::text])))" },
+        { conname: 'intents_fallback_rail_check', def: "CHECK ((fallback_rail IS NULL OR fallback_rail = ANY (ARRAY['CCTP'::text, 'GASZIP'::text, 'HYPERLANE_NEXUS'::text, 'OPTIMISM_NATIVE_BRIDGE'::text, 'CHAINFLIP'::text, 'MAYA'::text, 'TELESWAP'::text])))" },
+        { conname: 'intent_rail_attempts_rail_check', def: "CHECK ((rail = ANY (ARRAY['CCTP'::text, 'GASZIP'::text, 'HYPERLANE_NEXUS'::text, 'OPTIMISM_NATIVE_BRIDGE'::text, 'CHAINFLIP'::text, 'MAYA'::text, 'TELESWAP'::text])))" },
       ],
     }),
   } as any));
 });
 
-test('toFriendlyIntentPersistenceError rewrites stale GASZIP rail check violations', () => {
+test('toFriendlyIntentPersistenceError rewrites stale provider-direct rail check violations', () => {
   const rewritten = toFriendlyIntentPersistenceError(
     {
       code: '23514',
@@ -46,3 +46,16 @@ test('toFriendlyIntentPersistenceError rewrites stale GASZIP rail check violatio
   assert.match(rewritten!.message, /run `npm run db:migrate`/i);
 });
 
+test('toFriendlyIntentPersistenceError also rewrites deferred Phase 3 rail constraint violations', () => {
+  const rewritten = toFriendlyIntentPersistenceError(
+    {
+      code: '23514',
+      constraint: 'intent_rail_attempts_rail_check',
+      message: 'new row violates check constraint',
+    },
+    { rail: 'MAYA' },
+  );
+
+  assert.ok(rewritten instanceof Error);
+  assert.match(rewritten!.message, /Optimism native bridge, Chainflip, Maya, or TeleSwap/i);
+});

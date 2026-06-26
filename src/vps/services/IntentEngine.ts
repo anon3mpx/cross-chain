@@ -14,7 +14,12 @@ const STUCK_THRESHOLDS_MS: Record<Rail, number> = {
   [Rail.LAYERZERO]: 10 * 60 * 1000,  // 10 min (normally 2 min)
   [Rail.WORMHOLE]:  10 * 60 * 1000,  // 10 min
   [Rail.GASZIP]:    10 * 60 * 1000,  // provider-direct status polling
+  [Rail.HYPERLANE_NEXUS]: 10 * 60 * 1000,  // provider-direct explorer polling
+  [Rail.OPTIMISM_NATIVE_BRIDGE]: 14 * 24 * 60 * 60 * 1000, // patient withdrawals should not churn into recovery
   [Rail.THORCHAIN]: 20 * 60 * 1000,  // 20 min incl. native-chain confirmation latency
+  [Rail.CHAINFLIP]: 20 * 60 * 1000,
+  [Rail.MAYA]:      30 * 60 * 1000,
+  [Rail.TELESWAP]:  2  * 60 * 60 * 1000,
 };
 
 export class IntentEngine {

@@ -1,10 +1,16 @@
 import { RailOffer, QuoteResult } from '../types';
 import { buildRouterIntegration, type RouterIntegration } from './IntentCalldataBuilder';
-import { Interface, ZeroAddress, isAddress } from 'ethers';
+import { Interface, ZeroAddress, getAddress, isAddress, zeroPadValue } from 'ethers';
 import type { LayerZeroValueTransferApiUserStep } from './layerzero/LayerZeroValueTransferApiClient';
 
 const THOR_ROUTER_IFACE = new Interface([
   'function depositWithExpiry(address payable vault,address asset,uint256 amount,string memo,uint256 expiration)',
+]);
+const ERC20_IFACE = new Interface([
+  'function transfer(address to, uint256 amount) returns (bool)',
+]);
+const HYPERLANE_WARP_ROUTE_IFACE = new Interface([
+  'function transferRemote(uint32 destinationDomain, bytes32 recipient, uint256 amount) payable returns (bytes32)',
 ]);
 
 export type SelectedOfferIntegration =
@@ -17,6 +23,7 @@ export type SelectedOfferIntegration =
       memo: string;
       expiresAt: number;
       expectedAmountOut: string;
+      refundAddress?: string;
     };
     tx?: {
       to: string;
@@ -44,6 +51,96 @@ export type SelectedOfferIntegration =
       expiresAt: number;
     };
     tx?: {
+      to: string;
+      data: string;
+      value: string;
+      chainId: number;
+    };
+  }
+  | {
+    mode: 'provider_direct';
+    action: {
+      kind: 'hyperlane_transfer_remote';
+      warpRouteAddress: string;
+      destinationDomain: number;
+      interchainGasFee: string;
+    };
+    approvals?: Array<{
+      token: string;
+      spender: string;
+      amount: string;
+    }>;
+    tx?: {
+      to: string;
+      data: string;
+      value: string;
+      chainId: number;
+    };
+  }
+  | {
+    mode: 'provider_direct';
+    action: {
+      kind: 'chainflip_deposit';
+      depositAddress: string;
+      channelId: string;
+      expectedAmountOut: string;
+      refundAddress?: string;
+    };
+    tx?: {
+      to: string;
+      data: string;
+      value: string;
+      chainId: number;
+    };
+  }
+  | {
+    mode: 'provider_direct';
+    action: {
+      kind: 'maya_swap';
+      depositAddress: string;
+      memo: string;
+      expiresAt: number;
+      expectedAmountOut: string;
+      refundAddress?: string;
+    };
+    tx?: {
+      to: string;
+      data: string;
+      value: string;
+      chainId: number;
+    };
+  }
+  | {
+    mode: 'provider_direct';
+    action: {
+      kind: 'teleswap_deposit';
+      depositAddress: string;
+      swapId?: string;
+      expectedAmountOut: string;
+      refundAddress?: string;
+    };
+    tx?: {
+      to: string;
+      data: string;
+      value: string;
+      chainId: number;
+    };
+  }
+  | {
+    mode: 'provider_direct';
+    action: {
+      kind: 'optimism_standard_bridge';
+      direction: 'deposit' | 'withdraw';
+      settlementKind: 'native' | 'erc20';
+      challengePeriodSeconds?: number;
+      requiresPatient: boolean;
+    };
+    approvals?: Array<{
+      token: string;
+      spender: string;
+      amount: string;
+    }>;
+    tx: {
       to: string;
       data: string;
       value: string;
@@ -83,6 +180,46 @@ function isGasZipProviderDirectOffer(offer: RailOffer): boolean {
     : '';
   if (provider === 'gaszip') return true;
   return offer.rail === 'GASZIP' || offer.offerType === 'gaszip_api_direct';
+}
+
+function isHyperlaneNexusProviderDirectOffer(offer: RailOffer): boolean {
+  const provider = typeof offer.execution?.provider === 'string'
+    ? offer.execution.provider.toLowerCase()
+    : '';
+  if (provider === 'hyperlane_explorer') return true;
+  return offer.rail === 'HYPERLANE_NEXUS' || offer.offerType === 'hyperlane_nexus_direct';
+}
+
+function isChainflipProviderDirectOffer(offer: RailOffer): boolean {
+  const provider = typeof offer.execution?.provider === 'string'
+    ? offer.execution.provider.toLowerCase()
+    : '';
+  if (provider === 'chainflip_broker') return true;
+  return offer.rail === 'CHAINFLIP' || offer.offerType === 'chainflip_broker_direct';
+}
+
+function isMayaProviderDirectOffer(offer: RailOffer): boolean {
+  const provider = typeof offer.execution?.provider === 'string'
+    ? offer.execution.provider.toLowerCase()
+    : '';
+  if (provider === 'maya_midgard' || provider === 'maya_api') return true;
+  return offer.rail === 'MAYA' || offer.offerType === 'maya_direct';
+}
+
+function isTeleSwapProviderDirectOffer(offer: RailOffer): boolean {
+  const provider = typeof offer.execution?.provider === 'string'
+    ? offer.execution.provider.toLowerCase()
+    : '';
+  if (provider === 'teleswap_api') return true;
+  return offer.rail === 'TELESWAP' || offer.offerType === 'teleswap_direct';
+}
+
+function isOptimismNativeBridgeProviderDirectOffer(offer: RailOffer): boolean {
+  const provider = typeof offer.execution?.provider === 'string'
+    ? offer.execution.provider.toLowerCase()
+    : '';
+  if (provider === 'optimism_standard_bridge') return true;
+  return offer.rail === 'OPTIMISM_NATIVE_BRIDGE' || offer.offerType === 'optimism_native_bridge_direct';
 }
 
 function readLayerZeroValueTransferApiUserSteps(offer: RailOffer): LayerZeroValueTransferApiUserStep[] {
@@ -134,6 +271,7 @@ export async function buildSelectedOfferIntegration(
     const memo = String(source.memo ?? '');
     const expiresAt = Number(source.expiry ?? 0);
     const expectedAmountOut = String(source.expected_amount_out ?? '');
+    const refundAddress = String(source.refund_address ?? executionQuote.refundAddress ?? '').trim();
 
     const router = String(source.router ?? (offer.execution as Record<string, unknown>).router ?? '');
     const amountInRaw = executionQuote.amountIn;
@@ -156,6 +294,7 @@ export async function buildSelectedOfferIntegration(
         memo,
         expiresAt,
         expectedAmountOut,
+        ...(refundAddress ? { refundAddress } : {}),
       },
       ...(canBuildTx
         ? {
@@ -218,5 +357,227 @@ export async function buildSelectedOfferIntegration(
     };
   }
 
+  if (isHyperlaneNexusProviderDirectOffer(offer)) {
+    const execution = offer.execution as Record<string, unknown>;
+    const quote = execution.quote as Record<string, unknown> | undefined;
+    const warpRouteAddress = String(execution.warpRouteAddress ?? '').trim();
+    const destinationDomain = Number(execution.destinationDomain ?? 0);
+    const interchainGasFee = String(execution.interchainGasFee ?? '0');
+    const tokenIn = String(quote?.tokenIn ?? '').trim();
+    const amountInRaw = quote?.amountIn;
+    const amountIn = typeof amountInRaw === 'bigint'
+      ? amountInRaw
+      : (() => {
+        const raw = String(amountInRaw ?? '').trim();
+        return /^\d+$/.test(raw) ? BigInt(raw) : null;
+      })();
+    const recipient = getAddress(userAddress);
+    const canBuildTx = isAddress(warpRouteAddress) && destinationDomain > 0 && amountIn !== null;
+
+    return {
+      mode: 'provider_direct',
+      action: {
+        kind: 'hyperlane_transfer_remote',
+        warpRouteAddress,
+        destinationDomain,
+        interchainGasFee,
+      },
+      ...(canBuildTx
+        ? {
+          approvals: isAddress(tokenIn)
+            ? [{
+              token: tokenIn,
+              spender: warpRouteAddress,
+              amount: amountIn.toString(),
+            }]
+            : undefined,
+          tx: {
+            to: warpRouteAddress,
+            data: HYPERLANE_WARP_ROUTE_IFACE.encodeFunctionData('transferRemote', [
+              destinationDomain,
+              zeroPadValue(recipient, 32),
+              amountIn,
+            ]),
+            value: interchainGasFee,
+            chainId: Number(quote?.srcChainId ?? 0),
+          },
+        }
+        : {}),
+    };
+  }
+
+  if (isChainflipProviderDirectOffer(offer)) {
+    const execution = offer.execution as Record<string, unknown>;
+    const quote = execution.quote as Record<string, unknown> | undefined;
+    const depositAddress = String(execution.depositAddress ?? '').trim();
+    const channelId = String(execution.channelId ?? quote?.chainflipChannelId ?? '').trim();
+    const expectedAmountOut = String(execution.expectedAmountOut ?? quote?.estimatedOut ?? '');
+    const refundAddress = String(execution.refundAddress ?? quote?.refundAddress ?? '').trim();
+    const tokenIn = String(quote?.tokenIn ?? '').trim();
+    const amountInRaw = quote?.amountIn;
+    const amountIn = typeof amountInRaw === 'bigint'
+      ? amountInRaw
+      : (() => {
+        const raw = String(amountInRaw ?? '').trim();
+        return /^\d+$/.test(raw) ? BigInt(raw) : null;
+      })();
+    const canBuildTx = depositAddress.length > 0 && amountIn !== null;
+    const tx = canBuildTx
+      ? thisOrBuildPassthroughTx(tokenIn, depositAddress, amountIn, Number(quote?.srcChainId ?? 0))
+      : undefined;
+
+    return {
+      mode: 'provider_direct',
+      action: {
+        kind: 'chainflip_deposit',
+        depositAddress,
+        channelId,
+        expectedAmountOut,
+        ...(refundAddress ? { refundAddress } : {}),
+      },
+      ...(tx ? { tx } : {}),
+    };
+  }
+
+  if (isMayaProviderDirectOffer(offer)) {
+    const execution = offer.execution as Record<string, unknown>;
+    const quote = execution.quote as Record<string, unknown> | undefined;
+    const depositAddress = String(execution.vaultAddress ?? execution.depositAddress ?? '').trim();
+    const memo = String(execution.memo ?? '').trim();
+    const expiresAt = Number(execution.expiresAt ?? quote?.expiresAt ?? 0);
+    const expectedAmountOut = String(execution.expectedAmountOut ?? quote?.estimatedOut ?? '');
+    const refundAddress = String(execution.refundAddress ?? quote?.refundAddress ?? '').trim();
+    const routerAddress = String(execution.routerAddress ?? '').trim();
+    const tokenIn = String(quote?.tokenIn ?? '').trim();
+    const amountInRaw = quote?.amountIn;
+    const amountIn = typeof amountInRaw === 'bigint'
+      ? amountInRaw
+      : (() => {
+        const raw = String(amountInRaw ?? '').trim();
+        return /^\d+$/.test(raw) ? BigInt(raw) : null;
+      })();
+
+    let tx: { to: string; data: string; value: string; chainId: number } | undefined;
+    if (isAddress(routerAddress) && isAddress(depositAddress) && amountIn !== null && expiresAt > 0 && memo.length > 0) {
+      const asset = isAddress(tokenIn) ? tokenIn : ZeroAddress;
+      tx = {
+        to: routerAddress,
+        data: THOR_ROUTER_IFACE.encodeFunctionData('depositWithExpiry', [
+          depositAddress,
+          asset,
+          amountIn,
+          memo,
+          expiresAt,
+        ]),
+        value: asset === ZeroAddress ? amountIn.toString() : '0',
+        chainId: Number(quote?.srcChainId ?? 0),
+      };
+    } else if (depositAddress.length > 0 && amountIn !== null) {
+      tx = thisOrBuildPassthroughTx(tokenIn, depositAddress, amountIn, Number(quote?.srcChainId ?? 0));
+    }
+
+    return {
+      mode: 'provider_direct',
+      action: {
+        kind: 'maya_swap',
+        depositAddress,
+        memo,
+        expiresAt,
+        expectedAmountOut,
+        ...(refundAddress ? { refundAddress } : {}),
+      },
+      ...(tx ? { tx } : {}),
+    };
+  }
+
+  if (isTeleSwapProviderDirectOffer(offer)) {
+    const execution = offer.execution as Record<string, unknown>;
+    const quote = execution.quote as Record<string, unknown> | undefined;
+    const depositAddress = String(execution.depositAddress ?? '').trim();
+    const swapId = String(execution.swapId ?? quote?.teleSwapSwapId ?? '').trim();
+    const expectedAmountOut = String(execution.expectedAmountOut ?? quote?.estimatedOut ?? '');
+    const refundAddress = String(execution.refundAddress ?? quote?.refundAddress ?? '').trim();
+    const tokenIn = String(quote?.tokenIn ?? '').trim();
+    const amountInRaw = quote?.amountIn;
+    const amountIn = typeof amountInRaw === 'bigint'
+      ? amountInRaw
+      : (() => {
+        const raw = String(amountInRaw ?? '').trim();
+        return /^\d+$/.test(raw) ? BigInt(raw) : null;
+      })();
+    const tx = depositAddress.length > 0 && amountIn !== null
+      ? thisOrBuildPassthroughTx(tokenIn, depositAddress, amountIn, Number(quote?.srcChainId ?? 0))
+      : undefined;
+
+    return {
+      mode: 'provider_direct',
+      action: {
+        kind: 'teleswap_deposit',
+        depositAddress,
+        ...(swapId ? { swapId } : {}),
+        expectedAmountOut,
+        ...(refundAddress ? { refundAddress } : {}),
+      },
+      ...(tx ? { tx } : {}),
+    };
+  }
+
+  if (isOptimismNativeBridgeProviderDirectOffer(offer)) {
+    const execution = offer.execution as Record<string, unknown>;
+    const rawTx = execution.tx as Record<string, unknown> | undefined;
+    const rawApprovals = Array.isArray(execution.approvals) ? execution.approvals as Array<Record<string, unknown>> : [];
+    if (!rawTx) {
+      throw new Error(`Selected native bridge offer ${offer.offerId} is missing transaction helper data`);
+    }
+
+    return {
+      mode: 'provider_direct',
+      action: {
+        kind: 'optimism_standard_bridge',
+        direction: execution.direction === 'withdraw' ? 'withdraw' : 'deposit',
+        settlementKind: execution.settlementKind === 'native' ? 'native' : 'erc20',
+        challengePeriodSeconds: typeof execution.challengePeriodSeconds === 'number'
+          ? execution.challengePeriodSeconds
+          : undefined,
+        requiresPatient: Boolean(execution.requiresPatient),
+      },
+      approvals: rawApprovals.length > 0
+        ? rawApprovals.map((approval) => ({
+          token: String(approval.token ?? ''),
+          spender: String(approval.spender ?? ''),
+          amount: String(approval.amount ?? ''),
+        }))
+        : undefined,
+      tx: {
+        to: String(rawTx.to ?? ''),
+        data: String(rawTx.data ?? '0x'),
+        value: String(rawTx.value ?? '0'),
+        chainId: Number(rawTx.chainId ?? 0),
+      },
+    };
+  }
+
   throw new Error(`Unsupported provider direct integration for offer ${offer.offerId}`);
+}
+
+function thisOrBuildPassthroughTx(
+  tokenIn: string,
+  depositAddress: string,
+  amountIn: bigint,
+  chainId: number,
+): { to: string; data: string; value: string; chainId: number } {
+  if (isAddress(tokenIn)) {
+    return {
+      to: tokenIn,
+      data: ERC20_IFACE.encodeFunctionData('transfer', [depositAddress, amountIn]),
+      value: '0',
+      chainId,
+    };
+  }
+  return {
+    to: depositAddress,
+    data: '0x',
+    value: amountIn.toString(),
+    chainId,
+  };
 }

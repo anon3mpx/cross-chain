@@ -24,3 +24,19 @@ test('parseQuoteRequest preserves destination gas requests', () => {
     provider: undefined,
   }]);
 });
+
+test('parseQuoteRequest preserves patient urgency and provider-direct refund addresses', () => {
+  const parsed = parseQuoteRequest({
+    tokenIn: 'BTC',
+    tokenOut: '0x2791Bca1f2de4661ED88A30C99A7a9449Aa84174',
+    amountIn: '100000000',
+    srcChainId: 0,
+    dstChainId: 137,
+    userAddress: '0x3333333333333333333333333333333333333333',
+    refundAddress: 'bc1qrefunddestination',
+    urgency: 'patient',
+  } as any);
+
+  assert.equal(parsed.urgency, 'patient');
+  assert.equal(parsed.refundAddress, 'bc1qrefunddestination');
+});

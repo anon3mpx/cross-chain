@@ -34,9 +34,9 @@ CREATE TABLE IF NOT EXISTS intents (
   dst_chain_id       INTEGER NOT NULL,
 
   rail               TEXT NOT NULL
-                    CHECK (rail IN ('CCTP','AXELAR','LAYERZERO','VIA_LABS','WORMHOLE','THORCHAIN','GASZIP')),
+                    CHECK (rail IN ('CCTP','AXELAR','LAYERZERO','VIA_LABS','WORMHOLE','THORCHAIN','GASZIP','HYPERLANE_NEXUS','OPTIMISM_NATIVE_BRIDGE','CHAINFLIP','MAYA','TELESWAP')),
   fallback_rail      TEXT
-                    CHECK (fallback_rail IS NULL OR fallback_rail IN ('CCTP','AXELAR','LAYERZERO','VIA_LABS','WORMHOLE','THORCHAIN','GASZIP')),
+                    CHECK (fallback_rail IS NULL OR fallback_rail IN ('CCTP','AXELAR','LAYERZERO','VIA_LABS','WORMHOLE','THORCHAIN','GASZIP','HYPERLANE_NEXUS','OPTIMISM_NATIVE_BRIDGE','CHAINFLIP','MAYA','TELESWAP')),
 
   quote              JSONB NOT NULL,
   src_tx_hash        TEXT,
@@ -47,6 +47,12 @@ CREATE TABLE IF NOT EXISTS intents (
   error_message      TEXT,
 
   partner_api_key    CITEXT,
+  partner_id         TEXT,
+  integrator_id      TEXT,
+  agent_id           TEXT,
+  route_source       TEXT,
+  parent_basket_id   TEXT,
+  solver_id          TEXT,
   version            BIGINT NOT NULL DEFAULT 0,
 
   created_at         TIMESTAMPTZ NOT NULL,
@@ -61,15 +67,30 @@ CREATE INDEX IF NOT EXISTS idx_intents_src_dst
   ON intents(src_chain_id, dst_chain_id);
 CREATE INDEX IF NOT EXISTS idx_intents_user_address
   ON intents(user_address);
+CREATE INDEX IF NOT EXISTS idx_intents_integrator_updated
+  ON intents(integrator_id, updated_at DESC)
+  WHERE integrator_id IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_intents_partner_updated
+  ON intents(partner_id, updated_at DESC)
+  WHERE partner_id IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_intents_agent_updated
+  ON intents(agent_id, updated_at DESC)
+  WHERE agent_id IS NOT NULL;
 CREATE INDEX IF NOT EXISTS idx_intents_lz_value_transfer_quote_id
   ON intents((quote->>'layerZeroValueTransferApiQuoteId'))
   WHERE quote ? 'layerZeroValueTransferApiQuoteId';
+CREATE INDEX IF NOT EXISTS idx_intents_parent_basket
+  ON intents(parent_basket_id, partner_id)
+  WHERE parent_basket_id IS NOT NULL;
 
 DROP TRIGGER IF EXISTS trg_intents_updated_at ON intents;
 CREATE TRIGGER trg_intents_updated_at
 BEFORE UPDATE ON intents
 FOR EACH ROW
 EXECUTE FUNCTION set_updated_at();
+
+COMMENT ON COLUMN intents.parent_basket_id IS
+  'When this intent is one leg of a multi-leg basket, the opaque basket id returned by the basket quote/execute flow.';
 
 -- -----------------------------------------------------------------------------
 -- 2) intent_events: immutable state transitions / audit trail
@@ -161,7 +182,7 @@ CREATE TABLE IF NOT EXISTS intent_provider_transfers (
   intent_id              TEXT NOT NULL REFERENCES intents(intent_id) ON DELETE CASCADE,
 
   provider               TEXT NOT NULL
-                         CHECK (provider IN ('layerzero_value_transfer_api','thorchain_api')),
+                         CHECK (provider IN ('layerzero_value_transfer_api','thorchain_api','hyperlane_explorer','chainflip_broker','maya_midgard','teleswap_api')),
   provider_quote_id      TEXT NOT NULL,
 
   status                 TEXT NOT NULL DEFAULT 'CREATED'
@@ -197,6 +218,63 @@ FOR EACH ROW
 EXECUTE FUNCTION set_updated_at();
 
 -- -----------------------------------------------------------------------------
+-- 2d) solvers: external solver registry / control plane
+-- -----------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS solvers (
+  id                 TEXT PRIMARY KEY,
+  type               TEXT NOT NULL
+                    CHECK (type IN ('internal','external','third-party')),
+  display_name       TEXT NOT NULL,
+  contact_email      CITEXT,
+  capabilities       JSONB NOT NULL DEFAULT '{}'::jsonb,
+  reliability        JSONB,
+  active             BOOLEAN NOT NULL DEFAULT FALSE,
+  created_at         TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at         TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+DROP TRIGGER IF EXISTS trg_solvers_updated_at ON solvers;
+CREATE TRIGGER trg_solvers_updated_at
+BEFORE UPDATE ON solvers
+FOR EACH ROW
+EXECUTE FUNCTION set_updated_at();
+
+CREATE INDEX IF NOT EXISTS idx_solvers_type_active
+  ON solvers(type, active);
+
+-- -----------------------------------------------------------------------------
+-- 2e) intent_baskets: durable basket quote / execution records
+-- -----------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS intent_baskets (
+  basket_id           TEXT PRIMARY KEY,
+  mode                TEXT NOT NULL,
+  basket_payload      JSONB NOT NULL,
+  quote_payload       JSONB,
+  execution_plan      JSONB,
+  user_address        CITEXT,
+  partner_id          TEXT,
+  integrator_id       TEXT,
+  agent_id            TEXT,
+  route_source        TEXT,
+  created_at          TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at          TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+DROP TRIGGER IF EXISTS trg_intent_baskets_updated_at ON intent_baskets;
+CREATE TRIGGER trg_intent_baskets_updated_at
+BEFORE UPDATE ON intent_baskets
+FOR EACH ROW
+EXECUTE FUNCTION set_updated_at();
+
+CREATE INDEX IF NOT EXISTS idx_intent_baskets_partner_time
+  ON intent_baskets(partner_id, updated_at DESC)
+  WHERE partner_id IS NOT NULL;
+
+CREATE INDEX IF NOT EXISTS idx_intent_baskets_user_time
+  ON intent_baskets(user_address, updated_at DESC)
+  WHERE user_address IS NOT NULL;
+
+-- -----------------------------------------------------------------------------
 -- 3) intent_rail_attempts: each submit/fallback attempt per intent
 -- -----------------------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS intent_rail_attempts (
@@ -205,7 +283,7 @@ CREATE TABLE IF NOT EXISTS intent_rail_attempts (
   attempt_no         INTEGER NOT NULL,
 
   rail               TEXT NOT NULL
-                    CHECK (rail IN ('CCTP','AXELAR','LAYERZERO','VIA_LABS','WORMHOLE','THORCHAIN','GASZIP')),
+                    CHECK (rail IN ('CCTP','AXELAR','LAYERZERO','VIA_LABS','WORMHOLE','THORCHAIN','GASZIP','HYPERLANE_NEXUS','OPTIMISM_NATIVE_BRIDGE','CHAINFLIP','MAYA','TELESWAP')),
 
   status             TEXT NOT NULL
                     CHECK (status IN ('PENDING','SUBMITTED','IN_TRANSIT','SETTLED','FAILED','CANCELLED')),
@@ -314,5 +392,86 @@ CREATE TRIGGER trg_task_outbox_updated_at
 BEFORE UPDATE ON task_outbox
 FOR EACH ROW
 EXECUTE FUNCTION set_updated_at();
+
+-- -----------------------------------------------------------------------------
+-- 8) route_outcomes: durable reliability history
+-- -----------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS route_outcomes (
+  id                 BIGSERIAL PRIMARY KEY,
+  intent_id          TEXT        NOT NULL,
+  route_signature    TEXT        NOT NULL,
+  rail               TEXT        NOT NULL,
+  src_chain_id       INTEGER     NOT NULL,
+  dst_chain_id       INTEGER     NOT NULL,
+  src_token          TEXT        NOT NULL,
+  dst_token          TEXT        NOT NULL,
+  quoted_out         NUMERIC(80,0),
+  quoted_eta_s       INTEGER,
+  quoted_fee_usd     DOUBLE PRECISION,
+  actual_out         NUMERIC(80,0),
+  actual_eta_s       INTEGER,
+  actual_fee_usd     DOUBLE PRECISION,
+  status             TEXT        NOT NULL CHECK (status IN ('SETTLED', 'FAILED', 'STUCK')),
+  failure_reason     TEXT,
+  partner_id         TEXT,
+  integrator_id      TEXT,
+  agent_id           TEXT,
+  route_source       TEXT,
+  solver_id          TEXT,
+  created_at         TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  settled_at         TIMESTAMPTZ,
+  observed_at        TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  execution_mode     TEXT,
+  offer_type         TEXT
+);
+
+CREATE INDEX IF NOT EXISTS idx_route_outcomes_signature_time
+  ON route_outcomes(route_signature, observed_at DESC);
+CREATE INDEX IF NOT EXISTS idx_route_outcomes_rail_time
+  ON route_outcomes(rail, observed_at DESC);
+CREATE INDEX IF NOT EXISTS idx_route_outcomes_integrator_time
+  ON route_outcomes(integrator_id, observed_at DESC)
+  WHERE integrator_id IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_route_outcomes_partner_time
+  ON route_outcomes(partner_id, observed_at DESC)
+  WHERE partner_id IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_route_outcomes_agent_time
+  ON route_outcomes(agent_id, observed_at DESC)
+  WHERE agent_id IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_route_outcomes_solver_time
+  ON route_outcomes(solver_id, observed_at DESC)
+  WHERE solver_id IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_route_outcomes_intent_id
+  ON route_outcomes(intent_id);
+
+-- -----------------------------------------------------------------------------
+-- 9) relayer_nonces: cross-instance relayer nonce reservation
+-- -----------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS relayer_nonces (
+  chain_id           INTEGER NOT NULL,
+  signer_address     CITEXT  NOT NULL,
+  nonce              BIGINT  NOT NULL,
+  intent_id          TEXT,
+  tx_hash            TEXT,
+  status             TEXT NOT NULL DEFAULT 'reserved'
+                    CHECK (status IN ('reserved','broadcast','confirmed','failed')),
+  reserved_at        TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  broadcast_at       TIMESTAMPTZ,
+  confirmed_at       TIMESTAMPTZ,
+  PRIMARY KEY (chain_id, signer_address, nonce)
+);
+
+CREATE INDEX IF NOT EXISTS idx_relayer_nonces_signer_status
+  ON relayer_nonces(chain_id, signer_address, status);
+CREATE INDEX IF NOT EXISTS idx_relayer_nonces_intent
+  ON relayer_nonces(intent_id) WHERE intent_id IS NOT NULL;
+
+CREATE TABLE IF NOT EXISTS relayer_nonce_cursor (
+  chain_id           INTEGER NOT NULL,
+  signer_address     CITEXT  NOT NULL,
+  high_water_mark    BIGINT  NOT NULL DEFAULT 0,
+  updated_at         TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  PRIMARY KEY (chain_id, signer_address)
+);
 
 COMMIT;

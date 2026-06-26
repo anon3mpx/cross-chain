@@ -35,11 +35,11 @@ function scoreRoute(
   totalEtaSeconds: number,
   reliabilityProduct: number,
   hopCount: number,
-  urgency: 'fast' | 'normal',
+  urgency: 'fast' | 'normal' | 'patient',
   amountUSD: number,
 ): number {
-  const costWeight  = urgency === 'fast' ? 0.4 : 1.8;
-  const speedWeight = urgency === 'fast' ? 2.5 : 0.6;
+  const costWeight  = urgency === 'fast' ? 0.4 : urgency === 'patient' ? 2.1 : 1.8;
+  const speedWeight = urgency === 'fast' ? 2.5 : urgency === 'patient' ? 0.15 : 0.6;
   const hopPenalty  = hopCount > 1 ? 0.75 : 1.0; // 25% penalty for each extra hop
 
   const feePct    = totalFeeUSD / Math.max(amountUSD, 1);
@@ -64,13 +64,13 @@ export class RouteBuilder {
    * @param srcChainId  Source chain ID
    * @param dstChainId  Destination chain ID
    * @param amountUSD   Transfer amount in USD (affects scoring)
-   * @param urgency     'fast' | 'normal'
+   * @param urgency     'fast' | 'normal' | 'patient'
    */
   buildRoutes(
     srcChainId: number,
     dstChainId: number,
     amountUSD: number,
-    urgency: 'fast' | 'normal' = 'normal',
+    urgency: 'fast' | 'normal' | 'patient' = 'normal',
   ): Route[] {
     // All route builders run "in parallel" — synchronous but evaluated together
     // before any filtering, mirroring what async parallel queries would do.
@@ -102,7 +102,7 @@ export class RouteBuilder {
     srcChainId: number,
     dstChainId: number,
     amountUSD: number,
-    urgency: 'fast' | 'normal',
+    urgency: 'fast' | 'normal' | 'patient',
   ): Route[] {
     const dstChain = getChainConfig(dstChainId);
     const srcHasAgg = hasAggregator(srcChainId);
@@ -154,7 +154,7 @@ export class RouteBuilder {
     srcChainId: number,
     dstChainId: number,
     amountUSD: number,
-    urgency: 'fast' | 'normal',
+    urgency: 'fast' | 'normal' | 'patient',
   ): Route[] {
     const routes: Route[] = [];
 

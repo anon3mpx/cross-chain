@@ -13,6 +13,8 @@ import { getSettlementTokenAddress } from '../config/contracts';
 import { Rail, SettlementToken } from '../types';
 import { isRetryableInfraError } from '../app/infraErrors';
 import { IntentService } from './IntentService';
+import type { IdempotencyStore } from '../db/IdempotencyStore';
+import type { RelayerNonceStore } from '../db/RelayerNonceStore';
 import { RpcProviderRegistry } from './RpcProviderRegistry';
 import { getCctpDomain, getRailEnumValue } from '../rails/registry';
 
@@ -178,10 +180,25 @@ export class CctpAttestationWorker {
   private running = false;
   private readonly providerFactory: PollingRpcProviderFactory;
 
+  // Audit fix (V1): DB-backed lease lock — prevents two processes (HA pair,
+  // restart-during-relay, accidental duplicate worker) from both submitting
+  // the destination receiveMessage and double-minting USDC.
+  //
+  // Optional: when undefined (e.g. JSON-store mode), the worker still has
+  // the in-memory seenIntentIds / inFlightIntentIds guards from before this
+  // commit — that protects single-instance deployments only.
+  private readonly idempotency: IdempotencyStore | undefined;
+  // Audit fix (V6, Sprint 2.7): cross-process nonce reservation for the
+  // relayer EOA.  When undefined, workers fall back to the ethers Wallet's
+  // stateless nonce — fine for single-instance only.
+  private readonly nonceStore: RelayerNonceStore | undefined;
+
   constructor(
     private intentService: IntentService,
     private rpcProviderRegistry: Pick<RpcProviderRegistry, 'getPollingRpcUrl' | 'reportFailure'> = new RpcProviderRegistry(),
     providerFactory?: PollingRpcProviderFactory,
+    idempotency?: IdempotencyStore,
+    nonceStore?: RelayerNonceStore,
   ) {
     this.providerFactory = providerFactory ?? ((rpcUrl, chainId) => new JsonRpcProvider(rpcUrl, chainId, {
       polling: true,
@@ -189,6 +206,8 @@ export class CctpAttestationWorker {
       batchMaxCount: 1,
       staticNetwork: true,
     }));
+    this.idempotency = idempotency;
+    this.nonceStore = nonceStore;
   }
 
   async start(): Promise<void> {
@@ -292,6 +311,27 @@ export class CctpAttestationWorker {
     if (this.seenIntentIds.has(intentId) || this.inFlightIntentIds.has(intentId)) return;
     const pendingRetry = this.retryQueue.get(intentId);
     if (pendingRetry && pendingRetry.nextAttemptAt > Date.now()) return;
+
+    // Audit fix (V1): DB-backed lease lock.  The TTL is generous (20 min) so
+    // a worker that crashes mid-relay doesn't permanently lock the intent;
+    // the next worker that picks the event up after the TTL reclaims it.
+    // The attestation poll loop already times out at 10 min, so 20 min is a
+    // safe envelope.  release() at the end frees it earlier on success.
+    const LEASE_MS = 20 * 60_000;
+    let acquired = false;
+    if (this.idempotency) {
+      const lease = await this.idempotency.acquire('cctp:relay', intentId, LEASE_MS, intentId);
+      if (!lease.acquired) {
+        // Another instance / a recent retry holds the lock.  Silently skip.
+        // The owning worker will either succeed (we'll never see this id
+        // again because of the persisted seenIntentIds equivalent at the DB
+        // layer once the destination tx is confirmed) or it'll fail and the
+        // retry queue will fire again after backoff.
+        return;
+      }
+      acquired = true;
+    }
+
     this.inFlightIntentIds.add(intentId);
 
     try {
@@ -312,6 +352,14 @@ export class CctpAttestationWorker {
       }
     } finally {
       this.inFlightIntentIds.delete(intentId);
+      // Release lock only on retryable failure or success-then-recorded.
+      // For permanently failed jobs we DO release so a human-driven manual
+      // retry can take over.  For success we release to keep the table
+      // small (we still have seenIntentIds in-memory + the destination tx
+      // is already on-chain).
+      if (acquired && this.idempotency) {
+        await this.idempotency.release('cctp:relay', intentId);
+      }
     }
   }
 
@@ -511,6 +559,20 @@ export class CctpAttestationWorker {
       const mtContract = new Contract(messageTransmitter, MESSAGE_TRANSMITTER_ABI, signer);
       const settlementTokenContract = new Contract(job.settlementToken, ERC20_BALANCE_ABI, dstProvider);
 
+      // Audit V6 / S2.7 — reserve nonce via the cross-process store so HA
+      // pairs / restart-during-relay don't collide.  When no store is
+      // wired (single-instance / JSON mode), the destination queue's
+      // per-chain serialisation is sufficient and we fall through to
+      // ethers' stateless Wallet nonce.
+      const reservation = this.nonceStore
+        ? await this.nonceStore.reserve(
+            job.dstChainId,
+            signer.address,
+            job.intentId,
+            async () => BigInt(await dstProvider.getTransactionCount(signer.address, 'pending')),
+          )
+        : undefined;
+
       let receiveTxHash: string | undefined;
       let mintedAmount = 0n;
 
@@ -525,7 +587,13 @@ export class CctpAttestationWorker {
           if (!isBenignEmptyReceiveMessageStaticResult(err)) throw err;
         }
 
-        const tx = await mtContract.receiveMessage(relayMessage, attestation);
+        const tx = reservation
+          ? await mtContract.receiveMessage(relayMessage, attestation, { nonce: Number(reservation.nonce) })
+          : await mtContract.receiveMessage(relayMessage, attestation);
+        if (reservation && tx?.hash) {
+          // Best-effort lifecycle update.  release on throw below.
+          await this.nonceStore!.markBroadcast(reservation, tx.hash);
+        }
         const rcpt = await tx.wait();
         receiveTxHash = rcpt?.hash;
         mintedAmount = extractReceivedSettlementAmountFromReceipt(rcpt, job.settlementToken, job.receiver);
@@ -537,10 +605,16 @@ export class CctpAttestationWorker {
         }
 
         if (receiveTxHash) this._safeMarkDestinationReceived(job.intentId, receiveTxHash);
+        if (reservation) await this.nonceStore!.markConfirmed(reservation);
         console.log(
           `[CCTP Relay] receiveMessage ok intent=${job.intentId} tx=${receiveTxHash ?? 'unknown'}`,
         );
       } catch (err) {
+        // Release the reserved nonce on failure so a retry / another worker
+        // can claim it.  Already-relayed error is NOT a failure here.
+        if (reservation && !this._isAlreadyRelayedError(err)) {
+          try { await this.nonceStore!.release(reservation); } catch { /* best-effort */ }
+        }
         if (this._isAccountNonceError(err) || !this._isAlreadyRelayedError(err)) throw err;
         console.log(`[CCTP Relay] message already relayed intent=${job.intentId}`);
       }

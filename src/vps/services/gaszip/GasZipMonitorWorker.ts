@@ -220,7 +220,7 @@ const defaultRpcProviderRegistry = new RpcProviderRegistry();
 
 const defaultGasZipReceiptProviderFactory: GasZipReceiptProviderFactory = (chainId) => {
   try {
-    return defaultRpcProviderRegistry.getReadProvider(chainId);
+    return defaultRpcProviderRegistry.getProvider(chainId).asEthersProvider();
   } catch {
     return null;
   }

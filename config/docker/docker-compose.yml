@@ -53,6 +53,7 @@ services:
       ENABLE_EVENT_MONITOR: "${API_ENABLE_EVENT_MONITOR:-false}"
       ENABLE_RECOVERY_ENGINE: "${API_ENABLE_RECOVERY_ENGINE:-false}"
       ENABLE_CCTP_RELAY: "${API_ENABLE_CCTP_RELAY:-false}"
+      VPS_CORS_ORIGIN: "${VPS_CORS_ORIGIN:-}"
       VPS_JSON_LIMIT: "${VPS_JSON_LIMIT:-32kb}"
       VPS_RATE_LIMIT_STORE: "${VPS_RATE_LIMIT_STORE:-redis}"
       VPS_RATE_LIMIT_REDIS_PREFIX: "${VPS_RATE_LIMIT_REDIS_PREFIX:-empx-cross-chain:rate-limit:local}"
@@ -63,6 +64,42 @@ services:
     command: ["npm", "run", "vps:api"]
     ports:
       - "127.0.0.1:8787:8787"
+
+  partner-api:
+    image: empx-cross-chain-vps:${IMAGE_TAG:-local}
+    build:
+      context: ../..
+      dockerfile: config/docker/Dockerfile
+    container_name: empx-cross-chain-partner-api
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    env_file:
+      - path: ../../.env
+        required: false
+    environment:
+      DATABASE_URL: postgres://postgres:postgres@postgres:5432/empx-cross-chain
+      REDIS_URL: redis://redis:6379
+      REDIS_ENABLED: "${REDIS_ENABLED:-true}"
+      ENABLE_PARTNER_API: "true"
+      ENABLE_EVENT_MONITOR: "false"
+      ENABLE_RECOVERY_ENGINE: "false"
+      ENABLE_CCTP_RELAY: "false"
+      PARTNER_API_PORT: "8788"
+      PARTNER_API_CORS_ORIGIN: "${PARTNER_API_CORS_ORIGIN:-}"
+      VPS_JSON_LIMIT: "${VPS_JSON_LIMIT:-32kb}"
+      VPS_RATE_LIMIT_STORE: "${VPS_RATE_LIMIT_STORE:-redis}"
+      VPS_RATE_LIMIT_REDIS_PREFIX: "${VPS_RATE_LIMIT_REDIS_PREFIX:-empx-cross-chain:rate-limit:local}:partner"
+      VPS_RATE_LIMIT_WINDOW_MS: "${PARTNER_API_RATE_LIMIT_WINDOW_MS:-60000}"
+      VPS_RATE_LIMIT_MAX: "${PARTNER_API_RATE_LIMIT_MAX:-120}"
+      VPS_QUOTE_RATE_LIMIT_WINDOW_MS: "${PARTNER_API_QUOTE_RATE_LIMIT_WINDOW_MS:-60000}"
+      VPS_QUOTE_RATE_LIMIT_MAX: "${PARTNER_API_QUOTE_RATE_LIMIT_MAX:-20}"
+    command: ["npm", "run", "vps:partner-api"]
+    ports:
+      - "127.0.0.1:8788:8788"
 
   worker:
     image: empx-cross-chain-vps:${IMAGE_TAG:-local}
@@ -126,6 +163,8 @@ services:
     profiles: ["edge"]
     depends_on:
       api:
+        condition: service_started
+      partner-api:
         condition: service_started
     env_file:
       - path: ../../.env

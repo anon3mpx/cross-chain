@@ -37,7 +37,7 @@ export class WebSocketAPI {
   }
 
   private _setup(): void {
-    this.wss.on('connection', (ws: WebSocket, req: IncomingMessage) => {
+    this.wss.on('connection', async (ws: WebSocket, req: IncomingMessage) => {
       // URL format: /ws/intent/:intentId?key=rflo_xxx
       const url    = new URL(req.url ?? '', 'http://localhost');
       const parts  = url.pathname.split('/');          // ['', 'ws', 'intent', ':id']
@@ -45,7 +45,7 @@ export class WebSocketAPI {
       const apiKey   = this._readApiKey(req, url);
 
       // Auth check
-      const check = this.keyManager.validateKey(apiKey);
+      const check = await this.keyManager.validateKey(apiKey);
       if (!check.allowed) {
         ws.send(JSON.stringify({ error: check.reason }));
         ws.close(1008, check.reason);

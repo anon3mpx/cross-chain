@@ -36,12 +36,21 @@ ruflo.track(intentId, (status) => updateUI(status));
 
 ## Partner Tiers
 
-| Tier | Quotes/min | Intents/day | Fee Rebate | SLA | Cost |
-|---|---|---|---|---|---|
-| **Public** | 10 | 50 | 0% | None | Free, no key |
-| **Hobbyist** | 60 | 500 | 0% | None | Free, register for key |
-| **Partner** | 600 | 10,000 | 20% | 99.5% | Revenue share agreement |
-| **Enterprise** | 6,000 | 500,000 | 30% | 99.9% | Custom contract |
+| Tier | Quotes/min | Intents/day | Fee Rebate | SLA | Access |
+|---|---:|---:|---:|---|---|
+| **FREE** | 60 | 500 | 0% | none | Self-serve API registration |
+| **GROWTH** | 300 | 5,000 | 15% | none | Approval or paid growth plan |
+| **PARTNER** | 600 | 10,000 | 20% | 99.5% | Revenue-share agreement |
+| **ENTERPRISE** | 6,000 | 500,000 | 30% | 99.9% | Custom contract |
+
+API key flow:
+
+1. Call `POST https://partners.empx.io/partner/register` with `name` and `contactEmail`.
+2. Store `apiKey` and `webhookSecret` from the response. They are shown once.
+3. Send `x-api-key` on all operational `/partner/*` requests.
+4. Request `GROWTH`, `PARTNER`, or `ENTERPRISE` upgrade through an ops contact; admins apply approved changes through `/admin/partners/*`.
+
+Production partner API keys are stored durably. Local development can use the in-memory repository and will lose keys on restart.
 
 ---
 
@@ -62,9 +71,13 @@ ruflo.track(intentId, (status) => updateUI(status));
 ## Quick Start (Mode A)
 
 ```bash
-# 1. Get API key (register at dashboard)
+# 1. Get API key (register through the Partner API)
+curl -X POST https://partners.empx.io/partner/register \
+  -H "content-type: application/json" \
+  -d '{ "name": "My App", "contactEmail": "dev@example.com" }'
+
 # 2. Request a quote
-curl -X POST https://api.ruflo.io/partner/quote \
+curl -X POST https://partners.empx.io/partner/quote \
   -H "x-api-key: YOUR_KEY" \
   -H "content-type: application/json" \
   -d '{
@@ -79,6 +92,6 @@ curl -X POST https://api.ruflo.io/partner/quote \
 # Response includes: quote, intentId, calldata for RouterV1
 # 3. User signs and submits calldata with their wallet
 # 4. Track status
-curl https://api.ruflo.io/partner/intent/INTENT_ID \
+curl https://partners.empx.io/partner/intent/INTENT_ID \
   -H "x-api-key: YOUR_KEY"
 ```

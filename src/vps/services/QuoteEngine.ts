@@ -61,9 +61,31 @@ import {
   type LayerZeroValueTransferApiQuoteResult,
 } from './layerzero/LayerZeroValueTransferApiQuoteWorker';
 import {
+  HyperlaneNexusQuoteWorker,
+  type HyperlaneNexusQuoteResult,
+  inferHyperlaneAssetSymbol,
+} from './hyperlane/HyperlaneNexusQuoteWorker';
+import {
+  BrokerChainflipQuoteWorker,
+  type ChainflipQuoteResult,
+  type ChainflipQuoteWorker,
+  toChainflipAsset,
+} from './chainflip/ChainflipQuoteWorker';
+import {
+  MidgardMayaQuoteWorker,
+  type MayaQuoteResult,
+  type MayaQuoteWorker,
+  toMayaAsset,
+} from './maya/MayaQuoteWorker';
+import {
   GasZipQuoteWorker,
   type GasZipQuoteResult,
 } from './gaszip/GasZipQuoteWorker';
+import {
+  SdkTeleSwapQuoteWorker,
+  type TeleSwapQuoteResult,
+  type TeleSwapQuoteWorker,
+} from './teleswap/TeleSwapQuoteWorker';
 import {
   EmpsealQuoteWorker,
   type EmpsealQuoteWorkerLike,
@@ -76,6 +98,17 @@ import {
   getRailConfig,
   isCctpFastPluginId,
 } from '../rails/registry';
+import {
+  OPTIMISM_DEFAULT_MIN_GAS_LIMIT,
+  OPTIMISM_DEPOSIT_ETA_SECONDS,
+  OPTIMISM_L1_BRIDGE_IFACE,
+  OPTIMISM_L1_STANDARD_BRIDGE,
+  OPTIMISM_L2_BRIDGE_IFACE,
+  OPTIMISM_L2_STANDARD_BRIDGE,
+  OPTIMISM_NATIVE_BRIDGE_RAIL_PROVIDER,
+  OPTIMISM_NATIVE_TOKEN_SENTINEL,
+  resolveOptimismNativeBridgeRoute,
+} from './nativebridge/optimism';
 
 const CACHE_TTL_MS = 120_000; // Cache full quotes for 2 minutes. This is a tradeoff to reduce RPC calls while keeping quotes reasonably fresh.
 const LOWER_HEX_ADDR_RE = /^0x[0-9a-f]{40}$/;
@@ -141,7 +174,11 @@ export interface QuoteEngineDependencies {
   axelarAssetCatalog?: Pick<AxelarAssetCatalog, 'listRoutes'>;
   layerZeroRouteCatalog?: Pick<LayerZeroRouteCatalog, 'listRoutes'>;
   layerZeroValueTransferApiQuoteWorker?: Pick<LayerZeroValueTransferApiQuoteWorker, 'quoteLayerZeroValueTransferApi'>;
+  hyperlaneNexusQuoteWorker?: Pick<HyperlaneNexusQuoteWorker, 'quote'>;
   gasZipQuoteWorker?: Pick<GasZipQuoteWorker, 'quoteDirectDeposit'>;
+  chainflipQuoteWorker?: Pick<ChainflipQuoteWorker, 'quote'>;
+  mayaQuoteWorker?: Pick<MayaQuoteWorker, 'quote'>;
+  teleSwapQuoteWorker?: Pick<TeleSwapQuoteWorker, 'quote'>;
   empsealQuoteWorker?: EmpsealQuoteWorkerLike;
 }
 
@@ -155,7 +192,11 @@ export class QuoteEngine {
   private readonly axelarAssetCatalog: Pick<AxelarAssetCatalog, 'listRoutes'>;
   private readonly layerZeroRouteCatalog: Pick<LayerZeroRouteCatalog, 'listRoutes'>;
   private readonly layerZeroValueTransferApiQuoteWorker?: Pick<LayerZeroValueTransferApiQuoteWorker, 'quoteLayerZeroValueTransferApi'>;
+  private readonly hyperlaneNexusQuoteWorker?: Pick<HyperlaneNexusQuoteWorker, 'quote'>;
   private readonly gasZipQuoteWorker?: Pick<GasZipQuoteWorker, 'quoteDirectDeposit'>;
+  private readonly chainflipQuoteWorker?: Pick<ChainflipQuoteWorker, 'quote'>;
+  private readonly mayaQuoteWorker?: Pick<MayaQuoteWorker, 'quote'>;
+  private readonly teleSwapQuoteWorker?: Pick<TeleSwapQuoteWorker, 'quote'>;
   private readonly empsealQuoteWorker?: EmpsealQuoteWorkerLike;
   private readonly thorchainQuoteWorker?: Pick<THORChainQuoteWorker, 'quote'>;
   private readonly routeAssetPolicy: RouteAssetPolicy;
@@ -183,11 +224,35 @@ export class QuoteEngine {
       : this._readBoolEnv('ENABLE_LAYERZERO_TRANSFER_API', false)
         ? new LayerZeroValueTransferApiQuoteWorker()
         : undefined;
+    const hasExplicitHyperlaneNexusWorker = Object.prototype.hasOwnProperty.call(deps, 'hyperlaneNexusQuoteWorker');
+    this.hyperlaneNexusQuoteWorker = hasExplicitHyperlaneNexusWorker
+      ? deps.hyperlaneNexusQuoteWorker
+      : this._readBoolEnv('ENABLE_HYPERLANE_NEXUS', false)
+        ? new HyperlaneNexusQuoteWorker()
+        : undefined;
     const hasExplicitGasZipWorker = Object.prototype.hasOwnProperty.call(deps, 'gasZipQuoteWorker');
     this.gasZipQuoteWorker = hasExplicitGasZipWorker
       ? deps.gasZipQuoteWorker
       : this._readBoolEnv('ENABLE_GASZIP_DIRECT_DEPOSIT', false)
         ? new GasZipQuoteWorker()
+        : undefined;
+    const hasExplicitChainflipWorker = Object.prototype.hasOwnProperty.call(deps, 'chainflipQuoteWorker');
+    this.chainflipQuoteWorker = hasExplicitChainflipWorker
+      ? deps.chainflipQuoteWorker
+      : process.env.CHAINFLIP_BROKER_URL
+        ? new BrokerChainflipQuoteWorker()
+        : undefined;
+    const hasExplicitMayaWorker = Object.prototype.hasOwnProperty.call(deps, 'mayaQuoteWorker');
+    this.mayaQuoteWorker = hasExplicitMayaWorker
+      ? deps.mayaQuoteWorker
+      : this._readBoolEnv('ENABLE_MAYA', false)
+        ? new MidgardMayaQuoteWorker()
+        : undefined;
+    const hasExplicitTeleSwapWorker = Object.prototype.hasOwnProperty.call(deps, 'teleSwapQuoteWorker');
+    this.teleSwapQuoteWorker = hasExplicitTeleSwapWorker
+      ? deps.teleSwapQuoteWorker
+      : process.env.TELESWAP_API_URL
+        ? new SdkTeleSwapQuoteWorker()
         : undefined;
     this.empsealQuoteWorker = deps.empsealQuoteWorker ?? new EmpsealQuoteWorker();
     const hasExplicitThorchainWorker = Object.prototype.hasOwnProperty.call(deps, 'thorchainQuoteWorker');
@@ -670,6 +735,7 @@ export class QuoteEngine {
       tokenIn: req.tokenIn,
       tokenOut: req.tokenOut,
       destinationAddress: req.nativeDstAddress ?? req.userAddress,
+      refundAddress: this._defaultRefundAddress(req),
       routeAssetAlias: route.hops[0].routeAssetAlias,
       sourceTokenAddress: offer.sourceSettlementAsset.tokenAddress,
       destinationTokenAddress: offer.destinationSettlementAsset.tokenAddress,
@@ -766,17 +832,37 @@ export class QuoteEngine {
 
   private async _computeOfferSet(req: QuoteRequest): Promise<OfferSet | null> {
     const dstChain = getChainConfig(req.dstChainId);
-    if (!dstChain && !this.thorchainQuoteWorker) return null;
+    if (!dstChain
+      && !this.thorchainQuoteWorker
+      && !this.chainflipQuoteWorker
+      && !this.mayaQuoteWorker
+      && !this.teleSwapQuoteWorker) {
+      return null;
+    }
 
     const amountUSD = await this._estimateUSD(req.tokenIn, req.srcChainId, req.amountIn);
     const candidateRoutes = this.routeBuilder
       .buildRoutes(req.srcChainId, req.dstChainId, amountUSD, req.urgency ?? 'normal')
-      .filter((route) => route.viable && route.hops.length === 1 && route.hops[0].rail !== Rail.THORCHAIN);
+      .filter((route) =>
+        route.viable
+          && route.hops.length === 1
+          && route.hops[0].rail !== Rail.THORCHAIN
+          && route.hops[0].rail !== Rail.CHAINFLIP
+          && route.hops[0].rail !== Rail.MAYA
+          && route.hops[0].rail !== Rail.TELESWAP
+          && route.hops[0].rail !== Rail.HYPERLANE_NEXUS
+          && route.hops[0].rail !== Rail.OPTIMISM_NATIVE_BRIDGE,
+      );
 
     const [
       routeOffers,
       thorOffer,
+      chainflipOffer,
+      mayaOffer,
+      teleSwapOffer,
       layerZeroValueTransferApiOffer,
+      hyperlaneNexusOffer,
+      optimismNativeBridgeOffer,
       gasZipOffer,
     ] = await Promise.all([
       Promise.all(candidateRoutes.map(async (route) => {
@@ -787,13 +873,23 @@ export class QuoteEngine {
         }
       })),
       this._buildTHORChainProviderDirectOffer(req, amountUSD),
+      this._buildChainflipProviderDirectOffer(req),
+      this._buildMayaProviderDirectOffer(req),
+      this._buildTeleSwapProviderDirectOffer(req),
       this._buildLayerZeroValueTransferApiProviderDirectOffer(req),
+      this._buildHyperlaneNexusProviderDirectOffer(req),
+      this._buildOptimismNativeBridgeProviderDirectOffer(req),
       this._buildGasZipProviderDirectOffer(req),
     ]);
 
     const offers = routeOffers.filter((offer): offer is RailOffer => offer !== null);
     if (thorOffer) offers.push(thorOffer);
+    if (chainflipOffer) offers.push(chainflipOffer);
+    if (mayaOffer) offers.push(mayaOffer);
+    if (teleSwapOffer) offers.push(teleSwapOffer);
     if (layerZeroValueTransferApiOffer) offers.push(layerZeroValueTransferApiOffer);
+    if (hyperlaneNexusOffer) offers.push(hyperlaneNexusOffer);
+    if (optimismNativeBridgeOffer) offers.push(optimismNativeBridgeOffer);
     if (gasZipOffer) offers.push(gasZipOffer);
     if (offers.length === 0) return null;
 
@@ -832,6 +928,7 @@ export class QuoteEngine {
       tokenIn: req.tokenIn,
       tokenOut: req.tokenOut,
       destinationAddress: req.nativeDstAddress ?? req.userAddress,
+      refundAddress: this._defaultRefundAddress(req),
     });
     if (!quoteRequest) return null;
 
@@ -897,6 +994,7 @@ export class QuoteEngine {
       swapDataSrc: '0x',
       swapDataDst: '0x',
       nativeDstAddress: req.nativeDstAddress,
+      refundAddress: this._defaultRefundAddress(req),
       thorAsset: thorQuote.quote.to_asset ?? undefined,
       minThorOutput,
       routeAsset,
@@ -943,6 +1041,7 @@ export class QuoteEngine {
         inboundAddress: thorQuote.quote.inbound_address,
         memo: thorQuote.quote.memo,
         thorchainExpiry: thorQuote.quote.expiry,
+        refundAddress: quote.refundAddress,
         feeAmountToken: quote.feeAmountToken,
         providerFeeUSD: railFeeUSD,
         protocolFeeUSD,
@@ -953,6 +1052,544 @@ export class QuoteEngine {
         swapDataSrc: quote.swapDataSrc,
         swapDataDst: quote.swapDataDst,
         nativeDstAddress: quote.nativeDstAddress,
+      },
+    };
+  }
+
+  private async _buildChainflipProviderDirectOffer(
+    req: QuoteRequest,
+  ): Promise<RailOffer | null> {
+    if (!this.chainflipQuoteWorker) return null;
+
+    const destinationAddress = req.nativeDstAddress ?? req.userAddress;
+    let result: ChainflipQuoteResult | null;
+    try {
+      result = await this.chainflipQuoteWorker.quote({
+        srcChainId: req.srcChainId,
+        dstChainId: req.dstChainId,
+        tokenIn: req.tokenIn,
+        tokenOut: req.tokenOut,
+        amountIn: req.amountIn,
+        destinationAddress,
+        refundAddress: this._defaultRefundAddress(req),
+      });
+    } catch {
+      return null;
+    }
+    if (!result || result.expectedAmountOut <= 0n) return null;
+
+    const config = getRailConfig(Rail.CHAINFLIP);
+    const intentId = this._makeIntentId();
+    const dstAssetId = toChainflipAsset(req.dstChainId, this._directRailSymbol(req.tokenOut));
+    const settlementToken = this._inferChainflipSettlementToken(req.dstChainId, dstAssetId);
+    const routeAsset = this._toTHORChainProviderAssetRef(
+      req.srcChainId,
+      req.dstChainId,
+      toChainflipAsset(req.srcChainId, this._directRailSymbol(req.tokenIn)) ?? 'CHAINFLIP',
+      this._inferChainflipSettlementToken(req.srcChainId, toChainflipAsset(req.srcChainId, this._directRailSymbol(req.tokenIn))),
+      undefined,
+      req.tokenIn,
+    );
+    const destinationSettlementAsset = this._toTHORChainProviderAssetRef(
+      req.srcChainId,
+      req.dstChainId,
+      dstAssetId ?? 'CHAINFLIP',
+      settlementToken,
+      undefined,
+      req.tokenOut,
+    );
+    const minAmountOut = this._applySlippage(result.expectedAmountOut, QUOTE_SLIPPAGE_BPS);
+    const amounts = this._buildBreakdownAmounts({
+      input: this._tokenAmount(req.srcChainId, req.tokenIn, req.amountIn, routeAsset),
+      output: this._tokenAmount(req.dstChainId, req.tokenOut, result.expectedAmountOut, destinationSettlementAsset),
+      minimumOutput: this._tokenAmount(req.dstChainId, req.tokenOut, minAmountOut, destinationSettlementAsset),
+    });
+
+    const quote: QuoteResult = {
+      intentId,
+      srcChainId: req.srcChainId,
+      dstChainId: req.dstChainId,
+      tokenIn: req.tokenIn,
+      tokenOut: req.tokenOut,
+      amountIn: req.amountIn,
+      estimatedOut: result.expectedAmountOut,
+      minAmountOut,
+      minSrcSwapOut: 0n,
+      amounts,
+      feeAmountUSD: 0,
+      feeAmountToken: 0n,
+      rail: Rail.CHAINFLIP,
+      railType: config.railType,
+      settlementToken,
+      routeAsset,
+      settlementAssetId: this._zeroBytes32(),
+      expectedDstSettlementToken: req.tokenOut,
+      expectedDstSettlementAssetId: this._zeroBytes32(),
+      minSettlementAmount: result.expectedAmountOut,
+      dstGasLimit: 0,
+      etaSeconds: result.etaSeconds,
+      expiresAt: result.expiresAtUnix,
+      railPluginId: ZERO_PLUGIN_ID,
+      railData: '0x',
+      swapPluginIdSrc: ZERO_PLUGIN_ID,
+      swapPluginIdDst: ZERO_PLUGIN_ID,
+      swapDataSrc: '0x',
+      swapDataDst: '0x',
+      nativeDstAddress: req.nativeDstAddress,
+      refundAddress: this._defaultRefundAddress(req),
+      chainflipChannelId: result.channelId,
+    };
+
+    return {
+      offerId: intentId,
+      rail: Rail.CHAINFLIP,
+      offerType: 'chainflip_broker_direct',
+      railType: config.railType,
+      srcChainId: req.srcChainId,
+      dstChainId: req.dstChainId,
+      tokenIn: req.tokenIn,
+      tokenOut: req.tokenOut,
+      amountIn: req.amountIn,
+      estimatedOut: result.expectedAmountOut,
+      minAmountOut,
+      expiresAt: result.expiresAtUnix,
+      deliveryShape: 'direct',
+      executionMode: 'provider_direct',
+      routeAsset,
+      amounts: quote.amounts,
+      legs: quote.legs,
+      sourceSettlementAsset: routeAsset,
+      destinationSettlementAsset,
+      economics: {
+        providerFeeUSD: 0,
+        protocolFeeUSD: 0,
+        sourceGasUSD: 0,
+        settlementTimeSeconds: result.etaSeconds,
+      },
+      execution: {
+        provider: 'chainflip_broker',
+        quote,
+        depositAddress: result.depositAddress,
+        channelId: result.channelId,
+        expectedAmountOut: result.expectedAmountOut.toString(),
+        effectiveRateBps: result.effectiveRateBps,
+        brokerFeeAmount: result.brokerFeeAmount.toString(),
+        sourceFee: result.networkFees.sourceFee.toString(),
+        destinationFee: result.networkFees.destinationFee.toString(),
+        refundAddress: quote.refundAddress,
+      },
+    };
+  }
+
+  private async _buildMayaProviderDirectOffer(
+    req: QuoteRequest,
+  ): Promise<RailOffer | null> {
+    if (!this.mayaQuoteWorker) return null;
+
+    const destinationAddress = req.nativeDstAddress ?? req.userAddress;
+    let result: MayaQuoteResult | null;
+    try {
+      result = await this.mayaQuoteWorker.quote({
+        srcChainId: req.srcChainId,
+        dstChainId: req.dstChainId,
+        tokenIn: req.tokenIn,
+        tokenOut: req.tokenOut,
+        amountIn: req.amountIn,
+        destinationAddress,
+      });
+    } catch {
+      return null;
+    }
+    if (!result || result.expectedAmountOut <= 0n) return null;
+
+    const config = getRailConfig(Rail.MAYA);
+    const intentId = this._makeIntentId();
+    const destinationAssetId = toMayaAsset(req.dstChainId, this._directRailSymbol(req.tokenOut));
+    const settlementToken = this._inferMayaSettlementToken(req.dstChainId, destinationAssetId);
+    const routeAsset = this._toTHORChainProviderAssetRef(
+      req.srcChainId,
+      req.dstChainId,
+      toMayaAsset(req.srcChainId, this._directRailSymbol(req.tokenIn)) ?? 'MAYA',
+      this._inferMayaSettlementToken(req.srcChainId, toMayaAsset(req.srcChainId, this._directRailSymbol(req.tokenIn))),
+      undefined,
+      req.tokenIn,
+    );
+    const destinationSettlementAsset = this._toTHORChainProviderAssetRef(
+      req.srcChainId,
+      req.dstChainId,
+      destinationAssetId ?? 'MAYA',
+      settlementToken,
+      undefined,
+      req.tokenOut,
+    );
+    const minAmountOut = this._applySlippage(result.expectedAmountOut, Math.max(QUOTE_SLIPPAGE_BPS, result.slipBps));
+    const amounts = this._buildBreakdownAmounts({
+      input: this._tokenAmount(req.srcChainId, req.tokenIn, req.amountIn, routeAsset),
+      output: this._tokenAmount(req.dstChainId, req.tokenOut, result.expectedAmountOut, destinationSettlementAsset),
+      minimumOutput: this._tokenAmount(req.dstChainId, req.tokenOut, minAmountOut, destinationSettlementAsset),
+    });
+
+    const quote: QuoteResult = {
+      intentId,
+      srcChainId: req.srcChainId,
+      dstChainId: req.dstChainId,
+      tokenIn: req.tokenIn,
+      tokenOut: req.tokenOut,
+      amountIn: req.amountIn,
+      estimatedOut: result.expectedAmountOut,
+      minAmountOut,
+      minSrcSwapOut: 0n,
+      amounts,
+      feeAmountUSD: 0,
+      feeAmountToken: 0n,
+      rail: Rail.MAYA,
+      railType: config.railType,
+      settlementToken,
+      routeAsset,
+      settlementAssetId: this._zeroBytes32(),
+      expectedDstSettlementToken: req.tokenOut,
+      expectedDstSettlementAssetId: this._zeroBytes32(),
+      minSettlementAmount: result.expectedAmountOut,
+      dstGasLimit: 0,
+      etaSeconds: result.etaSeconds,
+      expiresAt: result.expiresAtUnix,
+      railPluginId: ZERO_PLUGIN_ID,
+      railData: '0x',
+      swapPluginIdSrc: ZERO_PLUGIN_ID,
+      swapPluginIdDst: ZERO_PLUGIN_ID,
+      swapDataSrc: '0x',
+      swapDataDst: '0x',
+      nativeDstAddress: req.nativeDstAddress,
+      refundAddress: this._defaultRefundAddress(req),
+    };
+
+    return {
+      offerId: intentId,
+      rail: Rail.MAYA,
+      offerType: 'maya_direct',
+      railType: config.railType,
+      srcChainId: req.srcChainId,
+      dstChainId: req.dstChainId,
+      tokenIn: req.tokenIn,
+      tokenOut: req.tokenOut,
+      amountIn: req.amountIn,
+      estimatedOut: result.expectedAmountOut,
+      minAmountOut,
+      expiresAt: result.expiresAtUnix,
+      deliveryShape: 'direct',
+      executionMode: 'provider_direct',
+      routeAsset,
+      amounts: quote.amounts,
+      legs: quote.legs,
+      sourceSettlementAsset: routeAsset,
+      destinationSettlementAsset,
+      economics: {
+        providerFeeUSD: 0,
+        protocolFeeUSD: 0,
+        sourceGasUSD: 0,
+        slippageBps: result.slipBps,
+        settlementTimeSeconds: result.etaSeconds,
+      },
+      execution: {
+        provider: 'maya_midgard',
+        quote,
+        vaultAddress: result.vaultAddress,
+        depositAddress: result.vaultAddress,
+        memo: result.memo,
+        expectedAmountOut: result.expectedAmountOut.toString(),
+        expiresAt: result.expiresAtUnix,
+        refundAddress: quote.refundAddress,
+      },
+    };
+  }
+
+  private async _buildTeleSwapProviderDirectOffer(
+    req: QuoteRequest,
+  ): Promise<RailOffer | null> {
+    if (!this.teleSwapQuoteWorker) return null;
+
+    let result: TeleSwapQuoteResult | null;
+    try {
+      result = await this.teleSwapQuoteWorker.quote({
+        srcChainId: req.srcChainId,
+        dstChainId: req.dstChainId,
+        tokenIn: req.tokenIn,
+        tokenOut: req.tokenOut,
+        amountIn: req.amountIn,
+        destinationAddress: req.nativeDstAddress ?? req.userAddress,
+        refundAddress: this._defaultRefundAddress(req),
+      });
+    } catch {
+      return null;
+    }
+    if (!result || result.expectedAmountOut <= 0n) return null;
+
+    const config = getRailConfig(Rail.TELESWAP);
+    const intentId = this._makeIntentId();
+    const settlementToken = this._inferTeleSwapSettlementToken(req.dstChainId);
+    const routeAsset = this._toTHORChainProviderAssetRef(
+      req.srcChainId,
+      req.dstChainId,
+      req.srcChainId === 0 ? 'BTC.BTC' : 'TELESWAP',
+      req.srcChainId === 0 ? SettlementToken.BTC : SettlementToken.USDC,
+      undefined,
+      req.tokenIn,
+    );
+    const destinationSettlementAsset = this._toTHORChainProviderAssetRef(
+      req.srcChainId,
+      req.dstChainId,
+      req.dstChainId === 0 ? 'BTC.BTC' : 'TELESWAP',
+      settlementToken,
+      undefined,
+      req.tokenOut,
+    );
+    const minAmountOut = this._applySlippage(result.expectedAmountOut, Math.max(QUOTE_SLIPPAGE_BPS, result.slipBps));
+    const amounts = this._buildBreakdownAmounts({
+      input: this._tokenAmount(req.srcChainId, req.tokenIn, req.amountIn, routeAsset),
+      output: this._tokenAmount(req.dstChainId, req.tokenOut, result.expectedAmountOut, destinationSettlementAsset),
+      minimumOutput: this._tokenAmount(req.dstChainId, req.tokenOut, minAmountOut, destinationSettlementAsset),
+    });
+
+    const quote: QuoteResult = {
+      intentId,
+      srcChainId: req.srcChainId,
+      dstChainId: req.dstChainId,
+      tokenIn: req.tokenIn,
+      tokenOut: req.tokenOut,
+      amountIn: req.amountIn,
+      estimatedOut: result.expectedAmountOut,
+      minAmountOut,
+      minSrcSwapOut: 0n,
+      amounts,
+      feeAmountUSD: 0,
+      feeAmountToken: 0n,
+      rail: Rail.TELESWAP,
+      railType: config.railType,
+      settlementToken,
+      routeAsset,
+      settlementAssetId: this._zeroBytes32(),
+      expectedDstSettlementToken: req.tokenOut,
+      expectedDstSettlementAssetId: this._zeroBytes32(),
+      minSettlementAmount: result.expectedAmountOut,
+      dstGasLimit: 0,
+      etaSeconds: result.etaSeconds,
+      expiresAt: Math.floor(Date.now() / 1000) + 600,
+      railPluginId: ZERO_PLUGIN_ID,
+      railData: '0x',
+      swapPluginIdSrc: ZERO_PLUGIN_ID,
+      swapPluginIdDst: ZERO_PLUGIN_ID,
+      swapDataSrc: '0x',
+      swapDataDst: '0x',
+      nativeDstAddress: req.nativeDstAddress,
+      refundAddress: this._defaultRefundAddress(req),
+      teleSwapSwapId: result.swapId,
+    };
+
+    return {
+      offerId: intentId,
+      rail: Rail.TELESWAP,
+      offerType: 'teleswap_direct',
+      railType: config.railType,
+      srcChainId: req.srcChainId,
+      dstChainId: req.dstChainId,
+      tokenIn: req.tokenIn,
+      tokenOut: req.tokenOut,
+      amountIn: req.amountIn,
+      estimatedOut: result.expectedAmountOut,
+      minAmountOut,
+      expiresAt: quote.expiresAt,
+      deliveryShape: 'direct',
+      executionMode: 'provider_direct',
+      routeAsset,
+      amounts: quote.amounts,
+      legs: quote.legs,
+      sourceSettlementAsset: routeAsset,
+      destinationSettlementAsset,
+      economics: {
+        providerFeeUSD: 0,
+        protocolFeeUSD: 0,
+        sourceGasUSD: 0,
+        slippageBps: result.slipBps,
+        settlementTimeSeconds: result.etaSeconds,
+      },
+      execution: {
+        provider: 'teleswap_api',
+        quote,
+        depositAddress: result.depositAddress,
+        expectedAmountOut: result.expectedAmountOut.toString(),
+        protocolFeeAmount: result.protocolFeeAmount.toString(),
+        dexRouter: result.dexRouter,
+        swapId: result.swapId,
+        refundAddress: quote.refundAddress,
+      },
+    };
+  }
+
+  private async _buildOptimismNativeBridgeProviderDirectOffer(
+    req: QuoteRequest,
+  ): Promise<RailOffer | null> {
+    const route = resolveOptimismNativeBridgeRoute(
+      req.srcChainId,
+      req.dstChainId,
+      req.tokenIn,
+      req.tokenOut,
+    );
+    if (!route) return null;
+    if (route.requiresPatient && req.urgency !== 'patient') return null;
+
+    const config = getRailConfig(Rail.OPTIMISM_NATIVE_BRIDGE);
+    const intentId = this._makeIntentId();
+    const expiresAt = Math.floor(Date.now() / 1000) + 5 * 60;
+    const recipient = getAddress(req.userAddress);
+    const settlementToken = route.settlementSymbol === 'USDC'
+      ? SettlementToken.USDC
+      : route.settlementSymbol === 'USDT'
+        ? SettlementToken.USDT
+        : SettlementToken.ETH;
+    const sourceAsset = route.settlementKind === 'native'
+      ? this._buildOptimismNativeBridgeAssetRef(req.srcChainId, OPTIMISM_NATIVE_TOKEN_SENTINEL, route.settlementSymbol, route.decimals, 'native')
+      : this._buildOptimismNativeBridgeAssetRef(req.srcChainId, req.tokenIn, route.settlementSymbol, route.decimals, 'erc20');
+    const destinationAsset = route.settlementKind === 'native'
+      ? this._buildOptimismNativeBridgeAssetRef(req.dstChainId, OPTIMISM_NATIVE_TOKEN_SENTINEL, route.settlementSymbol, route.decimals, 'native')
+      : this._buildOptimismNativeBridgeAssetRef(req.dstChainId, req.tokenOut, route.settlementSymbol, route.decimals, 'erc20');
+    const amounts = this._buildBreakdownAmounts({
+      input: this._tokenAmount(req.srcChainId, req.tokenIn, req.amountIn, sourceAsset),
+      bridgeSettlement: this._tokenAmount(req.dstChainId, req.tokenOut, req.amountIn, destinationAsset),
+      minimumBridgeSettlement: this._tokenAmount(req.dstChainId, req.tokenOut, req.amountIn, destinationAsset),
+      output: this._tokenAmount(req.dstChainId, req.tokenOut, req.amountIn, destinationAsset),
+      minimumOutput: this._tokenAmount(req.dstChainId, req.tokenOut, req.amountIn, destinationAsset),
+    });
+
+    const tx = route.direction === 'deposit'
+      ? route.settlementKind === 'native'
+        ? {
+          to: OPTIMISM_L1_STANDARD_BRIDGE,
+          data: OPTIMISM_L1_BRIDGE_IFACE.encodeFunctionData('depositETHTo', [
+            recipient,
+            OPTIMISM_DEFAULT_MIN_GAS_LIMIT,
+            '0x',
+          ]),
+          value: req.amountIn.toString(),
+          chainId: req.srcChainId,
+        }
+        : {
+          to: OPTIMISM_L1_STANDARD_BRIDGE,
+          data: OPTIMISM_L1_BRIDGE_IFACE.encodeFunctionData('depositERC20To', [
+            route.l1Token,
+            route.l2Token,
+            recipient,
+            req.amountIn,
+            OPTIMISM_DEFAULT_MIN_GAS_LIMIT,
+            '0x',
+          ]),
+          value: '0',
+          chainId: req.srcChainId,
+        }
+      : route.settlementKind === 'native'
+        ? {
+          to: OPTIMISM_L2_STANDARD_BRIDGE,
+          data: OPTIMISM_L2_BRIDGE_IFACE.encodeFunctionData('bridgeETHTo', [
+            recipient,
+            OPTIMISM_DEFAULT_MIN_GAS_LIMIT,
+            '0x',
+          ]),
+          value: req.amountIn.toString(),
+          chainId: req.srcChainId,
+        }
+        : {
+          to: OPTIMISM_L2_STANDARD_BRIDGE,
+          data: OPTIMISM_L2_BRIDGE_IFACE.encodeFunctionData('bridgeERC20To', [
+            route.l2Token,
+            route.l1Token,
+            recipient,
+            req.amountIn,
+            OPTIMISM_DEFAULT_MIN_GAS_LIMIT,
+            '0x',
+          ]),
+          value: '0',
+          chainId: req.srcChainId,
+        };
+    const approvals = route.settlementKind === 'erc20'
+      ? [{
+        token: req.tokenIn,
+        spender: tx.to,
+        amount: req.amountIn.toString(),
+      }]
+      : undefined;
+
+    const quote: QuoteResult = {
+      intentId,
+      srcChainId: req.srcChainId,
+      dstChainId: req.dstChainId,
+      tokenIn: req.tokenIn,
+      tokenOut: req.tokenOut,
+      amountIn: req.amountIn,
+      estimatedOut: req.amountIn,
+      minAmountOut: req.amountIn,
+      minSrcSwapOut: 0n,
+      amounts,
+      feeAmountUSD: 0,
+      feeAmountToken: 0n,
+      rail: Rail.OPTIMISM_NATIVE_BRIDGE,
+      railType: config.railType,
+      settlementToken,
+      routeAsset: sourceAsset,
+      settlementAssetId: route.settlementKind === 'erc20'
+        ? this._settlementAssetId(req.srcChainId, req.tokenIn)
+        : this._zeroBytes32(),
+      expectedDstSettlementToken: req.tokenOut,
+      expectedDstSettlementAssetId: route.settlementKind === 'erc20'
+        ? this._settlementAssetId(req.dstChainId, req.tokenOut)
+        : this._zeroBytes32(),
+      minSettlementAmount: req.amountIn,
+      dstGasLimit: 0,
+      etaSeconds: route.etaSeconds,
+      expiresAt,
+      railPluginId: ZERO_PLUGIN_ID,
+      railData: '0x',
+      swapPluginIdSrc: ZERO_PLUGIN_ID,
+      swapPluginIdDst: ZERO_PLUGIN_ID,
+      swapDataSrc: '0x',
+      swapDataDst: '0x',
+      offerType: 'optimism_native_bridge_direct',
+      executionMode: 'provider_direct',
+    };
+
+    return {
+      offerId: intentId,
+      rail: Rail.OPTIMISM_NATIVE_BRIDGE,
+      offerType: 'optimism_native_bridge_direct',
+      railType: config.railType,
+      srcChainId: req.srcChainId,
+      dstChainId: req.dstChainId,
+      tokenIn: req.tokenIn,
+      tokenOut: req.tokenOut,
+      amountIn: req.amountIn,
+      estimatedOut: req.amountIn,
+      minAmountOut: req.amountIn,
+      expiresAt,
+      deliveryShape: 'direct',
+      executionMode: 'provider_direct',
+      routeAsset: sourceAsset,
+      amounts: quote.amounts,
+      legs: quote.legs,
+      sourceSettlementAsset: sourceAsset,
+      destinationSettlementAsset: destinationAsset,
+      economics: {
+        providerFeeUSD: 0,
+        protocolFeeUSD: 0,
+        sourceGasUSD: 0,
+        settlementTimeSeconds: route.etaSeconds,
+      },
+      execution: {
+        provider: OPTIMISM_NATIVE_BRIDGE_RAIL_PROVIDER,
+        quote,
+        direction: route.direction,
+        settlementKind: route.settlementKind,
+        challengePeriodSeconds: route.requiresPatient ? route.etaSeconds : undefined,
+        requiresPatient: route.requiresPatient,
+        tx,
+        approvals,
       },
     };
   }
@@ -1171,6 +1808,155 @@ export class QuoteEngine {
     };
   }
 
+  private async _buildHyperlaneNexusProviderDirectOffer(
+    req: QuoteRequest,
+  ): Promise<RailOffer | null> {
+    if (!this.hyperlaneNexusQuoteWorker) return null;
+
+    const settlementToken = this._inferHyperlaneSettlementToken(req);
+    const assetSymbol = inferHyperlaneAssetSymbol(settlementToken);
+    if (!assetSymbol) return null;
+
+    let result: HyperlaneNexusQuoteResult | null;
+    try {
+      result = await this.hyperlaneNexusQuoteWorker.quote({
+        srcChainId: req.srcChainId,
+        dstChainId: req.dstChainId,
+        tokenIn: req.tokenIn,
+        assetSymbol,
+        amountIn: req.amountIn,
+        destinationAddress: req.userAddress,
+      });
+    } catch {
+      return null;
+    }
+    if (!result || result.expectedAmountOut <= 0n) return null;
+
+    const intentId = this._makeIntentId();
+    const sourceAsset = this._toProviderAssetRef(
+      req.srcChainId,
+      assetSymbol,
+      settlementToken,
+      Rail.HYPERLANE_NEXUS,
+      req.tokenIn,
+      req.tokenOut,
+      'erc20',
+    );
+    const destinationAsset = {
+      ...sourceAsset,
+      tokenAddress: req.tokenOut,
+      dstTokenAddress: req.tokenOut,
+    };
+    const expiresAt = Math.floor(Date.now() / 1000) + 120;
+    const amounts = this._buildBreakdownAmounts({
+      input: this._tokenAmount(req.srcChainId, req.tokenIn, req.amountIn, sourceAsset),
+      bridgeSettlement: this._tokenAmount(req.dstChainId, req.tokenOut, result.expectedAmountOut, destinationAsset),
+      minimumBridgeSettlement: this._tokenAmount(req.dstChainId, req.tokenOut, result.expectedAmountOut, destinationAsset),
+      output: this._tokenAmount(req.dstChainId, req.tokenOut, result.expectedAmountOut, destinationAsset),
+      minimumOutput: this._tokenAmount(req.dstChainId, req.tokenOut, result.expectedAmountOut, destinationAsset),
+    });
+
+    const sourceAssetId = this._isAddress(req.tokenIn)
+      ? this._settlementAssetId(req.srcChainId, req.tokenIn)
+      : this._zeroBytes32();
+    const destinationAssetId = this._isAddress(req.tokenOut)
+      ? this._settlementAssetId(req.dstChainId, req.tokenOut)
+      : this._zeroBytes32();
+
+    const quote: QuoteResult = {
+      intentId,
+      srcChainId: req.srcChainId,
+      dstChainId: req.dstChainId,
+      tokenIn: req.tokenIn,
+      tokenOut: req.tokenOut,
+      amountIn: req.amountIn,
+      estimatedOut: result.expectedAmountOut,
+      minAmountOut: result.expectedAmountOut,
+      minSrcSwapOut: 0n,
+      amounts,
+      feeAmountUSD: 0,
+      feeAmountToken: 0n,
+      rail: Rail.HYPERLANE_NEXUS,
+      railType: 'messaging',
+      settlementToken,
+      routeAsset: sourceAsset,
+      settlementAssetId: sourceAssetId,
+      expectedDstSettlementToken: req.tokenOut,
+      expectedDstSettlementAssetId: destinationAssetId,
+      minSettlementAmount: result.expectedAmountOut,
+      dstGasLimit: 0,
+      etaSeconds: result.etaSeconds,
+      expiresAt,
+      railPluginId: ZERO_PLUGIN_ID,
+      railData: '0x',
+      swapPluginIdSrc: ZERO_PLUGIN_ID,
+      swapPluginIdDst: ZERO_PLUGIN_ID,
+      swapDataSrc: '0x',
+      swapDataDst: '0x',
+    };
+
+    return {
+      offerId: intentId,
+      rail: Rail.HYPERLANE_NEXUS,
+      offerType: 'hyperlane_nexus_direct',
+      railType: 'messaging',
+      srcChainId: req.srcChainId,
+      dstChainId: req.dstChainId,
+      tokenIn: req.tokenIn,
+      tokenOut: req.tokenOut,
+      amountIn: req.amountIn,
+      estimatedOut: result.expectedAmountOut,
+      minAmountOut: result.expectedAmountOut,
+      expiresAt,
+      deliveryShape: 'direct',
+      executionMode: 'provider_direct',
+      routeAsset: sourceAsset,
+      amounts,
+      sourceSettlementAsset: sourceAsset,
+      destinationSettlementAsset: destinationAsset,
+      economics: {
+        providerFeeUSD: 0,
+        protocolFeeUSD: 0,
+        sourceGasUSD: 0,
+        settlementTimeSeconds: result.etaSeconds,
+      },
+      execution: {
+        provider: 'hyperlane_explorer',
+        quote,
+        warpRouteAddress: result.warpRouteAddress,
+        destinationDomain: result.destinationDomain,
+        interchainGasFee: result.interchainGasFee.toString(),
+      },
+    };
+  }
+
+  private _defaultRefundAddress(req: QuoteRequest): string | undefined {
+    const configured = req.refundAddress?.trim();
+    if (configured) return configured;
+
+    const srcChain = getChainConfig(req.srcChainId);
+    return srcChain && !srcChain.isEVM ? req.userAddress : undefined;
+  }
+
+  private _buildOptimismNativeBridgeAssetRef(
+    chainId: number,
+    token: string,
+    canonicalAssetId: string,
+    decimals: number,
+    kind: 'native' | 'erc20',
+  ): ProviderAssetRef {
+    return {
+      canonicalAssetId,
+      providerAssetId: `optimism-native-bridge:${chainId}:${kind === 'native' ? 'native' : token.toLowerCase()}`,
+      tokenAddress: kind === 'erc20' ? token : undefined,
+      srcTokenAddress: kind === 'erc20' ? token : undefined,
+      dstTokenAddress: kind === 'erc20' ? token : undefined,
+      decimals,
+      assetKind: kind,
+      assetStandard: kind,
+    };
+  }
+
   private _toProviderAssetRef(
     chainId: number,
     canonicalAssetId: string,
@@ -1310,7 +2096,13 @@ export class QuoteEngine {
   }
 
   private _executionModeFor(rail: Rail): ExecutionMode {
-    return rail === Rail.THORCHAIN || rail === Rail.GASZIP ? 'provider_direct' : 'router_intent';
+    return rail === Rail.THORCHAIN
+      || rail === Rail.GASZIP
+      || rail === Rail.CHAINFLIP
+      || rail === Rail.MAYA
+      || rail === Rail.TELESWAP
+      ? 'provider_direct'
+      : 'router_intent';
   }
 
   private _deliveryShapeFor(quote: QuoteResult): DeliveryShape {
@@ -1890,6 +2682,46 @@ export class QuoteEngine {
     if (normalized === 'SOL') return SettlementToken.SOL;
     if (normalized === 'BTC') return SettlementToken.BTC;
     return SettlementToken.USDC;
+  }
+
+  private _inferHyperlaneSettlementToken(req: QuoteRequest): SettlementToken | null {
+    const sourceToken = this._resolveStableSettlementToken(req.tokenIn, req.srcChainId);
+    if (sourceToken === SettlementToken.USDC || sourceToken === SettlementToken.USDT) return sourceToken;
+
+    const destinationToken = this._resolveStableSettlementToken(req.tokenOut, req.dstChainId);
+    if (destinationToken === SettlementToken.USDC || destinationToken === SettlementToken.USDT) return destinationToken;
+
+    return this._isStableLike(req.tokenIn) || this._isStableLike(req.tokenOut)
+      ? SettlementToken.USDC
+      : null;
+  }
+
+  private _directRailSymbol(token: string): string {
+    const normalized = token.trim().toUpperCase();
+    if (['BTC', 'ETH', 'SOL', 'DOT', 'USDC', 'USDT', 'DOGE', 'DASH', 'ZEC', 'KUJI', 'BNB', 'AVAX'].includes(normalized)) {
+      return normalized;
+    }
+    const stable = this._resolveStableSettlementToken(token, 1);
+    if (stable) return stable;
+    return this._isAddress(token) ? 'USDC' : normalized || 'USDC';
+  }
+
+  private _inferChainflipSettlementToken(dstChainId: number, assetId: string | null): SettlementToken {
+    if (dstChainId === 0 || assetId?.startsWith('BTC.')) return SettlementToken.BTC;
+    if (dstChainId === 99 || assetId?.startsWith('SOL.')) return SettlementToken.SOL;
+    if (assetId?.endsWith('.ETH')) return SettlementToken.ETH;
+    return SettlementToken.USDC;
+  }
+
+  private _inferMayaSettlementToken(dstChainId: number, assetId: string | null): SettlementToken {
+    if (dstChainId === 0 || assetId?.startsWith('BTC.')) return SettlementToken.BTC;
+    if (assetId?.endsWith('.USDT')) return SettlementToken.USDT;
+    if (assetId?.endsWith('.ETH') || assetId?.endsWith('.AVAX') || assetId?.endsWith('.BNB')) return SettlementToken.ETH;
+    return SettlementToken.USDC;
+  }
+
+  private _inferTeleSwapSettlementToken(dstChainId: number): SettlementToken {
+    return dstChainId === 0 ? SettlementToken.BTC : SettlementToken.USDC;
   }
 
   private _resolveThorExpiry(raw: unknown): number {

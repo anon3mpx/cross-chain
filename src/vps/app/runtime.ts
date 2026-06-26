@@ -2,7 +2,11 @@ import { CHAIN_CONFIGS } from '../config/chains';
 import { createPostgresIntentStore, PostgresIntentStore } from '../db/bootstrap';
 import { assertPostgresRailSchemaCompatibility } from '../db/schemaCompatibility';
 import { buildPartnerAPI, setupWebhookPush } from '../api/PartnerAPI';
+import { NativeUsdOracle } from '../services/NativeUsdOracle';
 import { ApiKeyManager } from '../services/ApiKeyManager';
+import { InMemoryPartnerRepository } from '../db/InMemoryPartnerRepository';
+import { PostgresPartnerRepository } from '../db/PostgresPartnerRepository';
+import type { PartnerRepository } from '../db/PartnerRepository';
 import { EventMonitor } from '../services/EventMonitor';
 import { CctpAttestationWorker } from '../services/CctpAttestationWorker';
 import { IntentEngine } from '../services/IntentEngine';
@@ -12,13 +16,40 @@ import { RailSelector } from '../services/RailSelector';
 import { RecoveryEngine } from '../services/RecoveryEngine';
 import { THORChainMonitorWorker } from '../services/thorchain/THORChainMonitorWorker';
 import { THORChainQuoteWorker } from '../services/thorchain/THORChainQuoteWorker';
+import { BrokerChainflipQuoteWorker } from '../services/chainflip/ChainflipQuoteWorker';
+import { ChainflipMonitorWorker } from '../services/chainflip/ChainflipMonitorWorker';
 import { LayerZeroValueTransferApiQuoteWorker } from '../services/layerzero/LayerZeroValueTransferApiQuoteWorker';
 import { LayerZeroValueTransferApiMonitorWorker } from '../services/layerzero/LayerZeroValueTransferApiMonitorWorker';
+import { HyperlaneNexusQuoteWorker } from '../services/hyperlane/HyperlaneNexusQuoteWorker';
+import { HyperlaneNexusMonitorWorker } from '../services/hyperlane/HyperlaneNexusMonitorWorker';
+import { MidgardMayaQuoteWorker } from '../services/maya/MayaQuoteWorker';
+import { MayaClient } from '../services/maya/MayaClient';
+import { MayaMonitorWorker } from '../services/maya/MayaMonitorWorker';
 import { createQuoteCacheFromEnv, QuoteCache } from '../cache/QuoteCache';
 import { registerDexQuoteAdapters } from '../bootstrap/dexAdapters';
 import { RailExecutionHandle, RailExecutionManager } from '../rails/execution';
 import { Rail } from '../types';
 import { RpcProviderRegistry } from '../services/RpcProviderRegistry';
+import { SwapAdapter } from '../sdk/swapAdapter';
+import { PostgresReliabilityRepository, type ReliabilityRepository } from '../db/ReliabilityRepository';
+import { ReliabilityRecorder } from '../services/ReliabilityRecorder';
+import { RailReliabilityCache } from '../services/RailReliabilityCache';
+import { PostgresIdempotencyStore, InMemoryIdempotencyStore, type IdempotencyStore } from '../db/IdempotencyStore';
+import { PostgresRelayerNonceStore, InMemoryRelayerNonceStore, type RelayerNonceStore } from '../db/RelayerNonceStore';
+import { SdkTeleSwapQuoteWorker } from '../services/teleswap/TeleSwapQuoteWorker';
+import { TeleSwapMonitorWorker } from '../services/teleswap/TeleSwapMonitorWorker';
+import { OptimismNativeBridgeMonitorWorker } from '../services/nativebridge/OptimismNativeBridgeMonitorWorker';
+import { BasketQuoteEngine } from '../services/BasketQuoteEngine';
+import { BasketStatusEngine } from '../services/BasketStatusEngine';
+import { WalletScanner } from '../services/WalletScanner';
+import { WalletLiquidator } from '../services/WalletLiquidator';
+import { Erc7683Adapter } from '../services/Erc7683Adapter';
+import { PostgresSolversRepository } from '../db/SolversRepository';
+import { InMemoryBasketRepository, PostgresBasketRepository, type BasketRepository } from '../db/BasketRepository';
+import {
+  checkProviderLimitedRailCapabilities,
+  type RailCapabilityHealthReport,
+} from '../services/RailCapabilityHealth';
 
 export interface RuntimeOptions {
   enableEventMonitor?: boolean;
@@ -33,16 +64,35 @@ export interface RuntimeContext {
   intentEngine: IntentEngine;
   intentService: IntentService;
   quoteEngine: QuoteEngine;
+  rpcProviderRegistry: RpcProviderRegistry;
   eventMonitor?: EventMonitor;
   recoveryEngine?: RecoveryEngine;
   railExecutionManager: RailExecutionManager;
   railExecutions: ReadonlyMap<Rail, RailExecutionHandle>;
+  railCapabilityHealth: RailCapabilityHealthReport[];
   cctpRelayWorker?: CctpAttestationWorker;
   thorchainWorker?: THORChainMonitorWorker;
+  chainflipMonitorWorker?: ChainflipMonitorWorker;
+  mayaMonitorWorker?: MayaMonitorWorker;
+  teleSwapMonitorWorker?: TeleSwapMonitorWorker;
   layerZeroValueTransferApiMonitorWorker?: LayerZeroValueTransferApiMonitorWorker;
+  hyperlaneNexusMonitorWorker?: HyperlaneNexusMonitorWorker;
+  optimismNativeBridgeMonitorWorker?: OptimismNativeBridgeMonitorWorker;
   apiKeyManager?: ApiKeyManager;
   partnerApiRouter?: ReturnType<typeof buildPartnerAPI>;
   postgres?: PostgresIntentStore;
+  reliability?: ReliabilityRepository;
+  basketRepository: BasketRepository;
+  basketQuoteEngine: BasketQuoteEngine;
+  basketStatusEngine?: BasketStatusEngine;
+  walletScanner: WalletScanner;
+  walletLiquidator: WalletLiquidator;
+  erc7683Adapter: Erc7683Adapter;
+  solversRepository?: PostgresSolversRepository;
+  partnerRepository?: PartnerRepository;
+  idempotency: IdempotencyStore;
+  nonceStore: RelayerNonceStore;
+  usdOracle: NativeUsdOracle;
   close(): Promise<void>;
 }
 
@@ -68,10 +118,28 @@ export async function buildRuntime(options: RuntimeOptions = {}): Promise<Runtim
     options.railExecution?.[Rail.THORCHAIN] ?? envBool('ENABLE_THORCHAIN_WORKER', true);
   const enableThorchainQuoteWorker = envBool('ENABLE_THORCHAIN_QUOTE_WORKER', true);
   const enableLayerZeroValueTransferApi = envBool('ENABLE_LAYERZERO_TRANSFER_API', false);
+  const enableHyperlaneNexus = envBool('ENABLE_HYPERLANE_NEXUS', false);
+  const enableChainflip = envBool('ENABLE_CHAINFLIP', Boolean(process.env.CHAINFLIP_BROKER_URL));
+  const enableMaya = envBool('ENABLE_MAYA', false);
+  const enableTeleSwap = envBool('ENABLE_TELESWAP', Boolean(process.env.TELESWAP_API_URL));
+  const enableOptimismNativeBridge = envBool('ENABLE_OPTIMISM_NATIVE_BRIDGE', true);
   const enableThorchainCanary = envBool('ENABLE_THORCHAIN_CANARY', false);
   const thorchainCanaryAllowlist = parseCsv(process.env.THORCHAIN_CANARY_ALLOWLIST);
   const enablePartnerApi = options.enablePartnerApi ?? envBool('ENABLE_PARTNER_API', false);
   const enablePostgres = options.enablePostgres ?? shouldEnablePostgres();
+  const railCapabilityHealth = await checkProviderLimitedRailCapabilities({
+    enabled: {
+      [Rail.CHAINFLIP]: enableChainflip,
+      [Rail.MAYA]: enableMaya,
+      [Rail.TELESWAP]: enableTeleSwap,
+    },
+    mayaClient: enableMaya ? new MayaClient() : undefined,
+  });
+  for (const check of railCapabilityHealth) {
+    if (check.status === 'warning') {
+      console.warn(`[RailCapabilityHealth] ${check.rail}: ${check.message}`);
+    }
+  }
 
   const intentEngine = new IntentEngine();
   const postgres = enablePostgres ? createPostgresIntentStore() : undefined;
@@ -79,6 +147,15 @@ export async function buildRuntime(options: RuntimeOptions = {}): Promise<Runtim
     await assertPostgresRailSchemaCompatibility(postgres.pool);
   }
   const intentService = new IntentService(intentEngine, postgres?.repo);
+  const reliability: ReliabilityRepository | undefined = postgres
+    ? new PostgresReliabilityRepository(postgres.pool)
+    : undefined;
+  let reliabilityCache: RailReliabilityCache | undefined;
+  if (reliability) {
+    new ReliabilityRecorder(intentEngine, reliability).start();
+    reliabilityCache = new RailReliabilityCache(reliability);
+    reliabilityCache.start();
+  }
   const quoteCache: QuoteCache = await createQuoteCacheFromEnv(process.env);
   const quoteEngine = new QuoteEngine(quoteCache, {
     thorchainQuoteWorker: enableThorchainQuoteWorker
@@ -90,11 +167,51 @@ export async function buildRuntime(options: RuntimeOptions = {}): Promise<Runtim
     layerZeroValueTransferApiQuoteWorker: enableLayerZeroValueTransferApi
       ? new LayerZeroValueTransferApiQuoteWorker(undefined, { enabled: true })
       : undefined,
+    hyperlaneNexusQuoteWorker: enableHyperlaneNexus
+      ? new HyperlaneNexusQuoteWorker()
+      : undefined,
+    chainflipQuoteWorker: enableChainflip
+      ? new BrokerChainflipQuoteWorker()
+      : undefined,
+    mayaQuoteWorker: enableMaya
+      ? new MidgardMayaQuoteWorker()
+      : undefined,
+    teleSwapQuoteWorker: enableTeleSwap
+      ? new SdkTeleSwapQuoteWorker()
+      : undefined,
   });
   const rpcProviderRegistry = new RpcProviderRegistry();
+  const swapAdapter = new SwapAdapter({ registry: rpcProviderRegistry });
+  const usdOracle = new NativeUsdOracle({ swapAdapter });
   registerDexQuoteAdapters(quoteEngine, process.env, rpcProviderRegistry);
+  const basketRepository: BasketRepository = postgres
+    ? new PostgresBasketRepository(postgres.pool)
+    : new InMemoryBasketRepository();
+  const basketQuoteEngine = new BasketQuoteEngine({
+    swapAdapter,
+    quoteEngine,
+    intentService,
+    basketRepository,
+  });
+  const basketStatusEngine = new BasketStatusEngine(postgres?.repo ?? {
+    findIntentsByBasket: async () => [],
+  }, basketRepository);
+  const walletScanner = new WalletScanner({ registry: rpcProviderRegistry });
+  const walletLiquidator = new WalletLiquidator(walletScanner, basketQuoteEngine);
+  const erc7683Adapter = new Erc7683Adapter({
+    quoteEngine,
+    intentService,
+    swapAdapter,
+  });
+  const solversRepository = postgres ? new PostgresSolversRepository(postgres.pool) : undefined;
+  const idempotency: IdempotencyStore = postgres
+    ? new PostgresIdempotencyStore(postgres.pool)
+    : new InMemoryIdempotencyStore();
+  const nonceStore: RelayerNonceStore = postgres
+    ? new PostgresRelayerNonceStore(postgres.pool)
+    : new InMemoryRelayerNonceStore();
 
-  const rails = new RailSelector();
+  const rails = new RailSelector(undefined, undefined, reliabilityCache);
   const recoveryEngine = enableRecovery
     ? new RecoveryEngine(
         intentService,
@@ -124,22 +241,51 @@ export async function buildRuntime(options: RuntimeOptions = {}): Promise<Runtim
     }
   }
 
-  const railExecutionManager = new RailExecutionManager({ intentService, rpcProviderRegistry });
+  const railExecutionManager = new RailExecutionManager({
+    intentService,
+    rpcProviderRegistry,
+    idempotency,
+    nonceStore,
+  });
   const railExecutions = await railExecutionManager.startAll({
     enabled: {
       [Rail.CCTP]: options.railExecution?.[Rail.CCTP] ?? enableCctpRelay,
       [Rail.THORCHAIN]: enableThorchainWorker,
       [Rail.LAYERZERO]: options.railExecution?.[Rail.LAYERZERO] ?? enableLayerZeroValueTransferApi,
+      [Rail.HYPERLANE_NEXUS]: options.railExecution?.[Rail.HYPERLANE_NEXUS] ?? enableHyperlaneNexus,
       [Rail.GASZIP]: options.railExecution?.[Rail.GASZIP] ?? envBool('ENABLE_GASZIP_DIRECT_DEPOSIT', false),
+      [Rail.CHAINFLIP]: options.railExecution?.[Rail.CHAINFLIP] ?? enableChainflip,
+      [Rail.MAYA]: options.railExecution?.[Rail.MAYA] ?? enableMaya,
+      [Rail.TELESWAP]: options.railExecution?.[Rail.TELESWAP] ?? enableTeleSwap,
+      [Rail.OPTIMISM_NATIVE_BRIDGE]: options.railExecution?.[Rail.OPTIMISM_NATIVE_BRIDGE] ?? enableOptimismNativeBridge,
     },
   });
   const cctpRelayWorker = railExecutionManager.getInstance<CctpAttestationWorker>(Rail.CCTP);
   const thorchainWorker = railExecutionManager.getInstance<THORChainMonitorWorker>(Rail.THORCHAIN);
+  const chainflipMonitorWorker = railExecutionManager.getInstance<ChainflipMonitorWorker>(Rail.CHAINFLIP);
+  const mayaMonitorWorker = railExecutionManager.getInstance<MayaMonitorWorker>(Rail.MAYA);
+  const teleSwapMonitorWorker = railExecutionManager.getInstance<TeleSwapMonitorWorker>(Rail.TELESWAP);
   const layerZeroValueTransferApiMonitorWorker = railExecutionManager.getInstance<LayerZeroValueTransferApiMonitorWorker>(Rail.LAYERZERO);
+  const hyperlaneNexusMonitorWorker = railExecutionManager.getInstance<HyperlaneNexusMonitorWorker>(Rail.HYPERLANE_NEXUS);
+  const optimismNativeBridgeMonitorWorker = railExecutionManager.getInstance<OptimismNativeBridgeMonitorWorker>(Rail.OPTIMISM_NATIVE_BRIDGE);
 
-  const apiKeyManager = enablePartnerApi ? new ApiKeyManager() : undefined;
+  const partnerRepository: PartnerRepository | undefined = postgres
+    ? new PostgresPartnerRepository(postgres.pool)
+    : enablePartnerApi
+      ? new InMemoryPartnerRepository()
+      : undefined;
+  const apiKeyManager = enablePartnerApi && partnerRepository
+    ? new ApiKeyManager({ repository: partnerRepository })
+    : undefined;
   const partnerApiRouter = apiKeyManager
-    ? buildPartnerAPI(apiKeyManager, intentService, quoteEngine)
+    ? buildPartnerAPI(apiKeyManager, intentService, quoteEngine, rpcProviderRegistry, idempotency, {
+        basketQuoteEngine,
+        basketStatusEngine,
+        walletScanner,
+        walletLiquidator,
+        erc7683Adapter,
+        solversRepository,
+      })
     : undefined;
   if (apiKeyManager) {
     setupWebhookPush(intentEngine, apiKeyManager);
@@ -149,14 +295,33 @@ export async function buildRuntime(options: RuntimeOptions = {}): Promise<Runtim
     intentEngine,
     intentService,
     quoteEngine,
+    rpcProviderRegistry,
     eventMonitor,
     recoveryEngine,
     railExecutionManager,
     railExecutions,
+    railCapabilityHealth,
     cctpRelayWorker,
     thorchainWorker,
+    chainflipMonitorWorker,
+    mayaMonitorWorker,
+    teleSwapMonitorWorker,
     layerZeroValueTransferApiMonitorWorker,
+    hyperlaneNexusMonitorWorker,
+    optimismNativeBridgeMonitorWorker,
     postgres,
+    reliability,
+    basketRepository,
+    basketQuoteEngine,
+    basketStatusEngine,
+    walletScanner,
+    walletLiquidator,
+    erc7683Adapter,
+    solversRepository,
+    partnerRepository,
+    idempotency,
+    nonceStore,
+    usdOracle,
     apiKeyManager,
     partnerApiRouter,
     async close() {

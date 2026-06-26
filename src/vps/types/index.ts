@@ -20,14 +20,29 @@ export enum Rail {
   VIA_LABS  = 'VIA_LABS',   // $0.25, 30+ chains, API-first
   WORMHOLE  = 'WORMHOLE',   // EVM↔SVM SPL tokens + NTT, 30+ chains
   GASZIP    = 'GASZIP',     // Provider-direct destination native gas delivery via Gas.zip API
+  HYPERLANE_NEXUS = 'HYPERLANE_NEXUS', // Provider-direct stablecoin warp routes via Hyperlane Nexus
+  OPTIMISM_NATIVE_BRIDGE = 'OPTIMISM_NATIVE_BRIDGE', // Official Standard Bridge rollout for ETH <-> Optimism
 
   // ── Liquidity rail (AMM-based, direct native delivery, no ReceiverV1) ─────
   THORCHAIN = 'THORCHAIN',  // Free+slip, native BTC/ETH/SOL/DOGE/AVAX/BSC/BASE
+  CHAINFLIP = 'CHAINFLIP',  // Broker-direct JIT AMM rail for BTC/ETH/USDC/SOL/DOT
+  MAYA = 'MAYA',            // THORChain-style vault rail with KUJI/DASH/ZEC coverage
+  TELESWAP = 'TELESWAP',    // BTC <-> Polygon/BSC specialist rail via TeleportDAO
 }
 
 // ── Rail category helpers ──────────────────────────────────────────────────────
-export const LIQUIDITY_RAILS = new Set([Rail.THORCHAIN]);
-export const MESSAGING_RAILS = new Set([Rail.CCTP, Rail.CCTP_FAST, Rail.AXELAR, Rail.LAYERZERO, Rail.VIA_LABS, Rail.WORMHOLE, Rail.GASZIP]);
+export const LIQUIDITY_RAILS = new Set([Rail.THORCHAIN, Rail.CHAINFLIP, Rail.MAYA, Rail.TELESWAP]);
+export const MESSAGING_RAILS = new Set([
+  Rail.CCTP,
+  Rail.CCTP_FAST,
+  Rail.AXELAR,
+  Rail.LAYERZERO,
+  Rail.VIA_LABS,
+  Rail.WORMHOLE,
+  Rail.GASZIP,
+  Rail.HYPERLANE_NEXUS,
+  Rail.OPTIMISM_NATIVE_BRIDGE,
+]);
 
 // ── Non-EVM pseudo chain IDs (used internally, never on-chain) ────────────────
 export const CHAIN_ID = {
@@ -54,6 +69,9 @@ export const CHAIN_ID = {
   BCH:     101,
   COSMOS:  102,
   DOT:     103,
+  KUJI:    104,
+  DASH:    105,
+  ZEC:     106,
 } as const;
 
 export type ChainId = typeof CHAIN_ID[keyof typeof CHAIN_ID];
@@ -137,8 +155,10 @@ export interface QuoteRequest {
   dstChainId:   number;
   userAddress:  string;
   nativeDstAddress?: string;  // Required for BTC/SOL destinations
+  refundAddress?: string;     // Required for provider-direct non-EVM source flows
   destinationGas?: DestinationGasRequest[];
-  urgency?:     'fast' | 'normal';
+  autoFundDestinationGas?: AutoFundDestinationGasRequest;
+  urgency?:     'fast' | 'normal' | 'patient';
 }
 
 export interface DestinationGasRequest {
@@ -146,6 +166,39 @@ export interface DestinationGasRequest {
   chainId: number;
   amountWei: string;
   recipient?: string;
+}
+
+export interface AutoFundDestinationGasRequest {
+  thresholdUsd?: number;
+  topUpUsd?: number;
+  recipient?: string;
+}
+
+export type DestinationGasDecisionOutcome =
+  | 'auto_attached'
+  | 'explicit_destination_gas'
+  | 'feature_disabled'
+  | 'kill_switch'
+  | 'no_opt_in'
+  | 'same_chain'
+  | 'source_token_native'
+  | 'balance_sufficient'
+  | 'balance_check_failed'
+  | 'unknown_native_price'
+  | 'zero_top_up';
+
+export interface DestinationGasDecision {
+  provider: 'gaszip';
+  requested: boolean;
+  outcome: DestinationGasDecisionOutcome;
+  recipient?: string;
+  thresholdUsd?: number;
+  requestedTopUpUsd?: number;
+  appliedTopUpUsd?: number;
+  nativeUsd?: number;
+  balanceUsd?: number;
+  effectiveDestinationGas: DestinationGasRequest[];
+  autoAdded: DestinationGasRequest[];
 }
 
 export interface QuoteAmountView {
@@ -218,8 +271,13 @@ export interface QuoteResult {
   layerZeroValueTransferApiQuoteId?: string; // LayerZero Value Transfer API quote/transfer id
   layerZeroValueTransferApiRouteSteps?: unknown[];
   layerZeroValueTransferApiUserSteps?: unknown[];
+  chainflipChannelId?: string;
+  teleSwapSwapId?: string;
   nativeDstAddress?: string;    // User's BTC/SOL/DOGE address
+  refundAddress?: string;       // Source-chain refund address for provider-direct flows
   selectedByUser?:   boolean;   // true when intent came from explicit offer selection
+  offerType?:        RailOfferType;
+  executionMode?:    ExecutionMode;
 }
 
 export interface ProviderAssetRef {
@@ -244,7 +302,12 @@ export type RailOfferType =
   | 'lz_stargate_oft'
   | 'lz_api_direct'
   | 'gaszip_api_direct'
-  | 'thor_api_direct';
+  | 'thor_api_direct'
+  | 'hyperlane_nexus_direct'
+  | 'optimism_native_bridge_direct'
+  | 'chainflip_broker_direct'
+  | 'maya_direct'
+  | 'teleswap_direct';
 
 export type DeliveryShape =
   | 'direct'
@@ -348,6 +411,14 @@ export interface Intent {
   fallbackRail?:    Rail;
   errorMessage?:    string;
   partnerApiKey?:   string;
+  partnerId?:       string;
+  integratorId?:    string;
+  agentId?:         string;
+  routeSource?:     'partner-api' | 'ui' | 'agent-sdk' | 'external-solver' | 'internal';
+  parentBasketId?:  string;
+  solverId?:        string;
+  actualOut?:       bigint;
+  actualFeeUsd?:    number;
 }
 
 export interface IntentRefundCase {
@@ -371,7 +442,13 @@ export interface IntentRefundCase {
   payoutTxHash?: string;
 }
 
-export type ProviderTransferProvider = 'layerzero_value_transfer_api' | 'thorchain_api';
+export type ProviderTransferProvider =
+  | 'layerzero_value_transfer_api'
+  | 'thorchain_api'
+  | 'hyperlane_explorer'
+  | 'chainflip_broker'
+  | 'maya_midgard'
+  | 'teleswap_api';
 
 export type ProviderTransferStatus =
   | 'CREATED'

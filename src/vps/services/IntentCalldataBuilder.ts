@@ -196,7 +196,7 @@ async function estimateNativeGas(quote: QuoteResult): Promise<string> {
     throw new Error(`calldata: RouterV1 missing for source chain ${quote.srcChainId}`);
   }
 
-  const provider = rpcProviderRegistry.getReadProvider(quote.srcChainId);
+  const provider = rpcProviderRegistry.getProvider(quote.srcChainId).asEthersProvider();
   const router = new Contract(routerAddress, ROUTER_REGISTRY_ABI, provider);
   const registryAddress = await router.registry();
   if (!isAddress(registryAddress) || registryAddress === ZeroAddress) {

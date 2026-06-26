@@ -4,7 +4,15 @@ import { THORChainClient } from '../services/thorchain/THORChainClient';
 import { THORChainMonitorWorker } from '../services/thorchain/THORChainMonitorWorker';
 import { LayerZeroValueTransferApiClient } from '../services/layerzero/LayerZeroValueTransferApiClient';
 import { LayerZeroValueTransferApiMonitorWorker } from '../services/layerzero/LayerZeroValueTransferApiMonitorWorker';
+import { HyperlaneNexusMonitorWorker } from '../services/hyperlane/HyperlaneNexusMonitorWorker';
 import { GasZipMonitorWorker } from '../services/gaszip/GasZipMonitorWorker';
+import { ChainflipMonitorWorker } from '../services/chainflip/ChainflipMonitorWorker';
+import { MayaMonitorWorker } from '../services/maya/MayaMonitorWorker';
+import { TeleSwapMonitorWorker } from '../services/teleswap/TeleSwapMonitorWorker';
+import {
+  OptimismNativeBridgeMonitorWorker,
+  RpcOptimismNativeBridgeStatusClient,
+} from '../services/nativebridge/OptimismNativeBridgeMonitorWorker';
 import { RpcProviderRegistry } from '../services/RpcProviderRegistry';
 import { Rail } from '../types';
 import { getRailVariantLabel, RailVariantLabel } from './registry';
@@ -13,7 +21,15 @@ export type RailExecutionMode = 'worker' | 'passive' | 'disabled';
 
 export interface RailExecutionContext {
   intentService: IntentService;
-  rpcProviderRegistry?: Pick<RpcProviderRegistry, 'getPollingRpcUrl' | 'reportFailure' | 'getReadProvider'>;
+  rpcProviderRegistry?: Pick<RpcProviderRegistry, 'getPollingRpcUrl' | 'reportFailure' | 'getProvider' | 'getReadProvider'>;
+  /**
+   * Sprint 2 — multi-instance idempotency lock store.
+   * When provided, rail workers acquire DB-backed lease locks before
+   * performing side effects (V1: CCTP destination relay).
+   */
+  idempotency?: import('../db/IdempotencyStore').IdempotencyStore;
+  /** Sprint 2.7 — cross-process nonce reservation for relayer EOAs. */
+  nonceStore?: import('../db/RelayerNonceStore').RelayerNonceStore;
 }
 
 export interface RailExecutionOptions {
@@ -73,7 +89,13 @@ class CctpRailExecutionAdapter implements RailExecutionAdapter<CctpAttestationWo
       };
     }
 
-    const worker = new CctpAttestationWorker(context.intentService, context.rpcProviderRegistry);
+    const worker = new CctpAttestationWorker(
+      context.intentService,
+      context.rpcProviderRegistry,
+      undefined,
+      context.idempotency,
+      context.nonceStore,
+    );
     await worker.start();
 
     return {
@@ -190,7 +212,10 @@ class GasZipRailExecutionAdapter implements RailExecutionAdapter<GasZipMonitorWo
       undefined,
       async (chainId) => {
         try {
-          return context.rpcProviderRegistry?.getReadProvider(chainId) ?? new RpcProviderRegistry().getReadProvider(chainId);
+          const registry = context.rpcProviderRegistry ?? new RpcProviderRegistry();
+          return 'getProvider' in registry
+            ? registry.getProvider(chainId).asEthersProvider()
+            : registry.getReadProvider(chainId);
         } catch {
           return null;
         }
@@ -211,11 +236,208 @@ class GasZipRailExecutionAdapter implements RailExecutionAdapter<GasZipMonitorWo
   }
 }
 
+class HyperlaneNexusRailExecutionAdapter implements RailExecutionAdapter<HyperlaneNexusMonitorWorker> {
+  readonly rail = Rail.HYPERLANE_NEXUS;
+
+  async start(
+    context: RailExecutionContext,
+    options: RailExecutionOptions,
+  ): Promise<RailExecutionHandle<HyperlaneNexusMonitorWorker>> {
+    const enabled = options.enabled?.[Rail.HYPERLANE_NEXUS] ?? readBool('ENABLE_HYPERLANE_NEXUS', false);
+    if (!enabled) {
+      return {
+        rail: this.rail,
+        mode: 'disabled',
+        label: 'hyperlane-nexus-monitor',
+        visualLabels: ['HYPERLANE_NEXUS'],
+        async stop() {
+          return;
+        },
+      };
+    }
+
+    const worker = new HyperlaneNexusMonitorWorker(context.intentService);
+    await worker.start();
+
+    return {
+      rail: this.rail,
+      mode: 'worker',
+      label: 'hyperlane-nexus-monitor',
+      visualLabels: ['HYPERLANE_NEXUS'],
+      instance: worker,
+      async stop() {
+        worker.stop();
+      },
+    };
+  }
+}
+
+class OptimismNativeBridgeRailExecutionAdapter implements RailExecutionAdapter<OptimismNativeBridgeMonitorWorker> {
+  readonly rail = Rail.OPTIMISM_NATIVE_BRIDGE;
+
+  async start(
+    context: RailExecutionContext,
+    options: RailExecutionOptions,
+  ): Promise<RailExecutionHandle<OptimismNativeBridgeMonitorWorker>> {
+    const enabled = options.enabled?.[Rail.OPTIMISM_NATIVE_BRIDGE] ?? readBool('ENABLE_OPTIMISM_NATIVE_BRIDGE', true);
+    if (!enabled) {
+      return {
+        rail: this.rail,
+        mode: 'disabled',
+        label: 'optimism-native-bridge-monitor',
+        visualLabels: ['OPTIMISM_NATIVE_BRIDGE'],
+        async stop() {
+          return;
+        },
+      };
+    }
+
+    const worker = new OptimismNativeBridgeMonitorWorker(
+      context.intentService,
+      new RpcOptimismNativeBridgeStatusClient(async (chainId) => {
+        try {
+          const registry = context.rpcProviderRegistry ?? new RpcProviderRegistry();
+          return 'getProvider' in registry
+            ? registry.getProvider(chainId).asEthersProvider()
+            : registry.getReadProvider(chainId);
+        } catch {
+          return null;
+        }
+      }),
+    );
+    await worker.start();
+
+    return {
+      rail: this.rail,
+      mode: 'worker',
+      label: 'optimism-native-bridge-monitor',
+      visualLabels: ['OPTIMISM_NATIVE_BRIDGE'],
+      instance: worker,
+      async stop() {
+        worker.stop();
+      },
+    };
+  }
+}
+
+class ChainflipRailExecutionAdapter implements RailExecutionAdapter<ChainflipMonitorWorker> {
+  readonly rail = Rail.CHAINFLIP;
+
+  async start(
+    context: RailExecutionContext,
+    options: RailExecutionOptions,
+  ): Promise<RailExecutionHandle<ChainflipMonitorWorker>> {
+    const enabled = options.enabled?.[Rail.CHAINFLIP] ?? readBool('ENABLE_CHAINFLIP', Boolean(process.env.CHAINFLIP_BROKER_URL));
+    if (!enabled) {
+      return {
+        rail: this.rail,
+        mode: 'disabled',
+        label: 'chainflip-monitor',
+        visualLabels: ['CHAINFLIP'],
+        async stop() {
+          return;
+        },
+      };
+    }
+
+    const worker = new ChainflipMonitorWorker(context.intentService);
+    await worker.start();
+
+    return {
+      rail: this.rail,
+      mode: 'worker',
+      label: 'chainflip-monitor',
+      visualLabels: ['CHAINFLIP'],
+      instance: worker,
+      async stop() {
+        worker.stop();
+      },
+    };
+  }
+}
+
+class MayaRailExecutionAdapter implements RailExecutionAdapter<MayaMonitorWorker> {
+  readonly rail = Rail.MAYA;
+
+  async start(
+    context: RailExecutionContext,
+    options: RailExecutionOptions,
+  ): Promise<RailExecutionHandle<MayaMonitorWorker>> {
+    const enabled = options.enabled?.[Rail.MAYA] ?? readBool('ENABLE_MAYA', false);
+    if (!enabled) {
+      return {
+        rail: this.rail,
+        mode: 'disabled',
+        label: 'maya-monitor',
+        visualLabels: ['MAYA'],
+        async stop() {
+          return;
+        },
+      };
+    }
+
+    const worker = new MayaMonitorWorker(context.intentService);
+    await worker.start();
+
+    return {
+      rail: this.rail,
+      mode: 'worker',
+      label: 'maya-monitor',
+      visualLabels: ['MAYA'],
+      instance: worker,
+      async stop() {
+        worker.stop();
+      },
+    };
+  }
+}
+
+class TeleSwapRailExecutionAdapter implements RailExecutionAdapter<TeleSwapMonitorWorker> {
+  readonly rail = Rail.TELESWAP;
+
+  async start(
+    context: RailExecutionContext,
+    options: RailExecutionOptions,
+  ): Promise<RailExecutionHandle<TeleSwapMonitorWorker>> {
+    const enabled = options.enabled?.[Rail.TELESWAP] ?? readBool('ENABLE_TELESWAP', Boolean(process.env.TELESWAP_API_URL));
+    if (!enabled) {
+      return {
+        rail: this.rail,
+        mode: 'disabled',
+        label: 'teleswap-monitor',
+        visualLabels: ['TELESWAP'],
+        async stop() {
+          return;
+        },
+      };
+    }
+
+    const worker = new TeleSwapMonitorWorker(context.intentService);
+    await worker.start();
+
+    return {
+      rail: this.rail,
+      mode: 'worker',
+      label: 'teleswap-monitor',
+      visualLabels: ['TELESWAP'],
+      instance: worker,
+      async stop() {
+        worker.stop();
+      },
+    };
+  }
+}
+
 const DEFAULT_ADAPTERS: RailExecutionAdapter[] = [
   new CctpRailExecutionAdapter(),
   new THORChainRailExecutionAdapter(),
   new LayerZeroValueTransferApiRailExecutionAdapter(),
+  new HyperlaneNexusRailExecutionAdapter(),
+  new OptimismNativeBridgeRailExecutionAdapter(),
   new GasZipRailExecutionAdapter(),
+  new ChainflipRailExecutionAdapter(),
+  new MayaRailExecutionAdapter(),
+  new TeleSwapRailExecutionAdapter(),
   new PassiveRailExecutionAdapter(Rail.AXELAR, 'event-monitor'),
   new PassiveRailExecutionAdapter(Rail.VIA_LABS, 'event-monitor'),
   new PassiveRailExecutionAdapter(Rail.WORMHOLE, 'event-monitor'),

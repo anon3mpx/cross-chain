@@ -1,0 +1,200 @@
+import type { HyperlaneNexusChainRouteConfig } from '../services/hyperlane/HyperlaneNexusRouteCatalog';
+
+/**
+ * Checked-in Hyperlane Nexus route catalog.
+ *
+ * Populate `warpRouteAddress` only from verified Hyperlane deployment data.
+ * Keep placeholder assets disabled until the source chain's warp route has
+ * been verified against the expected destination domains.
+ */
+export const HYPERLANE_NEXUS_ROUTE_CHAINS: HyperlaneNexusChainRouteConfig[] = [
+  {
+    chainId: 1,
+    domain: 1,
+    registryChainName: 'ethereum',
+    assets: {
+      USDC: {
+        warpRouteAddress: '',
+        collateralTokenAddress: '',
+        tokenType: '',
+        cctpVersion: '',
+        connections: [],
+        interchainGasFee: '',
+        etaSeconds: 0,
+        disabled: true,
+      },
+      USDT: {
+        warpRouteAddress: '',
+        collateralTokenAddress: '',
+        tokenType: '',
+        cctpVersion: '',
+        connections: [],
+        interchainGasFee: '',
+        etaSeconds: 0,
+        disabled: true,
+      },
+    },
+  },
+  {
+    chainId: 10,
+    domain: 10,
+    registryChainName: 'optimism',
+    assets: {
+      USDC: {
+        warpRouteAddress: '',
+        collateralTokenAddress: '',
+        tokenType: '',
+        cctpVersion: '',
+        connections: [],
+        interchainGasFee: '',
+        etaSeconds: 0,
+        disabled: true,
+      },
+      USDT: {
+        warpRouteAddress: '',
+        collateralTokenAddress: '',
+        tokenType: '',
+        cctpVersion: '',
+        connections: [],
+        interchainGasFee: '',
+        etaSeconds: 0,
+        disabled: true,
+      },
+    },
+  },
+  {
+    chainId: 56,
+    domain: 56,
+    registryChainName: 'bsc',
+    assets: {
+      USDC: {
+        warpRouteAddress: '',
+        collateralTokenAddress: '',
+        tokenType: '',
+        cctpVersion: '',
+        connections: [],
+        interchainGasFee: '',
+        etaSeconds: 0,
+        disabled: true,
+      },
+      USDT: {
+        warpRouteAddress: '',
+        collateralTokenAddress: '',
+        tokenType: '',
+        cctpVersion: '',
+        connections: [],
+        interchainGasFee: '',
+        etaSeconds: 0,
+        disabled: true,
+      },
+    },
+  },
+  {
+    chainId: 137,
+    domain: 137,
+    registryChainName: 'polygon',
+    assets: {
+      USDC: {
+        warpRouteAddress: '',
+        collateralTokenAddress: '',
+        tokenType: '',
+        cctpVersion: '',
+        connections: [],
+        interchainGasFee: '',
+        etaSeconds: 0,
+        disabled: true,
+      },
+      USDT: {
+        warpRouteAddress: '',
+        collateralTokenAddress: '',
+        tokenType: '',
+        cctpVersion: '',
+        connections: [],
+        interchainGasFee: '',
+        etaSeconds: 0,
+        disabled: true,
+      },
+    },
+  },
+  {
+    chainId: 8453,
+    domain: 8453,
+    registryChainName: 'base',
+    assets: {
+      USDC: {
+        warpRouteAddress: '',
+        collateralTokenAddress: '',
+        tokenType: '',
+        cctpVersion: '',
+        connections: [],
+        interchainGasFee: '',
+        etaSeconds: 0,
+        disabled: true,
+      },
+      USDT: {
+        warpRouteAddress: '',
+        collateralTokenAddress: '',
+        tokenType: '',
+        cctpVersion: '',
+        connections: [],
+        interchainGasFee: '',
+        etaSeconds: 0,
+        disabled: true,
+      },
+    },
+  },
+  {
+    chainId: 42161,
+    domain: 42161,
+    registryChainName: 'arbitrum',
+    assets: {
+      USDC: {
+        warpRouteAddress: '',
+        collateralTokenAddress: '',
+        tokenType: '',
+        cctpVersion: '',
+        connections: [],
+        interchainGasFee: '',
+        etaSeconds: 0,
+        disabled: true,
+      },
+      USDT: {
+        warpRouteAddress: '',
+        collateralTokenAddress: '',
+        tokenType: '',
+        cctpVersion: '',
+        connections: [],
+        interchainGasFee: '',
+        etaSeconds: 0,
+        disabled: true,
+      },
+    },
+  },
+  {
+    chainId: 43114,
+    domain: 43114,
+    registryChainName: 'avalanche',
+    assets: {
+      USDC: {
+        warpRouteAddress: '',
+        collateralTokenAddress: '',
+        tokenType: '',
+        cctpVersion: '',
+        connections: [],
+        interchainGasFee: '',
+        etaSeconds: 0,
+        disabled: true,
+      },
+      USDT: {
+        warpRouteAddress: '',
+        collateralTokenAddress: '',
+        tokenType: '',
+        cctpVersion: '',
+        connections: [],
+        interchainGasFee: '',
+        etaSeconds: 0,
+        disabled: true,
+      },
+    },
+  },
+];

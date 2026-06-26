@@ -1,0 +1,456 @@
+{
+  "openapi": "3.0.3",
+  "info": {
+    "title": "EMPX Partner API",
+    "version": "1.0.0",
+    "description": "Partner-only API contract for registration, quote selection, intent tracking, submitted callbacks, rebates, webhooks, and same-chain swap helpers."
+  },
+  "servers": [
+    {
+      "url": "https://partners.empx.io",
+      "description": "Production Partner API"
+    }
+  ],
+  "tags": [
+    {
+      "name": "Onboarding",
+      "description": "API-first partner registration and tier discovery"
+    },
+    {
+      "name": "Quotes",
+      "description": "Cross-chain quote and selected-offer lifecycle"
+    },
+    {
+      "name": "Intents",
+      "description": "Intent status and provider-direct submitted callbacks"
+    },
+    {
+      "name": "Partner Account",
+      "description": "Rebates, withdrawals, and webhook tests"
+    },
+    {
+      "name": "Single Chain",
+      "description": "Same-chain swap helper"
+    }
+  ],
+  "paths": {
+    "/partner/register": {
+      "post": {
+        "tags": ["Onboarding"],
+        "operationId": "registerPartner",
+        "summary": "Register a partner and issue a FREE tier API key",
+        "description": "Public API-first registration. The plaintext apiKey and webhookSecret are returned once and must be stored by the partner.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": { "$ref": "#/components/schemas/RegisterPartnerRequest" }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Partner registered",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/RegisterPartnerResponse" }
+              }
+            }
+          },
+          "400": { "$ref": "#/components/responses/BadRequest" }
+        }
+      }
+    },
+    "/partner/tiers": {
+      "get": {
+        "tags": ["Onboarding"],
+        "operationId": "listPartnerTiers",
+        "summary": "List public partner tier metadata",
+        "responses": {
+          "200": {
+            "description": "Partner tiers",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/PartnerTiersResponse" }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/partner/quote": {
+      "post": {
+        "tags": ["Quotes"],
+        "operationId": "createPartnerQuote",
+        "summary": "Create an offer-set quote",
+        "security": [{ "PartnerApiKey": [] }],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": { "$ref": "#/components/schemas/PartnerQuoteRequest" }
+            }
+          }
+        },
+        "responses": {
+          "200": { "$ref": "#/components/responses/QuoteResponse" },
+          "400": { "$ref": "#/components/responses/BadRequest" },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "429": { "$ref": "#/components/responses/RateLimited" }
+        }
+      }
+    },
+    "/partner/quote/select": {
+      "post": {
+        "tags": ["Quotes"],
+        "operationId": "selectPartnerQuote",
+        "summary": "Select an offer and create an intent",
+        "security": [{ "PartnerApiKey": [] }],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": { "$ref": "#/components/schemas/QuoteSelectRequest" }
+            }
+          }
+        },
+        "responses": {
+          "200": { "$ref": "#/components/responses/QuoteSelectionResponse" },
+          "400": { "$ref": "#/components/responses/BadRequest" },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "404": { "$ref": "#/components/responses/NotFound" },
+          "409": { "$ref": "#/components/responses/Conflict" }
+        }
+      }
+    },
+    "/partner/intent/{intentId}": {
+      "get": {
+        "tags": ["Intents"],
+        "operationId": "getPartnerIntent",
+        "summary": "Track partner-owned intent status",
+        "security": [{ "PartnerApiKey": [] }],
+        "parameters": [{ "$ref": "#/components/parameters/IntentId" }],
+        "responses": {
+          "200": {
+            "description": "Intent status",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/IntentStatusResponse" }
+              }
+            }
+          },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "404": { "$ref": "#/components/responses/NotFound" }
+        }
+      }
+    },
+    "/partner/intent/{intentId}/submitted": {
+      "post": {
+        "tags": ["Intents"],
+        "operationId": "markPartnerIntentSubmitted",
+        "summary": "Mark provider-direct source transaction as submitted",
+        "security": [{ "PartnerApiKey": [] }],
+        "parameters": [{ "$ref": "#/components/parameters/IntentId" }],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": { "$ref": "#/components/schemas/SubmittedRequest" }
+            }
+          }
+        },
+        "responses": {
+          "202": {
+            "description": "Intent accepted as submitted",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/IntentStatusResponse" }
+              }
+            }
+          },
+          "400": { "$ref": "#/components/responses/BadRequest" },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "403": { "$ref": "#/components/responses/Forbidden" },
+          "404": { "$ref": "#/components/responses/NotFound" }
+        }
+      }
+    },
+    "/partner/rebates": {
+      "get": {
+        "tags": ["Partner Account"],
+        "operationId": "getPartnerRebates",
+        "summary": "Read accrued partner rebates",
+        "security": [{ "PartnerApiKey": [] }],
+        "responses": {
+          "200": {
+            "description": "Rebate summary",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/RebateSummary" }
+              }
+            }
+          },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "403": { "$ref": "#/components/responses/Forbidden" }
+        }
+      }
+    },
+    "/partner/withdraw": {
+      "post": {
+        "tags": ["Partner Account"],
+        "operationId": "withdrawPartnerRebates",
+        "summary": "Request pull-based rebate withdrawal",
+        "security": [{ "PartnerApiKey": [] }],
+        "requestBody": {
+          "required": false,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "chainId": { "type": "integer", "default": 1 }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": { "description": "Withdrawal request accepted or no rebate available" },
+          "400": { "$ref": "#/components/responses/BadRequest" },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "403": { "$ref": "#/components/responses/Forbidden" }
+        }
+      }
+    },
+    "/partner/webhook/test": {
+      "post": {
+        "tags": ["Partner Account"],
+        "operationId": "testPartnerWebhook",
+        "summary": "Send a signed test webhook to the configured partner URL",
+        "security": [{ "PartnerApiKey": [] }],
+        "responses": {
+          "200": { "description": "Webhook attempted" },
+          "400": { "$ref": "#/components/responses/BadRequest" },
+          "502": { "description": "Webhook URL unreachable" }
+        }
+      }
+    },
+    "/partner/swap-single-chain": {
+      "post": {
+        "tags": ["Single Chain"],
+        "operationId": "createSingleChainSwap",
+        "summary": "Build a same-chain swap helper transaction",
+        "security": [{ "PartnerApiKey": [] }],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": { "$ref": "#/components/schemas/SingleChainSwapRequest" }
+            }
+          }
+        },
+        "responses": {
+          "200": { "description": "Same-chain swap calldata" },
+          "400": { "$ref": "#/components/responses/BadRequest" },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "429": { "$ref": "#/components/responses/RateLimited" }
+        }
+      }
+    }
+  },
+  "components": {
+    "securitySchemes": {
+      "PartnerApiKey": {
+        "type": "apiKey",
+        "in": "header",
+        "name": "x-api-key"
+      }
+    },
+    "parameters": {
+      "IntentId": {
+        "name": "intentId",
+        "in": "path",
+        "required": true,
+        "schema": { "type": "string" }
+      }
+    },
+    "responses": {
+      "BadRequest": {
+        "description": "Invalid request",
+        "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ErrorResponse" } } }
+      },
+      "Unauthorized": {
+        "description": "Missing or invalid API key",
+        "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ErrorResponse" } } }
+      },
+      "Forbidden": {
+        "description": "Partner is not allowed to perform this action",
+        "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ErrorResponse" } } }
+      },
+      "NotFound": {
+        "description": "Resource not found",
+        "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ErrorResponse" } } }
+      },
+      "Conflict": {
+        "description": "Offer selection conflict or fallback set available",
+        "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ErrorResponse" } } }
+      },
+      "RateLimited": {
+        "description": "Partner tier rate limit exceeded",
+        "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ErrorResponse" } } }
+      },
+      "QuoteResponse": {
+        "description": "Offer set and optional best quote",
+        "content": { "application/json": { "schema": { "type": "object" } } }
+      },
+      "QuoteSelectionResponse": {
+        "description": "Selected quote, intent ID, and integration payload",
+        "content": { "application/json": { "schema": { "type": "object" } } }
+      }
+    },
+    "schemas": {
+      "RegisterPartnerRequest": {
+        "type": "object",
+        "required": ["name", "contactEmail"],
+        "properties": {
+          "name": { "type": "string" },
+          "contactEmail": { "type": "string", "format": "email" },
+          "webhookUrl": { "type": "string", "format": "uri" },
+          "payoutAddress": { "type": "string" },
+          "allowedOrigins": { "type": "array", "items": { "type": "string" } }
+        }
+      },
+      "RegisterPartnerResponse": {
+        "type": "object",
+        "required": ["apiKey", "webhookSecret", "tier", "limits"],
+        "properties": {
+          "apiKey": { "type": "string" },
+          "webhookSecret": { "type": "string" },
+          "tier": { "$ref": "#/components/schemas/PartnerTier" },
+          "limits": { "$ref": "#/components/schemas/PartnerLimits" },
+          "message": { "type": "string" }
+        }
+      },
+      "PartnerTiersResponse": {
+        "type": "object",
+        "required": ["tiers", "defaultTier"],
+        "properties": {
+          "tiers": {
+            "type": "object",
+            "additionalProperties": { "$ref": "#/components/schemas/PartnerTierDefinition" }
+          },
+          "defaultTier": { "$ref": "#/components/schemas/PartnerTier" }
+        }
+      },
+      "PartnerTier": {
+        "type": "string",
+        "enum": ["FREE", "GROWTH", "PARTNER", "ENTERPRISE"]
+      },
+      "PartnerTierDefinition": {
+        "allOf": [
+          { "$ref": "#/components/schemas/PartnerLimits" },
+          {
+            "type": "object",
+            "properties": {
+              "sla": { "type": "string" },
+              "approval": { "type": "string", "enum": ["self_serve", "approval_required", "contract_required"] }
+            }
+          }
+        ]
+      },
+      "PartnerLimits": {
+        "type": "object",
+        "required": ["quotesPerMin", "maxTxPerDay", "feeShareBps"],
+        "properties": {
+          "quotesPerMin": { "type": "integer" },
+          "maxTxPerDay": { "type": "integer" },
+          "feeShareBps": { "type": "integer" }
+        }
+      },
+      "PartnerQuoteRequest": {
+        "type": "object",
+        "required": ["tokenIn", "tokenOut", "amountIn", "srcChainId", "dstChainId", "userAddress"],
+        "properties": {
+          "tokenIn": { "type": "string" },
+          "tokenOut": { "type": "string" },
+          "amountIn": { "type": "string" },
+          "srcChainId": { "type": "integer" },
+          "dstChainId": { "type": "integer" },
+          "userAddress": { "type": "string" },
+          "nativeDstAddress": { "type": "string" },
+          "refundAddress": { "type": "string" },
+          "urgency": { "type": "string", "enum": ["fast", "normal", "patient"] },
+          "integratorId": { "type": "string" },
+          "agentId": { "type": "string" },
+          "rpcProviders": { "type": "object", "additionalProperties": { "type": "string" } }
+        }
+      },
+      "QuoteSelectRequest": {
+        "type": "object",
+        "required": ["offerSetId", "offerId", "userAddress"],
+        "properties": {
+          "offerSetId": { "type": "string" },
+          "offerId": { "type": "string" },
+          "userAddress": { "type": "string" },
+          "integratorId": { "type": "string" },
+          "agentId": { "type": "string" }
+        }
+      },
+      "SubmittedRequest": {
+        "type": "object",
+        "required": ["userAddress", "sourceTxHash"],
+        "properties": {
+          "userAddress": { "type": "string" },
+          "sourceTxHash": { "type": "string" }
+        }
+      },
+      "IntentStatusResponse": {
+        "type": "object",
+        "properties": {
+          "intentId": { "type": "string" },
+          "status": { "type": "string" },
+          "srcTxHash": { "type": "string" },
+          "dstTxHash": { "type": "string" },
+          "rail": { "type": "string" },
+          "etaSeconds": { "type": "integer" },
+          "settled": { "type": "boolean" },
+          "failed": { "type": "boolean" },
+          "errorMessage": { "type": "string" }
+        }
+      },
+      "RebateSummary": {
+        "type": "object",
+        "properties": {
+          "apiKey": { "type": "string" },
+          "tier": { "$ref": "#/components/schemas/PartnerTier" },
+          "feeShareBps": { "type": "integer" },
+          "payoutAddress": { "type": "string" },
+          "chains": { "type": "object", "additionalProperties": { "type": "string" } },
+          "totalUSDC": { "type": "string" }
+        }
+      },
+      "SingleChainSwapRequest": {
+        "type": "object",
+        "required": ["chainId", "tokenIn", "tokenOut", "amountIn", "recipient"],
+        "properties": {
+          "chainId": { "type": "integer" },
+          "tokenIn": { "type": "string" },
+          "tokenOut": { "type": "string" },
+          "amountIn": { "type": "string" },
+          "recipient": { "type": "string" },
+          "slippageBps": { "type": "integer" },
+          "integratorId": { "type": "string" },
+          "agentId": { "type": "string" },
+          "rpcProviders": { "type": "object", "additionalProperties": { "type": "string" } }
+        }
+      },
+      "ErrorResponse": {
+        "type": "object",
+        "properties": {
+          "error": { "type": "string" },
+          "message": { "type": "string" }
+        }
+      }
+    }
+  }
+}

@@ -18,7 +18,7 @@ function boolFromEnv(value: string | undefined, fallback = false): boolean {
 export function registerDexQuoteAdapters(
   quoteEngine: QuoteEngine,
   env: Record<string, string | undefined> = process.env,
-  rpcProviderRegistry: Pick<RpcProviderRegistry, 'getReadProvider'> = new RpcProviderRegistry({ env }),
+  rpcProviderRegistry: Pick<RpcProviderRegistry, 'getProvider' | 'getReadProvider'> = new RpcProviderRegistry({ env }),
 ): void {
   for (const chain of Object.values(CHAIN_CONFIGS)) {
     const chainId = chain.chainId;
@@ -27,9 +27,11 @@ export function registerDexQuoteAdapters(
 
     const univ2Router = env[`CHAIN_${chainId}_UNIV2_ROUTER`]?.trim();
     if (univ2Router) {
-      let provider: ethers.JsonRpcProvider;
+      let provider: ethers.AbstractProvider;
       try {
-        provider = rpcProviderRegistry.getReadProvider(chainId);
+        provider = 'getProvider' in rpcProviderRegistry
+          ? rpcProviderRegistry.getProvider(chainId).asEthersProvider()
+          : rpcProviderRegistry.getReadProvider(chainId);
       } catch {
         continue;
       }

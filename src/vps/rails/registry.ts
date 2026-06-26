@@ -1,5 +1,4 @@
 import {
-  CHAIN_ID,
   Intent,
   IntentStatus,
   Rail,
@@ -7,6 +6,7 @@ import {
   RefundCustodyLocation,
   SettlementToken,
 } from '../types';
+import { deriveChainRailsFromCapabilities } from '../config/railCapabilities';
 
 export interface CctpRailMetadata {
   standardPluginId: string;
@@ -52,7 +52,12 @@ export type RailVariantLabel =
   | 'VIA_LABS'
   | 'WORMHOLE'
   | 'THORCHAIN'
-  | 'GASZIP';
+  | 'GASZIP'
+  | 'HYPERLANE_NEXUS'
+  | 'OPTIMISM_NATIVE_BRIDGE'
+  | 'CHAINFLIP'
+  | 'MAYA'
+  | 'TELESWAP';
 
 export const PLUGIN_ID = {
   CCTP_V2: '0xb148ea5f936a28661e11743b1650193f1b14a2322b9541503bf6815a84a1a6e9',
@@ -64,6 +69,11 @@ export const PLUGIN_ID = {
   WORMHOLE_V2: '0xfdd3e68657787c00343d96c11d1cd189fa4dfe5f52999861b06e9f8e99ea902f',
   THORCHAIN_V1: '0x390774707b6ae71a0ce31d10394e70b6ac75b3b62ec4db96c9672cafd1b516c9',
   GASZIP_V1: '0x' + '0'.repeat(64),
+  HYPERLANE_NEXUS_V1: '0x' + '0'.repeat(64),
+  OPTIMISM_NATIVE_BRIDGE_V1: '0x' + '0'.repeat(64),
+  CHAINFLIP_V1: '0x' + '0'.repeat(64),
+  MAYA_V1: '0x' + '0'.repeat(64),
+  TELESWAP_V1: '0x' + '0'.repeat(64),
 } as const;
 
 function readEnv(key: string): string | undefined {
@@ -322,51 +332,123 @@ export const RAIL_PROVIDERS: Record<Rail, RailProviderDefinition> = {
     fallbackRails: [],
     refundCustodyLocation: RefundCustodyLocation.EXTERNAL_PROTOCOL,
   },
+  [Rail.HYPERLANE_NEXUS]: {
+    rail: Rail.HYPERLANE_NEXUS,
+    enumValue: 7,
+    aliases: [Rail.HYPERLANE_NEXUS, 'HYPERLANE'],
+    config: {
+      rail: Rail.HYPERLANE_NEXUS,
+      railType: 'messaging',
+      fee: 0,
+      etaSeconds: 60,
+      supportsUSDC: true,
+      supportsUSDT: true,
+      supportsETH: false,
+      supportsBTC: false,
+      supportsSOL: false,
+      nativeUSDC: false,
+      reliabilityScore: 0.95,
+      pluginId: PLUGIN_ID.HYPERLANE_NEXUS_V1,
+      requiresNativeAddr: false,
+    },
+    fallbackRails: [Rail.AXELAR, Rail.LAYERZERO, Rail.VIA_LABS],
+    refundCustodyLocation: RefundCustodyLocation.EXTERNAL_PROTOCOL,
+  },
+  [Rail.OPTIMISM_NATIVE_BRIDGE]: {
+    rail: Rail.OPTIMISM_NATIVE_BRIDGE,
+    enumValue: 8,
+    aliases: [Rail.OPTIMISM_NATIVE_BRIDGE, 'NATIVE_BRIDGE_OP'],
+    config: {
+      rail: Rail.OPTIMISM_NATIVE_BRIDGE,
+      railType: 'messaging',
+      fee: 0,
+      etaSeconds: 180,
+      supportsUSDC: true,
+      supportsUSDT: true,
+      supportsETH: true,
+      supportsBTC: false,
+      supportsSOL: false,
+      nativeUSDC: false,
+      reliabilityScore: 0.999,
+      pluginId: PLUGIN_ID.OPTIMISM_NATIVE_BRIDGE_V1,
+      requiresNativeAddr: false,
+    },
+    fallbackRails: [Rail.CCTP, Rail.LAYERZERO, Rail.AXELAR],
+    refundCustodyLocation: RefundCustodyLocation.EXTERNAL_PROTOCOL,
+  },
+  [Rail.CHAINFLIP]: {
+    rail: Rail.CHAINFLIP,
+    enumValue: 9,
+    aliases: [Rail.CHAINFLIP],
+    config: {
+      rail: Rail.CHAINFLIP,
+      railType: 'liquidity',
+      fee: 0,
+      feeSlippagePct: 0.1,
+      etaSeconds: 45,
+      supportsUSDC: true,
+      supportsUSDT: false,
+      supportsETH: true,
+      supportsBTC: true,
+      supportsSOL: true,
+      nativeUSDC: false,
+      reliabilityScore: 0.96,
+      pluginId: PLUGIN_ID.CHAINFLIP_V1,
+      requiresNativeAddr: true,
+    },
+    fallbackRails: [Rail.THORCHAIN],
+    refundCustodyLocation: RefundCustodyLocation.EXTERNAL_PROTOCOL,
+  },
+  [Rail.MAYA]: {
+    rail: Rail.MAYA,
+    enumValue: 10,
+    aliases: [Rail.MAYA],
+    config: {
+      rail: Rail.MAYA,
+      railType: 'liquidity',
+      fee: 0,
+      feeSlippagePct: 0.25,
+      etaSeconds: 90,
+      supportsUSDC: true,
+      supportsUSDT: true,
+      supportsETH: true,
+      supportsBTC: true,
+      supportsSOL: false,
+      nativeUSDC: false,
+      reliabilityScore: 0.93,
+      pluginId: PLUGIN_ID.MAYA_V1,
+      requiresNativeAddr: true,
+    },
+    fallbackRails: [Rail.THORCHAIN, Rail.CHAINFLIP],
+    refundCustodyLocation: RefundCustodyLocation.EXTERNAL_PROTOCOL,
+  },
+  [Rail.TELESWAP]: {
+    rail: Rail.TELESWAP,
+    enumValue: 11,
+    aliases: [Rail.TELESWAP],
+    config: {
+      rail: Rail.TELESWAP,
+      railType: 'liquidity',
+      fee: 0,
+      feeSlippagePct: 0.5,
+      etaSeconds: 1800,
+      supportsUSDC: true,
+      supportsUSDT: true,
+      supportsETH: false,
+      supportsBTC: true,
+      supportsSOL: false,
+      nativeUSDC: false,
+      reliabilityScore: 0.92,
+      pluginId: PLUGIN_ID.TELESWAP_V1,
+      requiresNativeAddr: true,
+    },
+    fallbackRails: [Rail.THORCHAIN],
+    refundCustodyLocation: RefundCustodyLocation.EXTERNAL_PROTOCOL,
+  },
 };
 
-export const CHAIN_RAILS: Record<number, Rail[]> = {
-  // Axelar, Via Labs, and Wormhole are intentionally disabled for now.
-  // Keep provider definitions in code, but do not advertise them as deployable rails.
-  1: [Rail.CCTP, Rail.LAYERZERO, Rail.THORCHAIN],
-  // CCTP fast is modeled as a CCTP quote variant, not a standalone rail here.
-  10: [Rail.CCTP, Rail.LAYERZERO, Rail.THORCHAIN],
-  42161: [Rail.CCTP, Rail.LAYERZERO, Rail.THORCHAIN],
-  8453: [Rail.CCTP, Rail.LAYERZERO, Rail.THORCHAIN],
-  137: [Rail.CCTP, Rail.LAYERZERO, Rail.THORCHAIN],
-  43114: [Rail.CCTP, Rail.LAYERZERO, Rail.THORCHAIN],
-  56: [Rail.LAYERZERO, Rail.THORCHAIN],
-  369: [Rail.LAYERZERO],
-  143: [Rail.LAYERZERO],
-  146: [Rail.LAYERZERO],
-  1329: [Rail.LAYERZERO],
-  80094: [Rail.LAYERZERO],
-  30: [Rail.LAYERZERO],
-  10001: [Rail.LAYERZERO],
-  999: [Rail.LAYERZERO],
-  59144: [Rail.LAYERZERO],
-  5000: [Rail.LAYERZERO],
-  34443: [Rail.LAYERZERO],
-  81457: [Rail.LAYERZERO],
-  534352: [Rail.LAYERZERO],
-  324: [Rail.LAYERZERO],
-  1101: [Rail.LAYERZERO],
-  7777777: [Rail.LAYERZERO],
-  1284: [Rail.LAYERZERO],
-  42220: [Rail.LAYERZERO],
-  11155111: [Rail.CCTP, Rail.LAYERZERO],
-  421614: [Rail.CCTP, Rail.LAYERZERO],
-  84532: [Rail.CCTP, Rail.LAYERZERO],
-  11155420: [Rail.CCTP, Rail.LAYERZERO],
-  43113: [Rail.CCTP, Rail.LAYERZERO],
-  80002: [Rail.CCTP, Rail.LAYERZERO],
-  97: [Rail.LAYERZERO],
-  [CHAIN_ID.BTC]: [Rail.THORCHAIN],
-  [CHAIN_ID.SOL]: [Rail.THORCHAIN, Rail.CCTP],
-  [CHAIN_ID.DOGE]: [Rail.THORCHAIN],
-  [CHAIN_ID.LTC]: [Rail.THORCHAIN],
-  [CHAIN_ID.BCH]: [Rail.THORCHAIN],
-  [CHAIN_ID.COSMOS]: [Rail.THORCHAIN],
-};
+// CCTP fast is modeled as a CCTP quote variant, not a standalone rail here.
+export const CHAIN_RAILS: Record<number, Rail[]> = deriveChainRailsFromCapabilities();
 
 export function getRailProvider(rail: Rail): RailProviderDefinition {
   const provider = RAIL_PROVIDERS[rail];
@@ -522,6 +604,16 @@ export function getRailVariantLabel(rail: Rail, railPluginId?: string): RailVari
       return 'THORCHAIN';
     case Rail.GASZIP:
       return 'GASZIP';
+    case Rail.HYPERLANE_NEXUS:
+      return 'HYPERLANE_NEXUS';
+    case Rail.OPTIMISM_NATIVE_BRIDGE:
+      return 'OPTIMISM_NATIVE_BRIDGE';
+    case Rail.CHAINFLIP:
+      return 'CHAINFLIP';
+    case Rail.MAYA:
+      return 'MAYA';
+    case Rail.TELESWAP:
+      return 'TELESWAP';
     default:
       return 'CCTP_STANDARD';
   }

@@ -15,6 +15,7 @@ export interface THORChainQuoteRequest {
   tokenIn: string;
   tokenOut: string;
   destinationAddress?: string;
+  refundAddress?: string;
   fromAsset?: string;
   toAsset?: string;
   amountInThorchain?: bigint;
@@ -105,6 +106,9 @@ export class THORChainQuoteWorker {
 
     if (input.destinationAddress) {
       params.set('destination', input.destinationAddress);
+    }
+    if (input.refundAddress) {
+      params.set('refund_address', input.refundAddress);
     }
     if (input.toleranceBps !== undefined) {
       params.set('tolerance_bps', String(Math.max(0, Math.floor(input.toleranceBps))));

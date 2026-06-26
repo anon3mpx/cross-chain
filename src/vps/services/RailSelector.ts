@@ -39,14 +39,14 @@ export class RailSelector {
   /// @param dstChainId Destination EVM chain ID
   /// @param dstChain   Destination chain config (to check nativeStable preference)
   /// @param amountUSD  Transfer amount in USD (affects fee weight)
-  /// @param urgency    'fast' | 'normal' — shifts speed vs cost weighting
+  /// @param urgency    'fast' | 'normal' | 'patient' — shifts speed vs cost weighting
   /// @returns Ranked list of rail options (best first), or empty if no route
   selectRail(
     srcChainId: number,
     dstChainId: number,
     dstChain: ChainConfig,
     amountUSD: number,
-    urgency: 'fast' | 'normal' = 'normal',
+    urgency: 'fast' | 'normal' | 'patient' = 'normal',
   ): RailScore[] {
     const srcRails = new Set(getChainRails(srcChainId));
     const dstRails = new Set(getChainRails(dstChainId));
@@ -142,7 +142,7 @@ export class RailSelector {
   //   config      - Rail config (fee, etaSeconds, nativeUSDC, reliabilityScore)
   //   token       - Which settlement token was chosen
   //   amountUSD   - Transfer size in USD
-  //   urgency     - 'fast' or 'normal'
+  //   urgency     - 'fast', 'normal', or 'patient'
   //
   // Things to consider:
   //   - At small amounts (<$50), fee dominates → CCTP always wins
@@ -158,11 +158,11 @@ export class RailSelector {
     config: RailConfig,
     routeAssetAlias: string,
     amountUSD: number,
-    urgency: 'fast' | 'normal',
+    urgency: 'fast' | 'normal' | 'patient',
   ): number {
     // ── Weights shift based on urgency ─────────────────────────────────────
-    const costWeight  = urgency === 'fast' ? 0.4 : 1.8;
-    const speedWeight = urgency === 'fast' ? 2.5 : 0.6;
+    const costWeight  = urgency === 'fast' ? 0.4 : urgency === 'patient' ? 2.1 : 1.8;
+    const speedWeight = urgency === 'fast' ? 2.5 : urgency === 'patient' ? 0.15 : 0.6;
 
     // ── Cost score: fee as a fraction of transfer size ─────────────────────
     // At $10 transfer, $0.25 fee = 2.5% — painful. At $1000, it's 0.025% — irrelevant.

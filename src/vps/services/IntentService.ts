@@ -22,7 +22,12 @@ const STUCK_THRESHOLDS_MS: Record<Rail, number> = {
   [Rail.LAYERZERO]: 10 * 60 * 1000,
   [Rail.WORMHOLE]: 10 * 60 * 1000,
   [Rail.GASZIP]: 10 * 60 * 1000,
+  [Rail.HYPERLANE_NEXUS]: 10 * 60 * 1000,
+  [Rail.OPTIMISM_NATIVE_BRIDGE]: 14 * 24 * 60 * 60 * 1000,
   [Rail.THORCHAIN]: 20 * 60 * 1000,
+  [Rail.CHAINFLIP]: 20 * 60 * 1000,
+  [Rail.MAYA]: 30 * 60 * 1000,
+  [Rail.TELESWAP]: 2 * 60 * 60 * 1000,
 };
 
 const TERMINAL_STATUSES = new Set<IntentStatus>([
@@ -49,13 +54,34 @@ export class IntentService {
     private readonly intentRepo?: IntentRepository,
   ) {}
 
-  async createQuotedIntent(quote: QuoteResult, userAddress: string, partnerApiKey?: string): Promise<Intent> {
+  async createQuotedIntent(
+    quote: QuoteResult,
+    userAddress: string,
+    metadata?: string | {
+      partnerApiKey?: string;
+      partnerId?: string;
+      integratorId?: string;
+      agentId?: string;
+      routeSource?: Intent['routeSource'];
+      parentBasketId?: string;
+      solverId?: string;
+    },
+  ): Promise<Intent> {
+    const normalized = typeof metadata === 'string'
+      ? { partnerApiKey: metadata }
+      : (metadata ?? {});
     const intent: Intent = {
       intentId: quote.intentId,
       status: IntentStatus.QUOTED,
       quote,
       userAddress,
-      partnerApiKey,
+      partnerApiKey: normalized.partnerApiKey,
+      partnerId: normalized.partnerId,
+      integratorId: normalized.integratorId,
+      agentId: normalized.agentId,
+      routeSource: normalized.routeSource,
+      parentBasketId: normalized.parentBasketId,
+      solverId: normalized.solverId,
       createdAt: Date.now(),
       updatedAt: Date.now(),
       retryCount: 0,
@@ -72,9 +98,21 @@ export class IntentService {
     return intent;
   }
 
-  async createQuotedIntentFromOffer(offer: RailOffer, userAddress: string, partnerApiKey?: string): Promise<Intent> {
+  async createQuotedIntentFromOffer(
+    offer: RailOffer,
+    userAddress: string,
+    metadata?: string | {
+      partnerApiKey?: string;
+      partnerId?: string;
+      integratorId?: string;
+      agentId?: string;
+      routeSource?: Intent['routeSource'];
+      parentBasketId?: string;
+      solverId?: string;
+    },
+  ): Promise<Intent> {
     const quote = this.materializeSelectedOfferQuote(offer);
-    return this.createQuotedIntent(quote, userAddress, partnerApiKey);
+    return this.createQuotedIntent(quote, userAddress, metadata);
   }
 
   async getIntent(intentId: string): Promise<Intent | null> {
